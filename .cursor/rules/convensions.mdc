@@ -1,0 +1,16 @@
+---
+alwaysApply: true
+description: Strict Rust naming & conventions enforcement using official Rust Guidelines and Rustc Dev Guide.
+globs:
+  - "**/*.rs"
+  - "src/**/*.rs"
+  - "compiler/**/*.rs"
+---
+
+# Rust Conventions
+
+All code must strictly comply with the Rust Compiler Development Guide conventions:
+
+**Reference**: https://rustc-dev-guide.rust-lang.org/conventions.html
+
+Follow all naming, formatting, and code style guidelines defined in the official document.
