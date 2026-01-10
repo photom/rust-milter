@@ -1,0 +1,14 @@
+---
+alwaysApply: true
+---
+
+# References
+**Reference**: https://diataxis.fr/
+
+
+## Documentation
+
+- When specification or design is changed, update documents.
+- Update the documents first, then update the code.
+- Documentation must comply with Diátaxis
+- Documentations are located in docs.
