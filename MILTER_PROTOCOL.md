@@ -1,5 +1,4 @@
 # Milter Protocol Specification <!-- omit from toc -->
-
 - [Overview](#overview)
 - [Protocol Architecture](#protocol-architecture)
   - [Connection Model](#connection-model)
@@ -15,18 +14,20 @@
   - [Internal Error Codes](#internal-error-codes)
 - [Replies from Milter to MTA](#replies-from-milter-to-mta)
   - [Header Modification Data Formats](#header-modification-data-formats)
+  - [Custom Reply Code Format (SMFIR\_REPLYCODE)](#custom-reply-code-format-smfir_replycode)
 - [Option Negotiation](#option-negotiation)
   - [Option Negotiation Message Format](#option-negotiation-message-format)
   - [Protocol Version](#protocol-version)
   - [Action Flags (SMFIF\_\*)](#action-flags-smfif_)
   - [Protocol Flags (SMFIP\_\*)](#protocol-flags-smfip_)
-  - [Symbol List (Optional)](#symbol-list-optional)
+  - [Symbol List in Option Negotiation (Optional)](#symbol-list-in-option-negotiation-optional)
 - [Macro Stages (SMFIM\_\*)](#macro-stages-smfim_)
 - [Typical Protocol Flow](#typical-protocol-flow)
   - [1. Connection Establishment](#1-connection-establishment)
   - [2. SMTP Session](#2-smtp-session)
   - [3. Connection Cleanup](#3-connection-cleanup)
   - [4. Connection Reuse (QUIT\_NC)](#4-connection-reuse-quit_nc)
+  - [5. Message Abort](#5-message-abort)
 - [Callback Functions](#callback-functions)
   - [Return Status Codes (SMFIS\_\*)](#return-status-codes-smfis_)
 - [Data Limits](#data-limits)
@@ -37,7 +38,8 @@
 - [Security Considerations](#security-considerations)
 - [Example: Simple Milter Implementation](#example-simple-milter-implementation)
 - [Protocol Constants Summary](#protocol-constants-summary)
-  - [Length Constants](#length-constants)
+  - [Command Codes](#command-codes)
+  - [Reply Codes](#reply-codes)
   - [Version Constants](#version-constants)
 - [References](#references)
 - [Notes](#notes)
@@ -109,8 +111,8 @@ The milter protocol operates as a state machine with the following states:
 | `ST_EOHS` | 8 | End of headers |
 | `ST_BODY` | 9 | Body chunks being received |
 | `ST_ENDM` | 10 | End of message |
-| `ST_QUIT` | 11 | QUIT command received | 
-| `ST_ABRT` | 12 | Message aborted |
+| `ST_QUIT` | 11 | QUIT command received (terminal) | 
+| `ST_ABRT` | 12 | Message aborted (returns to waiting) |
 | `ST_UNKN` | 13 | Unknown SMTP command |
 | `ST_Q_NC` | 14 | Quit, new connection follows |
 
@@ -169,6 +171,8 @@ stateDiagram-v2
     ST_ENDM --> ST_UNKN: SMFIC_UNKNOWN
     ST_ENDM --> ST_Q_NC: SMFIC_QUIT_NC
     
+    ST_ABRT --> ST_HELO: (recovery, wait for next command)
+    
     ST_UNKN --> ST_HELO: SMFIC_HELO
     ST_UNKN --> ST_MAIL: SMFIC_MAIL
     ST_UNKN --> ST_RCPT: SMFIC_RCPT
@@ -183,7 +187,6 @@ stateDiagram-v2
     ST_Q_NC --> ST_UNKN: SMFIC_UNKNOWN
     
     ST_QUIT --> [*]: Connection End
-    ST_ABRT --> [*]: Connection End
 ```
 
 **State Transition Rules:**
@@ -199,10 +202,16 @@ stateDiagram-v2
 - **ST_EOHS**: End of headers, accepts body chunks or end-of-message
 - **ST_BODY**: Body chunks being received, can accept more chunks or end-of-message
 - **ST_ENDM**: End of message, accepts QUIT, new MAIL (for multiple messages), or unknown
+- **ST_ABRT**: Message aborted - **NOT a terminal state**; the connection continues and waits for the next command (typically recovers to ST_HELO equivalent state)
 - **ST_UNKN**: Unknown command received, can transition to most states (flexible recovery)
 - **ST_Q_NC**: Quit with new connection, accepts new connection or unknown
-- **ST_QUIT**: Terminal state (connection ends)
-- **ST_ABRT**: Terminal state (connection aborted)
+- **ST_QUIT**: **Terminal state** - only state that ends the connection
+
+**Important Notes on Abort:**
+- `SMFIC_ABORT` does NOT close the connection
+- After abort, the milter continues waiting for commands
+- The abort callback (`xxfi_abort`) is called, but no reply is sent
+- The MTA typically sends a new `SMFIC_MAIL` to start a new message transaction
 
 ## Commands from MTA to Milter
 
@@ -210,11 +219,11 @@ Commands sent by the MTA to the milter use the `SMFIC_` prefix:
 
 | Command | Code | Description | Data Format |
 |---------|------|-------------|-------------|
-| `SMFIC_ABORT` | 'A' (0x41) | Message aborted | None |
-| `SMFIC_BODY` | 'B' (0x42) | Body chunk | Binary data (body chunk) |
+| `SMFIC_ABORT` | 'A' (0x41) | Abort current message | None |
+| `SMFIC_BODY` | 'B' (0x42) | Body chunk | Binary data (up to 65535 bytes) |
 | `SMFIC_CONNECT` | 'C' (0x43) | Connection information | See Connection Info Format |
 | `SMFIC_MACRO` | 'D' (0x44) | Define macro | Stage code + macro pairs |
-| `SMFIC_BODYEOB` | 'E' (0x45) | End of body | None |
+| `SMFIC_BODYEOB` | 'E' (0x45) | End of body | Optional trailing body data |
 | `SMFIC_HELO` | 'H' (0x48) | HELO/EHLO command | HELO string\0 |
 | `SMFIC_QUIT_NC` | 'K' (0x4B) | Quit, new connection follows | None |
 | `SMFIC_HEADER` | 'L' (0x4C) | Header field | Header name\0Header value\0 |
@@ -241,12 +250,17 @@ The `SMFIC_CONNECT` data contains:
 
 | Code | Value | Description |
 |------|-------|-------------|
-| `SMFIA_UNKNOWN` | 'U' | Unknown address family |
-| `SMFIA_UNIX` | 'L' | Unix/local socket |
-| `SMFIA_INET` | '4' | IPv4 address |
-| `SMFIA_INET6` | '6' | IPv6 address |
+| `SMFIA_UNKNOWN` | 'U' (0x55) | Unknown address family |
+| `SMFIA_UNIX` | 'L' (0x4C) | Unix/local socket |
+| `SMFIA_INET` | '4' (0x34) | IPv4 address |
+| `SMFIA_INET6` | '6' (0x36) | IPv6 address |
 
-If family is `SMFIA_UNKNOWN`, port and address fields are not present.
+**Notes:**
+- If family is `SMFIA_UNKNOWN`, port and address fields are **not present**
+- Port is in **network byte order** (big-endian, as received from the socket)
+- For IPv4, address is the dotted-decimal string (e.g., "192.168.1.1")
+- For IPv6, address is the colon-hex string (e.g., "::1" or "2001:db8::1")
+- For Unix sockets, address is the socket path
 
 ### Macro Format (SMFIC_MACRO)
 
@@ -257,11 +271,23 @@ If family is `SMFIA_UNKNOWN`, port and address fields are not present.
 +------------------+------------------+
 ```
 
-The stage byte indicates which SMTP stage the macros are associated with (uses same command codes as SMFIC_CONNECT, SMFIC_HELO, etc.).
+The stage byte indicates which SMTP command the macros are associated with. It uses the **same command codes** as the corresponding SMFIC_* commands:
+
+| Stage Byte | Corresponds To |
+|------------|----------------|
+| 'C' (0x43) | SMFIC_CONNECT |
+| 'H' (0x48) | SMFIC_HELO |
+| 'M' (0x4D) | SMFIC_MAIL |
+| 'R' (0x52) | SMFIC_RCPT |
+| 'T' (0x54) | SMFIC_DATA |
+| 'N' (0x4E) | SMFIC_EOH |
+| 'E' (0x45) | SMFIC_BODYEOB (end of message) |
+
+**Note:** Macros are always sent **before** the command they are associated with.
 
 ### Internal Error Codes
 
-These are not actual protocol commands but internal error indicators:
+These are not actual protocol commands but internal error indicators used by libmilter:
 
 | Code | Value | Description |
 |------|-------|-------------|
@@ -285,21 +311,21 @@ Replies sent by the milter to the MTA use the `SMFIR_` prefix:
 | `SMFIR_ADDRCPT_PAR` | '2' (0x32) | Add recipient with ESMTP args | Recipient\0Args\0 |
 | `SMFIR_SHUTDOWN` | '4' (0x34) | 421 shutdown (internal to MTA) | None |
 | `SMFIR_ACCEPT` | 'a' (0x61) | Accept message | None |
-| `SMFIR_REPLBODY` | 'b' (0x62) | Replace body (chunk) | Body chunk |
+| `SMFIR_REPLBODY` | 'b' (0x62) | Replace body (chunk) | Body data (≤65535 bytes) |
 | `SMFIR_CONTINUE` | 'c' (0x63) | Continue processing | None |
-| `SMFIR_DISCARD` | 'd' (0x64) | Discard message | None |
+| `SMFIR_DISCARD` | 'd' (0x64) | Discard message silently | None |
 | `SMFIR_CHGFROM` | 'e' (0x65) | Change envelope sender | Sender\0[Args\0] |
 | `SMFIR_CONN_FAIL` | 'f' (0x66) | Cause connection failure | None |
 | `SMFIR_ADDHEADER` | 'h' (0x68) | Add header | Header name\0Header value\0 |
-| `SMFIR_INSHEADER` | 'i' (0x69) | Insert header | Index (4 bytes) + Header name\0Header value\0 |
+| `SMFIR_INSHEADER` | 'i' (0x69) | Insert header at position | Index (4 bytes) + Name\0Value\0 |
 | `SMFIR_SETSYMLIST` | 'l' (0x6C) | Set list of symbols (macros) | Stage (4 bytes) + Macros\0 |
-| `SMFIR_CHGHEADER` | 'm' (0x6D) | Change/delete header | Index (4 bytes) + Header name\0Header value\0 |
-| `SMFIR_PROGRESS` | 'p' (0x70) | Progress (keep connection alive) | None |
+| `SMFIR_CHGHEADER` | 'm' (0x6D) | Change/delete header | Index (4 bytes) + Name\0Value\0 |
+| `SMFIR_PROGRESS` | 'p' (0x70) | Progress (reset timeout) | None |
 | `SMFIR_QUARANTINE` | 'q' (0x71) | Quarantine message | Reason string\0 |
-| `SMFIR_REJECT` | 'r' (0x72) | Reject message | None |
+| `SMFIR_REJECT` | 'r' (0x72) | Reject with 5xx | None |
 | `SMFIR_SKIP` | 's' (0x73) | Skip remaining callbacks of same type | None |
-| `SMFIR_TEMPFAIL` | 't' (0x74) | Temporary failure | None |
-| `SMFIR_REPLYCODE` | 'y' (0x79) | Reply with custom SMTP code | SMTP reply string\0 |
+| `SMFIR_TEMPFAIL` | 't' (0x74) | Temporary failure (4xx) | None |
+| `SMFIR_REPLYCODE` | 'y' (0x79) | Custom SMTP reply code | SMTP reply string\0 |
 
 ### Header Modification Data Formats
 
@@ -317,6 +343,7 @@ Replies sent by the milter to the MTA use the `SMFIR_` prefix:
 | (network order)  |                  |                  |
 +------------------+------------------+------------------+
 ```
+Index 0 = insert at the beginning, index 1 = after first header, etc.
 
 **Change Header (SMFIR_CHGHEADER):**
 ```
@@ -325,6 +352,21 @@ Replies sent by the milter to the MTA use the `SMFIR_` prefix:
 | (network order)  |                  | (empty = delete) |
 +------------------+------------------+------------------+
 ```
+Index is 1-based: index 1 = first occurrence, index 2 = second occurrence, etc.
+To delete a header, set the value to an empty string.
+
+### Custom Reply Code Format (SMFIR_REPLYCODE)
+
+```
++------------------+------------------+------------------+
+| 3-digit code     | space            | Extended code    |
+| (e.g., "550")    |                  | + message\0      |
++------------------+------------------+------------------+
+```
+
+Example: `"550 5.7.1 Rejected by policy\0"`
+
+For multi-line replies, lines are separated by `\r\n` followed by the reply code with `-` instead of space for continuation lines.
 
 ## Option Negotiation
 
@@ -332,12 +374,12 @@ At the start of each connection, the MTA and milter negotiate capabilities throu
 
 ### Option Negotiation Message Format
 
-The `SMFIC_OPTNEG` data contains:
+Both the MTA's request and the milter's response use `SMFIC_OPTNEG` ('O'):
 
 ```
 +------------------+------------------+------------------+------------------+
 | Protocol Version | Action Flags     | Protocol Flags   | Symbol List      |
-| (4 bytes)        | (4 bytes)        | (4 bytes)        | (variable)       |
+| (4 bytes)        | (4 bytes)        | (4 bytes)        | (optional)       |
 +------------------+------------------+------------------+------------------+
 ```
 
@@ -347,8 +389,12 @@ The minimum option negotiation length is 12 bytes (`MILTER_OPTLEN`).
 
 ### Protocol Version
 
-- Minimum supported version: 2 (`SMFI_PROT_VERSION_MIN`)
-- Current version: 6 (`SMFI_PROT_VERSION`)
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `SMFI_PROT_VERSION_MIN` | 2 | Minimum supported version |
+| `SMFI_PROT_VERSION` | 6 | Current version |
+
+The negotiated version is the **minimum** of the MTA and milter versions.
 
 ### Action Flags (SMFIF_*)
 
@@ -365,7 +411,7 @@ Action flags indicate what actions the milter requests to perform:
 | `SMFIF_QUARANTINE` | 0x00000020 | Quarantine messages |
 | `SMFIF_CHGFROM` | 0x00000040 | Change envelope sender |
 | `SMFIF_ADDRCPT_PAR` | 0x00000080 | Add recipients with ESMTP args |
-| `SMFIF_SETSYMLIST` | 0x00000100 | Set symbol list |
+| `SMFIF_SETSYMLIST` | 0x00000100 | Can set symbol (macro) list |
 
 **Predefined Action Sets:**
 
@@ -389,7 +435,7 @@ Protocol flags indicate which protocol features are supported/requested:
 | `SMFIP_NOHDRS` | 0x00000020 | MTA should not send headers |
 | `SMFIP_NOEOH` | 0x00000040 | MTA should not send EOH |
 | `SMFIP_NR_HDR` | 0x00000080 | No reply needed for headers |
-| `SMFIP_NOUNKNOWN` | 0x00000100 | MTA should not send unknown commands |
+| `SMFIP_NOUNKNOWN` | 0x00000100 | MTA should not send unknown cmds |
 | `SMFIP_NODATA` | 0x00000200 | MTA should not send DATA |
 | `SMFIP_SKIP` | 0x00000400 | MTA understands SMFIR_SKIP |
 | `SMFIP_RCPT_REJ` | 0x00000800 | MTA should also send rejected RCPTs |
@@ -399,11 +445,14 @@ Protocol flags indicate which protocol features are supported/requested:
 | `SMFIP_NR_RCPT` | 0x00008000 | No reply needed for RCPT |
 | `SMFIP_NR_DATA` | 0x00010000 | No reply needed for DATA |
 | `SMFIP_NR_UNKN` | 0x00020000 | No reply needed for unknown |
-| `SMFIP_NR_EOH` | 0x00040000 | No reply needed for end-of-headers |
+| `SMFIP_NR_EOH` | 0x00040000 | No reply needed for EOH |
 | `SMFIP_NR_BODY` | 0x00080000 | No reply needed for body |
-| `SMFIP_HDR_LEADSPC` | 0x00100000 | Header values may have leading space |
+| `SMFIP_HDR_LEADSPC` | 0x00100000 | Preserve leading space in headers |
 | `SMFIP_MDS_256K` | 0x10000000 | Max data size = 256K |
 | `SMFIP_MDS_1M` | 0x20000000 | Max data size = 1M |
+
+**Aliases:**
+- `SMFIP_NOHREPL` = `SMFIP_NR_HDR` (backwards compatibility)
 
 **Predefined Protocol Sets:**
 
@@ -412,11 +461,11 @@ Protocol flags indicate which protocol features are supported/requested:
 | `SMFI_V1_PROT` | 0x0000003F | V1 protocol flags |
 | `SMFI_V2_PROT` | 0x0000007F | V2 protocol flags |
 | `SMFI_CURR_PROT` | 0x001FFFFF | Current protocol flags |
-| `SMFI_INTERNAL` | 0x70000000 | Internal flags (MTA-libmilter only) |
+| `SMFI_INTERNAL` | 0x70000000 | Internal flags (MTA-libmilter) |
 
-### Symbol List (Optional)
+### Symbol List in Option Negotiation (Optional)
 
-After the three 4-byte integers, there may be a symbol list for each macro stage. The format is:
+After the three 4-byte integers, the milter can optionally include a symbol list to request specific macros. Format:
 
 ```
 +------------------+------------------+
@@ -425,9 +474,13 @@ After the three 4-byte integers, there may be a symbol list for each macro stage
 +------------------+------------------+
 ```
 
-This pattern can repeat for multiple stages.
+This pattern can repeat for multiple stages. Example macro list: `"{mail_mailer} {mail_host} {mail_addr}"`
+
+**Maximum macros per stage:** 50 (`MAXFILTERMACROS`)
 
 ## Macro Stages (SMFIM_*)
+
+These constants are used with `smfi_setsymlist()` and in the symbol list:
 
 | Stage | Value | Description |
 |-------|-------|-------------|
@@ -439,111 +492,134 @@ This pattern can repeat for multiple stages.
 | `SMFIM_EOM` | 5 | End of message stage |
 | `SMFIM_EOH` | 6 | End of headers stage |
 
+**Internal only:**
+- `SMFIM_NOMACROS` = -1 (no macros for this command, used internally)
+
 ## Typical Protocol Flow
 
 ### 1. Connection Establishment
 
 ```
-MTA → Milter: SMFIC_OPTNEG (option negotiation)
-Milter → MTA: SMFIC_OPTNEG (negotiated options)
+MTA → Milter: SMFIC_OPTNEG (version=6, actions, protocol flags)
+Milter → MTA: SMFIC_OPTNEG (negotiated version, actions, protocol flags)
 ```
 
 ### 2. SMTP Session
 
 ```
-MTA → Milter: SMFIC_MACRO (macros for connect stage)
-MTA → Milter: SMFIC_CONNECT (connection info)
-Milter → MTA: SMFIR_CONTINUE (or other reply)
+MTA → Milter: SMFIC_MACRO ('C', macros for connect)
+MTA → Milter: SMFIC_CONNECT (hostname, family, port, address)
+Milter → MTA: SMFIR_CONTINUE
 
-MTA → Milter: SMFIC_MACRO (macros for HELO stage)
-MTA → Milter: SMFIC_HELO (HELO command)
-Milter → MTA: SMFIR_CONTINUE (or other reply)
+MTA → Milter: SMFIC_MACRO ('H', macros for HELO)
+MTA → Milter: SMFIC_HELO (helo_string)
+Milter → MTA: SMFIR_CONTINUE
 
-MTA → Milter: SMFIC_MACRO (macros for MAIL stage)
-MTA → Milter: SMFIC_MAIL (MAIL FROM)
-Milter → MTA: SMFIR_CONTINUE (or other reply)
+MTA → Milter: SMFIC_MACRO ('M', macros for MAIL)
+MTA → Milter: SMFIC_MAIL (sender, esmtp_args...)
+Milter → MTA: SMFIR_CONTINUE
 
-MTA → Milter: SMFIC_MACRO (macros for RCPT stage)
-MTA → Milter: SMFIC_RCPT (RCPT TO) [may be multiple]
-Milter → MTA: SMFIR_CONTINUE (or other reply)
+MTA → Milter: SMFIC_MACRO ('R', macros for RCPT)
+MTA → Milter: SMFIC_RCPT (recipient, esmtp_args...)
+Milter → MTA: SMFIR_CONTINUE
+[... repeat for each recipient ...]
 
-MTA → Milter: SMFIC_MACRO (macros for DATA stage)
-MTA → Milter: SMFIC_DATA (DATA command)
-Milter → MTA: SMFIR_CONTINUE (or other reply)
+MTA → Milter: SMFIC_MACRO ('T', macros for DATA)
+MTA → Milter: SMFIC_DATA
+Milter → MTA: SMFIR_CONTINUE
 
-MTA → Milter: SMFIC_HEADER (header field) [may be multiple]
+MTA → Milter: SMFIC_HEADER (name, value)
 Milter → MTA: SMFIR_CONTINUE (or no reply if SMFIP_NR_HDR)
+[... repeat for each header ...]
 
-MTA → Milter: SMFIC_MACRO (macros for EOH stage)
-MTA → Milter: SMFIC_EOH (end of headers)
-Milter → MTA: SMFIR_CONTINUE (or other reply)
+MTA → Milter: SMFIC_MACRO ('N', macros for EOH)
+MTA → Milter: SMFIC_EOH
+Milter → MTA: SMFIR_CONTINUE
 
-MTA → Milter: SMFIC_BODY (body chunk) [may be multiple]
+MTA → Milter: SMFIC_BODY (chunk, up to 65535 bytes)
 Milter → MTA: SMFIR_CONTINUE (or no reply if SMFIP_NR_BODY)
+[... repeat for each body chunk ...]
 
-MTA → Milter: SMFIC_MACRO (macros for EOM stage)
-MTA → Milter: SMFIC_BODYEOB (end of body)
-Milter → MTA: SMFIR_ACCEPT (or SMFIR_REJECT, SMFIR_TEMPFAIL, etc.)
+MTA → Milter: SMFIC_MACRO ('E', macros for EOM)
+MTA → Milter: SMFIC_BODYEOB
+Milter → MTA: [modifications...] then SMFIR_ACCEPT/REJECT/etc.
 ```
 
 ### 3. Connection Cleanup
 
 ```
 MTA → Milter: SMFIC_QUIT
-(no reply, connection closed)
+(no reply, connection closed by both sides)
 ```
 
 ### 4. Connection Reuse (QUIT_NC)
 
 ```
-MTA → Milter: SMFIC_QUIT_NC (quit but keep connection)
-(no reply)
-MTA → Milter: SMFIC_MACRO (macros for new connection)
+MTA → Milter: SMFIC_QUIT_NC
+(no reply, connection stays open)
+MTA → Milter: SMFIC_MACRO ('C', macros for new connection)
 MTA → Milter: SMFIC_CONNECT (new connection info)
+...
+```
+
+### 5. Message Abort
+
+```
+MTA → Milter: SMFIC_ABORT
+(no reply, xxfi_abort called, wait for next command)
+MTA → Milter: SMFIC_MAIL (start new message)
 ...
 ```
 
 ## Callback Functions
 
-A milter implementation provides callback functions that are invoked when commands are received:
+A milter implementation provides callback functions:
 
-| Callback | Triggered By | Return Values |
+| Callback | Triggered By | Valid Returns |
 |----------|--------------|---------------|
+| `xxfi_negotiate` | `SMFIC_OPTNEG` | `SMFIS_ALL_OPTS`, `SMFIS_CONTINUE`, `SMFIS_REJECT` |
 | `xxfi_connect` | `SMFIC_CONNECT` | `SMFIS_CONTINUE`, `SMFIS_REJECT`, `SMFIS_TEMPFAIL`, `SMFIS_ACCEPT`, `SMFIS_DISCARD` |
-| `xxfi_helo` | `SMFIC_HELO` | Same as above |
-| `xxfi_envfrom` | `SMFIC_MAIL` | Same as above |
-| `xxfi_envrcpt` | `SMFIC_RCPT` | Same as above |
-| `xxfi_data` | `SMFIC_DATA` | Same as above |
-| `xxfi_header` | `SMFIC_HEADER` | Same as above, plus `SMFIS_NOREPLY` |
-| `xxfi_eoh` | `SMFIC_EOH` | Same as above |
-| `xxfi_body` | `SMFIC_BODY` | Same as above, plus `SMFIS_NOREPLY`, `SMFIS_SKIP` |
-| `xxfi_eom` | `SMFIC_BODYEOB` | Same as above (modifications allowed here) |
-| `xxfi_abort` | `SMFIC_ABORT` | Return value ignored (no reply sent) |
-| `xxfi_close` | `SMFIC_QUIT` / `SMFIC_QUIT_NC` | Return value ignored (no reply sent) |
+| `xxfi_helo` | `SMFIC_HELO` | Same as connect |
+| `xxfi_envfrom` | `SMFIC_MAIL` | Same as connect |
+| `xxfi_envrcpt` | `SMFIC_RCPT` | Same as connect |
+| `xxfi_data` | `SMFIC_DATA` | Same as connect |
+| `xxfi_header` | `SMFIC_HEADER` | Same as connect, plus `SMFIS_NOREPLY` |
+| `xxfi_eoh` | `SMFIC_EOH` | Same as connect |
+| `xxfi_body` | `SMFIC_BODY` | Same as connect, plus `SMFIS_NOREPLY`, `SMFIS_SKIP` |
+| `xxfi_eom` | `SMFIC_BODYEOB` | Same as connect (can also send modifications) |
+| `xxfi_abort` | `SMFIC_ABORT` | Return ignored (no reply sent) |
+| `xxfi_close` | Connection end | Return ignored (no reply sent) |
 | `xxfi_unknown` | `SMFIC_UNKNOWN` | Same as connect |
-| `xxfi_negotiate` | `SMFIC_OPTNEG` | `SMFIS_CONTINUE`, `SMFIS_ALL_OPTS`, or abort |
+
+**Notes on xxfi_close:**
+- Called when connection ends (after `SMFIC_QUIT`)
+- Also called after `SMFIC_QUIT_NC`
+- Called on errors/failures even without explicit QUIT
 
 ### Return Status Codes (SMFIS_*)
 
 | Status | Value | Description |
 |--------|-------|-------------|
 | `SMFIS_CONTINUE` | 0 | Continue processing |
-| `SMFIS_REJECT` | 1 | Reject message/connection |
-| `SMFIS_DISCARD` | 2 | Accept but discard message |
-| `SMFIS_ACCEPT` | 3 | Accept message/connection |
+| `SMFIS_REJECT` | 1 | Reject with 5xx |
+| `SMFIS_DISCARD` | 2 | Accept but discard silently |
+| `SMFIS_ACCEPT` | 3 | Accept, skip remaining filters |
 | `SMFIS_TEMPFAIL` | 4 | Temporary failure (4xx) |
-| `SMFIS_NOREPLY` | 7 | Don't send reply (requires protocol flag) |
+| `SMFIS_NOREPLY` | 7 | Don't send reply (requires NR_* flag) |
 | `SMFIS_SKIP` | 8 | Skip remaining callbacks of same type |
-| `SMFIS_ALL_OPTS` | 10 | Accept all MTA options (negotiate callback) |
+| `SMFIS_ALL_OPTS` | 10 | Accept all MTA options (negotiate only) |
 
 ## Data Limits
 
-- **MILTER_LEN_BYTES**: 4 (size of length field)
-- **MILTER_OPTLEN**: 12 (minimum option negotiation length: 3 × 4 bytes)
-- **MILTER_CHUNK_SIZE**: 65535 (body chunk size)
-- **MILTER_MAX_DATA_SIZE**: 65535 (default max data size)
-- **MILTER_MDS_256K**: 262143 (256K - 1, when negotiated)
-- **MILTER_MDS_1M**: 1048575 (1M - 1, when negotiated)
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `MILTER_LEN_BYTES` | 4 | Size of length field |
+| `MILTER_OPTLEN` | 12 | Minimum option negotiation (3×4 bytes) |
+| `MILTER_CHUNK_SIZE` | 65535 | Max body chunk size |
+| `MILTER_MAX_DATA_SIZE` | 65535 | Default max data size |
+| `MILTER_MDS_256K` | 262143 | 256K - 1 (when negotiated) |
+| `MILTER_MDS_1M` | 1048575 | 1M - 1 (when negotiated) |
+| `MAXFILTERMACROS` | 50 | Max macros per stage |
 
 ## Timeouts
 
@@ -551,124 +627,103 @@ Default timeout values:
 - **MI_TIMEOUT**: 7210 seconds (default read/write timeout)
 - **MI_CHK_TIME**: 5 seconds (check interval for termination)
 
-Timeouts can be configured in sendmail.cf using the `T=` equate:
+Sendmail.cf configuration using `T=` equate:
 ```
 T=C:5m;S:10s;R:10s;E:5m
 ```
 
-Where:
-- `C` = Connection timeout
-- `S` = Send timeout
-- `R` = Receive timeout
-- `E` = End-of-message timeout
+| Code | Description | Default |
+|------|-------------|---------|
+| C | Connection timeout | 5 minutes |
+| S | Send timeout | 10 seconds |
+| R | Receive timeout | 10 seconds |
+| E | End-of-message timeout | 5 minutes |
 
 ## Error Handling
 
 ### Connection Errors
 
-If the milter is unavailable, sendmail can be configured to:
-- **R**: Reject the connection
-- **T**: Temporarily fail the connection
-- **4**: Shut down with 421 temporary error
-- **None**: Pass message through as if filter wasn't present
+Sendmail `F=` flags for milter failure:
+- **R**: Reject the message
+- **T**: Temporary fail the message
+- **4**: Shut down with 421 error
+- **(none)**: Accept message as if filter wasn't present
 
 ### Protocol Errors
 
-- Invalid state transitions may be recovered by resetting to ST_HELO
-- Unknown commands cause connection abort
-- Timeouts cause connection abort
-- Malformed messages cause connection abort
+- Invalid state transitions: attempt recovery to ST_HELO, else ignore
+- Unknown commands: connection abort
+- Timeouts: connection abort, call xxfi_abort if in message
+- Malformed messages: connection abort
 
 ## Security Considerations
 
 1. **Do not run milters as root** - libmilter does not need root privileges
 2. **Socket permissions** - Ensure proper permissions on Unix domain sockets
-3. **Network security** - If using TCP/IP, consider firewall rules
+3. **Network security** - If using TCP/IP, consider firewall rules and localhost binding
 4. **Input validation** - Always validate data received from the MTA
+5. **Timeout handling** - Use `SMFIR_PROGRESS` for long operations to prevent timeouts
 
 ## Example: Simple Milter Implementation
 
 ```c
 #include <libmilter/mfapi.h>
 
-// Callback functions
 sfsistat mlfi_connect(SMFICTX *ctx, char *hostname, _SOCK_ADDR *hostaddr)
-{
-    // Process connection info
-    return SMFIS_CONTINUE;
-}
-
-sfsistat mlfi_helo(SMFICTX *ctx, char *helohost)
 {
     return SMFIS_CONTINUE;
 }
 
 sfsistat mlfi_envfrom(SMFICTX *ctx, char **argv)
 {
-    // argv[0] is sender address
+    // argv[0] = sender address, argv[1..n] = ESMTP args, NULL terminated
     return SMFIS_CONTINUE;
 }
 
 sfsistat mlfi_envrcpt(SMFICTX *ctx, char **argv)
 {
-    // argv[0] is recipient address
+    // argv[0] = recipient address
     return SMFIS_CONTINUE;
 }
 
-sfsistat mlfi_header(SMFICTX *ctx, char *headerf, char *headerv)
-{
-    return SMFIS_CONTINUE;
-}
-
-sfsistat mlfi_eoh(SMFICTX *ctx)
-{
-    return SMFIS_CONTINUE;
-}
-
-sfsistat mlfi_body(SMFICTX *ctx, unsigned char *bodyp, size_t bodylen)
+sfsistat mlfi_header(SMFICTX *ctx, char *name, char *value)
 {
     return SMFIS_CONTINUE;
 }
 
 sfsistat mlfi_eom(SMFICTX *ctx)
 {
-    // Can modify message here
+    // Can add/change headers, replace body here
+    smfi_addheader(ctx, "X-Filtered", "true");
     return SMFIS_ACCEPT;
-}
-
-sfsistat mlfi_abort(SMFICTX *ctx)
-{
-    // Cleanup on abort
-    return SMFIS_CONTINUE;
 }
 
 sfsistat mlfi_close(SMFICTX *ctx)
 {
-    // Connection cleanup
+    // Cleanup private data here
     return SMFIS_CONTINUE;
 }
 
-// Register callbacks
 struct smfiDesc smfilter = {
     "MyFilter",           // filter name
     SMFI_VERSION,         // version code
-    SMFIF_ADDHDRS,        // flags (capabilities requested)
-    mlfi_connect,         // connection callback
-    mlfi_helo,            // HELO callback
-    mlfi_envfrom,         // MAIL FROM callback
-    mlfi_envrcpt,         // RCPT TO callback
-    mlfi_header,          // header callback
-    mlfi_eoh,             // end of headers callback
-    mlfi_body,            // body chunk callback
-    mlfi_eom,             // end of message callback
-    mlfi_abort,           // abort callback
-    mlfi_close,           // close callback
-    NULL,                 // unknown command callback
-    NULL,                 // DATA callback
-    NULL                  // negotiation callback
+    SMFIF_ADDHDRS,        // action flags
+    mlfi_connect,         // xxfi_connect
+    NULL,                 // xxfi_helo
+    mlfi_envfrom,         // xxfi_envfrom
+    mlfi_envrcpt,         // xxfi_envrcpt
+    mlfi_header,          // xxfi_header
+    NULL,                 // xxfi_eoh
+    NULL,                 // xxfi_body
+    mlfi_eom,             // xxfi_eom
+    NULL,                 // xxfi_abort
+    mlfi_close,           // xxfi_close
+    NULL,                 // xxfi_unknown
+    NULL,                 // xxfi_data
+    NULL                  // xxfi_negotiate
 };
 
-int main(int argc, char **argv)
+int main(void)
 {
     smfi_setconn("inet:8891@localhost");
     if (smfi_register(smfilter) == MI_FAILURE)
@@ -679,14 +734,50 @@ int main(int argc, char **argv)
 
 ## Protocol Constants Summary
 
-### Length Constants
+### Command Codes
 
-| Constant | Value | Description |
-|----------|-------|-------------|
-| `MILTER_LEN_BYTES` | 4 | Size of length field |
-| `MILTER_OPTLEN` | 12 | Minimum option negotiation length |
-| `MILTER_CHUNK_SIZE` | 65535 | Body chunk size |
-| `MILTER_MAX_DATA_SIZE` | 65535 | Default max data size |
+| Command | Code | Hex |
+|---------|------|-----|
+| SMFIC_ABORT | 'A' | 0x41 |
+| SMFIC_BODY | 'B' | 0x42 |
+| SMFIC_CONNECT | 'C' | 0x43 |
+| SMFIC_MACRO | 'D' | 0x44 |
+| SMFIC_BODYEOB | 'E' | 0x45 |
+| SMFIC_HELO | 'H' | 0x48 |
+| SMFIC_QUIT_NC | 'K' | 0x4B |
+| SMFIC_HEADER | 'L' | 0x4C |
+| SMFIC_MAIL | 'M' | 0x4D |
+| SMFIC_EOH | 'N' | 0x4E |
+| SMFIC_OPTNEG | 'O' | 0x4F |
+| SMFIC_QUIT | 'Q' | 0x51 |
+| SMFIC_RCPT | 'R' | 0x52 |
+| SMFIC_DATA | 'T' | 0x54 |
+| SMFIC_UNKNOWN | 'U' | 0x55 |
+
+### Reply Codes
+
+| Reply | Code | Hex |
+|-------|------|-----|
+| SMFIR_ADDRCPT | '+' | 0x2B |
+| SMFIR_DELRCPT | '-' | 0x2D |
+| SMFIR_ADDRCPT_PAR | '2' | 0x32 |
+| SMFIR_SHUTDOWN | '4' | 0x34 |
+| SMFIR_ACCEPT | 'a' | 0x61 |
+| SMFIR_REPLBODY | 'b' | 0x62 |
+| SMFIR_CONTINUE | 'c' | 0x63 |
+| SMFIR_DISCARD | 'd' | 0x64 |
+| SMFIR_CHGFROM | 'e' | 0x65 |
+| SMFIR_CONN_FAIL | 'f' | 0x66 |
+| SMFIR_ADDHEADER | 'h' | 0x68 |
+| SMFIR_INSHEADER | 'i' | 0x69 |
+| SMFIR_SETSYMLIST | 'l' | 0x6C |
+| SMFIR_CHGHEADER | 'm' | 0x6D |
+| SMFIR_PROGRESS | 'p' | 0x70 |
+| SMFIR_QUARANTINE | 'q' | 0x71 |
+| SMFIR_REJECT | 'r' | 0x72 |
+| SMFIR_SKIP | 's' | 0x73 |
+| SMFIR_TEMPFAIL | 't' | 0x74 |
+| SMFIR_REPLYCODE | 'y' | 0x79 |
 
 ### Version Constants
 
@@ -699,16 +790,18 @@ int main(int argc, char **argv)
 ## References
 
 - Sendmail libmilter source code (sendmail 8.18.2)
-- [Sendmail Milter Documentation](https://www.sendmail.com/sm/open_source/docs/milter.readme)
 - [Postfix Milter Protocol](http://www.postfix.org/MILTER_README.html)
+- [libmilter documentation](sendmail-8.18.2/libmilter/docs/)
 
 ## Notes
 
-1. All network byte order conversions use `htonl()` / `ntohl()` for 32-bit integers and `htons()` / `ntohs()` for 16-bit integers
+1. All multi-byte integers use network byte order (big-endian)
 2. Strings are null-terminated
 3. The protocol is case-sensitive
-4. Commands and replies are single ASCII characters
-5. The milter must be thread-safe if handling multiple connections
-6. Each SMTP session corresponds to one milter connection context
-7. Macros are sent before the command they are associated with
-8. Message modifications (add/change headers, replace body) can only be done in the `xxfi_eom` callback
+4. Commands and replies are single ASCII characters (≥ 0x20)
+5. The milter must be thread-safe for multiple simultaneous connections
+6. Macros are sent **before** the command they are associated with
+7. Message modifications can **only** be done in `xxfi_eom`
+8. Body replacement must split data into chunks ≤ `MILTER_CHUNK_SIZE`
+9. After `SMFIS_ACCEPT/REJECT/DISCARD/TEMPFAIL`, the filter receives no more callbacks for that message
+10. `SMFIS_NOREPLY` requires the corresponding `SMFIP_NR_*` flag to be negotiated
