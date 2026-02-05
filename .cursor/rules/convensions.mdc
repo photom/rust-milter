@@ -38,3 +38,7 @@ Follow the documents below. If there is any conflict, Tokio’s rules take prece
   - https://marabos.nl/atomics/os-primitives.html
   - https://marabos.nl/atomics/building-locks.html
   - https://marabos.nl/atomics/inspiration.html
+
+# Design Conventions
+
+- Comply with DDD, Clean Architecture, and SOLID Principles.
