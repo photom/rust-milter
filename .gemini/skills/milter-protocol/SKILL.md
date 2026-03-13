@@ -63,4 +63,4 @@ For exact byte-level packet structures, see the Sendmail libmilter source code (
 
 - For logging, masking, and observability guidelines within the milter, see **logging-principles**.
 - For implementing the high-performance async aspects of the milter in Rust, refer to **rust-master**.
-- For foundational development guidelines, refer to **core-principles**.
+- For safely querying third-party APIs (e.g., DNSBL, spam engines) from the milter, follow **external-integration**.

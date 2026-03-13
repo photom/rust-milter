@@ -45,9 +45,48 @@ Once you have your Test List and have selected your first test, you must strictl
 - **Listen to the Tests**: If a test is difficult to write or setup, it is a design smell indicating high coupling or low cohesion.
 - **Never Write Production Code Without a Failing Test**: Production code is only written to satisfy a failing test.
 
+## 🧪 Testing Strategy & Execution
+
+### 1. Development Methodology
+- **Assert-First**: Design tests by starting with the expected outcome and working backward to the implementation.
+- **Prioritization**:
+  - Prioritize unit tests for pure functions.
+  - Use in-memory implementations for repository testing to ensure speed and isolation.
+- **Design for Testability**: Integrate hooks and dependency injection into the architecture.
+
+### 2. Comprehensive Test Suite
+- **Unit Testing**: Provide unit tests for all public functions. Verify execution after every task completion.
+- **Linting**: Use Linter tools for continuous static code analysis.
+- **E2E Testing**: Beyond happy paths, comprehensively cover edge cases and attack vectors:
+  - Error handling (Abnormal cases) and Boundary values.
+  - Path Traversal and URL Encoding (`%xx` format).
+  - Non-existent or unauthorized methods.
+  - Special characters and invalid input payloads.
+
+### 3. Automation & CI/CD Integration
+- **Metrics**: Integrate measurement of test coverage and code complexity into the CI pipeline.
+- **Security Scanning**: Automate SAST/DAST and dependency vulnerability scans.
+- **Maintenance**: Enable automated package updates and vulnerability alerts within CI/CD.
+- **Reporting**: Automatically generate and visualize test results and coverage reports as documentation.
+
+## 🛠️ Failure Protocol (When Tests Fail)
+
+### Scenario A: Adding New Features
+1. Verify if the global test suite passes.
+2. Specifically test the modified script or module after the update.
+
+### Scenario B: Fixing Regressions/Bugs
+1. **Identify**: Run the specific module test. Reference the implementation against the failing test case.
+2. **Analyze**: Execute tests one by one. Analyze the failure step-by-step rather than applying "blind" fixes.
+3. **Fix & Verify**: 
+   - Apply the fix. Use print/log debugging to trace execution if necessary.
+   - Confirm the module test passes.
+   - **Crucial**: Remove all temporary debug prints once the fix is verified.
+4. **Global Sync**: Run the entire test suite. Do not proceed to the next module until all regressions are resolved.
+
 ## Related Skills
 
 - TDD operates within the structural boundaries established by the **design-master** skill (DDD, Clean Architecture).
 - TDD follows the high-level architecture documented by the **docs-first** skill.
-- For foundational rules, failure protocols, and iterative development, adhere to **core-principles**.
 - For specific implementation patterns and unit testing in Rust, refer to **rust-master**.
+- For testing external APIs and handling mocked network responses, use **external-integration**.

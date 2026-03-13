@@ -82,4 +82,4 @@ Use Rust's module system to enforce DDD Bounded Contexts:
 - For applying TDD to Rust development, see **canon-tdd**.
 - For logging and observability in the application, use **logging-principles**.
 - For overarching architectural patterns like Clean Architecture, use **design-master**.
-- For foundational problem-solving and failure protocols, follow **core-principles**.
+- For implementing resilient external API integrations, refer to **external-integration**.

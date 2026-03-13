@@ -53,4 +53,4 @@ If an entity has a complex lifecycle, document its states and the events that tr
 - The designs produced here must adhere to the principles outlined in the **design-master** skill (Clean Architecture, SOLID).
 - Once the documentation is approved, implementation proceeds using the **canon-tdd** skill.
 - For authoring user-facing technical documentation (Tutorials, How-Tos, Reference, Explanation), trigger the **diataxis** skill.
-- For overall execution and best practices, see **core-principles**.
+- For diagramming systems that integrate with third-party APIs or external domains, refer to **external-integration**.
