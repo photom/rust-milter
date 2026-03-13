@@ -77,5 +77,5 @@ Structure your application into concentric layers. The overriding rule is **The 
 
 - For the visual representation of these designs without writing implementation code, trigger the **docs-first** skill.
 - For the implementation phase applying these designs iteratively, trigger the **canon-tdd** skill.
-- For foundational rules around refactoring and problem-solving, adhere to **core-principles**.
 - For applying these design patterns idiomaticaly in Rust, refer to **rust-master**.
+- For architectural boundaries involving external APIs or SaaS, see **external-integration**.

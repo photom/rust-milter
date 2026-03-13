@@ -64,4 +64,4 @@ For on-premise or client applications, ensure logs provide necessary information
 
 - For domain-specific context regarding SMTP and MTAs, see the **milter-protocol** skill.
 - For Rust implementation specifics, refer to the **rust-master** skill.
-- General development and operational guidelines are in **core-principles**.
+- For ensuring third-party interactions are properly logged and masked, see **external-integration**.

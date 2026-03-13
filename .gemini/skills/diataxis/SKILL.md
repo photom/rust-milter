@@ -52,4 +52,3 @@ Every piece of documentation must fit into exactly one of these four categories.
 ## Related Skills
 
 - For the initial architectural design and internal component documentation before implementation, trigger the **docs-first** skill.
-- For overarching guidelines on instructions and transparency, refer to **core-principles**.

@@ -36,3 +36,30 @@ This skill outlines the foundational rules and principles to govern behavior, pr
 - **Adaptive Complexity**: Scale the sophistication of the approach based on the complexity of the task.
 - **Verification**: Always confirm that commands were executed as expected (check logs/output).
 - **TDD**: Follow Test-Driven Development cycles to ensure reliability (see the **canon-tdd** skill).
+
+## Security & Confidentiality
+
+### 1. Restricted Files & Data
+**Strict Prohibition**: Do not read, modify, or expose the following sensitive files/data. If changes are required, immediately contact the user.
+- `.env` files
+- Files within `src/env`
+- Secrets configurations (e.g., `*/config/secrets.*`)
+- Private keys and certificates (e.g., `*/.pem`, `*/.key`)
+- Any files containing API keys, tokens, or authentication credentials.
+
+### 2. Security Guidelines
+- **No Hardcoding**: Never hardcode sensitive information (API keys, passwords, etc.). Use environment variables managed via secure secret managers.
+- **Zero-Commit Policy**: Ensure sensitive files are never committed to version control. Maintain a robust `.gitignore`.
+- **Input Validation**: Always validate and sanitize user input to prevent injection attacks (SQLi, XSS, etc.).
+- **Output Sanitization**: Ensure credentials and secrets are never leaked in logs, console outputs, or error messages.
+
+### 3. Vulnerability Detection & Automation
+- **Static Analysis (SAST)**: Utilize standard security scanning tools for the specific programming language (e.g., SonarQube, Snyk, Bandit, ESLint-plugin-security).
+- **Dependency Scanning**: Implement automated scanning for third-party libraries to detect and alert on known vulnerabilities (CVEs).
+- **Modern Principles**: Apply Zero Trust architectures and Cloud Security Best Practices (Least Privilege) in all design decisions.
+- **CI/CD Integration**: Incorporate security automation (SAST/DAST and audit logging) directly into the deployment pipeline.
+
+## Architectural Alignment
+
+- **Zero Trust**: Never trust any entity (internal or external) by default; verify everything.
+- **Least Privilege**: Grant the minimum level of access required for a function to perform its task.
