@@ -1,81 +1,87 @@
 ---
 name: design-master
-description: Procedural guidance for architecting and designing software systems using Domain-Driven Design (DDD), Clean Architecture, SOLID, KISS, YAGNI, and DRY principles. Use when designing new systems, refactoring existing architectures, or establishing structural boundaries.
+description: Procedural guidance for architecting software systems using Domain-Driven Design (DDD) and Clean Architecture. Focuses on Ubiquitous Language enforcement, Bounded Context isolation, and strategic design workflow.
 ---
 
-# Design Master: DDD, Clean Architecture, and Core Principles
+# Design Master: Strategic Design & Architecture Workflow
 
-This skill provides procedural guidance for designing robust, maintainable, and scalable software systems by applying Domain-Driven Design (DDD), Clean Architecture, and fundamental design principles (SOLID, KISS, YAGNI, DRY).
+This skill provides procedural guidance for applying Domain-Driven Design and Clean Architecture patterns, with emphasis on enforcing domain language consistency and structural boundaries.
 
-## Core Principles
+## Ubiquitous Language Enforcement (Critical Rule)
 
-Apply these principles rigorously during the design and architecture phases:
+**Strict Naming Convention Policy:**
+- Establish a common language shared by domain experts and developers
+- **RULE**: This language must strictly dictate ALL naming in your codebase
+- Class names, variables, and methods must **exactly match** the Ubiquitous Language
+- **NO technical jargon padding** (e.g., use `Connection`, not `ConnectionHandler` if domain says "Connection")
+- **NO abbreviations** unless the domain uses them
+- Code should read like domain documentation
 
-1. **SOLID Principles**:
-   - **S**ingle Responsibility: A class/module should have one, and only one, reason to change.
-   - **O**pen/Closed: Entities should be open for extension, but closed for modification.
-   - **L**iskov Substitution: Objects should be replaceable with instances of their subtypes without altering program correctness.
-   - **I**nterface Segregation: Many client-specific interfaces are better than one general-purpose interface.
-   - **D**ependency Inversion: Depend upon abstractions, not concretions.
+**Example:**
+- Domain says "Mail Filter" → Use `MailFilter`, NOT `MailFilterProcessor` or `MFHandler`
+- Domain says "SMTP Command" → Use `Command`, NOT `SmtpCommandMessage`
 
-2. **KISS (Keep It Simple, Stupid)**: Favor simple, straightforward designs over complex ones. Complexity must be justified by requirements.
+## Strategic Design Workflow
 
-3. **YAGNI (You Aren't Gonna Need It)**: Do not add functionality until it is absolutely necessary. Avoid speculative generality.
+Follow this sequence when designing new systems or bounded contexts:
 
-4. **DRY (Don't Repeat Yourself)**: Every piece of knowledge must have a single, unambiguous, authoritative representation within a system.
+### Phase 1: Define Domain Boundaries
+1. **Identify Core Domain**: What is the primary business problem being solved?
+2. **Define Domain Boundary**: Clearly mark what is *inside* (your responsibility) vs. *outside* (external dependencies)
+3. **Focus**: Concentrate effort on the core domain; treat everything else as supporting infrastructure
 
-## Domain-Driven Design (DDD) Workflow
+### Phase 2: Identify Bounded Contexts
+1. **Define Boundaries**: Identify explicit boundaries where a particular domain model applies
+2. **Context Consistency**: Within a Bounded Context, the Ubiquitous Language is strictly consistent
+3. **Model Isolation**: A model is ONLY valid within its Bounded Context
+4. **No Model Sharing**: Never share domain models across contexts; use DTOs or Anti-Corruption Layers instead
 
-DDD provides a structured approach to mapping business domains into software.
+**Key Rule**: If two teams or subsystems use the same word to mean different things, they are in different Bounded Contexts.
 
-1. **Strategic Design (The Big Picture)**:
-   - **Ubiquitous Language & Naming Conventions**: Establish a common language shared by domain experts and developers. **Rule**: This language must strictly dictate the naming conventions in your codebase. Class names, variables, and methods must exactly match the Ubiquitous Language without technical jargon padding.
-   - **Domain Boundary**: Clearly define what is *inside* your domain and what is *outside*. This helps in focusing on the core problem and ignoring irrelevant details.
-   - **Bounded Contexts**: The central pattern of DDD. It is the explicit boundary (both conceptual and often physical, like a module or microservice) within which a particular domain model applies and the Ubiquitous Language is strictly consistent. 
-     - A model is only valid within its Bounded Context. 
-     - Avoid sharing models across bounded contexts; instead, use DTOs, Anti-Corruption Layers, or Context Mapping to translate them.
-   - **Context Mapping**: Define the relationships and integrations between bounded contexts (e.g., Anti-Corruption Layer, Open Host Service, Shared Kernel) across their boundaries.
+### Phase 3: Context Mapping
+Define relationships between Bounded Contexts:
+- **Anti-Corruption Layer**: Protect your domain from external model changes
+- **Open Host Service**: Expose a well-defined protocol/API for others to use
+- **Shared Kernel**: Carefully shared subset of the domain model (use sparingly)
+- **Customer/Supplier**: Upstream/downstream dependencies
 
-2. **Tactical Design (The Implementation Details)**:
-   - Identify the core domain components (see "DDD Tactical Patterns" below) that will reside within each bounded context.
+### Phase 4: Tactical Patterns (Implementation)
+Within each Bounded Context, identify:
+- **Aggregate Roots**: Main entry points to clusters of domain objects
+- **Repositories**: Abstractions for aggregate persistence
+- **Domain Services**: Operations that don't naturally fit in entities
+- **Domain Events**: Capture significant domain occurrences
 
-## DDD Tactical Patterns
+**Note**: Use standard DDD patterns (Entities, Value Objects, Aggregates). Focus here is on applying them systematically, not defining them.
 
-Use these patterns to construct your domain model within a Bounded Context:
+## Clean Architecture: The Dependency Rule
 
-- **Entities**: Objects that have a distinct identity that runs through time and different states (e.g., `User`, `Order`). Two entities with the same attributes but different IDs are different.
-- **Value Objects**: Objects that describe characteristics or attributes but have no conceptual identity (e.g., `Address`, `Money`). They should be immutable. Two value objects with the same attributes are identical.
-- **Aggregates**: A cluster of domain objects (Entities and Value Objects) that can be treated as a single unit. Every aggregate has a single **Aggregate Root** (an Entity). External objects can only hold references to the Aggregate Root.
-- **Repositories**: Interfaces that abstract the storage and retrieval of Aggregates. They pretend to be an in-memory collection of aggregates.
-- **Domain Services**: Operations or actions that belong to the domain but do not naturally fit within an Entity or Value Object. They are stateless.
-- **Domain Events**: Objects that capture the memory of something interesting that has occurred in the domain (e.g., `OrderPlacedEvent`). Used to decouple side effects.
+**Core Principle**: Source code dependencies must ONLY point inward, toward higher-level policies.
 
-## Clean Architecture (Architectural Layers)
+**Layer Structure** (innermost to outermost):
+1. **Domain Layer**: Pure domain logic (entities, value objects, domain services) - NO dependencies
+2. **Application Layer**: Use cases and orchestration - depends ONLY on Domain
+3. **Interface Adapters**: Controllers, presenters, gateways - depends ONLY on Application
+4. **Infrastructure**: Frameworks, databases, external APIs - depends on Interface Adapters
 
-Structure your application into concentric layers. The overriding rule is **The Dependency Rule**: *Source code dependencies must only point inward, toward higher-level policies.*
+**Critical Rules**:
+- Domain NEVER imports from Application, Adapters, or Infrastructure
+- Use Dependency Inversion (interfaces in inner layers, implementations in outer layers)
+- Keep Infrastructure layer thin (wiring only)
 
-1. **Domain Layer (Entities & Enterprise Rules)**:
-   - The innermost layer. Contains the DDD Entities, Value Objects, Domain Events, and Domain Services.
-   - It depends on absolutely nothing else in the system (no frameworks, no databases).
+## Design Checklist
 
-2. **Application Layer (Use Cases & Application Rules)**:
-   - Orchestrates the flow of data to and from the domain entities, and directs those entities to use their critical business rules to achieve the goals of the use case.
-   - Contains application services, input/output boundary interfaces (ports).
-   - Depends only on the Domain Layer.
-
-3. **Interface Adapters (Presentation & Controllers)**:
-   - Converts data from the format most convenient for the Application and Domain layers, to the format most convenient for some external agency such as the Web or a database.
-   - Contains Controllers, Presenters, Gateways, and implementations of Repositories.
-   - Depends on the Application Layer.
-
-4. **Infrastructure / Frameworks & Drivers**:
-   - The outermost layer. Contains details like the database, the web framework, UI, external APIs, etc.
-   - Keep this layer thin. It wires up the application.
-   - Depends on the Interface Adapters layer.
+Before implementation, verify:
+- [ ] Ubiquitous Language documented and enforced in naming
+- [ ] Bounded Context boundaries clearly defined
+- [ ] No domain models shared across contexts
+- [ ] Context mapping documented (Anti-Corruption Layers identified)
+- [ ] Aggregate Roots identified for each context
+- [ ] Dependencies flow inward only (Domain → Application → Adapters → Infrastructure)
 
 ## Related Skills
 
-- For the visual representation of these designs without writing implementation code, trigger the **docs-first** skill.
-- For the implementation phase applying these designs iteratively, trigger the **canon-tdd** skill.
-- For applying these design patterns idiomaticaly in Rust, refer to **rust-master**.
-- For architectural boundaries involving external APIs or SaaS, see **external-integration**.
+- **docs-first**: Visualize designs with Mermaid diagrams before coding
+- **canon-tdd**: Implement designs iteratively using TDD
+- **rust-master**: Apply these patterns idiomatically in Rust
+- **external-integration**: Handle boundaries with external systems
