@@ -552,6 +552,7 @@ Action flags indicate what actions the milter requests to perform:
 | `SMFIF_NONE` | 0x00000000 | No flags |
 | `SMFIF_ADDHDRS` | 0x00000001 | Add headers |
 | `SMFIF_CHGBODY` | 0x00000002 | Change/replace body |
+| `SMFIF_MODBODY` | `SMFIF_CHGBODY` | Alias for CHGBODY (backwards compatible) |
 | `SMFIF_ADDRCPT` | 0x00000004 | Add recipients |
 | `SMFIF_DELRCPT` | 0x00000008 | Delete recipients |
 | `SMFIF_CHGHDRS` | 0x00000010 | Change/delete headers |
@@ -1009,7 +1010,8 @@ int main(void)
 |----------|-------|-------------|
 | `SMFI_PROT_VERSION_MIN` | 2 | Minimum protocol version |
 | `SMFI_PROT_VERSION` | 6 | Current protocol version |
-| `SMFI_VERSION` | 0x01000001 | libmilter API version |
+| `SMFI_VERSION` | 0x01000001 or 0x01000002 | libmilter API version (depends on MDS support) |
+| `SMFI_VERSION_MDS` | 0x01000002 | First version with MDS (Max Data Size) support |
 
 ## References
 
