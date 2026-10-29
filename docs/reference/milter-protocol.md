@@ -222,6 +222,8 @@ A milter can listen on:
 - an IPv4 socket: `inet:port@hostname`
 - an IPv6 socket: `inet6:port@hostname`
 
+rust-milter listens on TCP only (`inet:` and `inet6:`). It does not support Unix domain sockets.
+
 ## Message format
 
 Every message in the milter protocol has this layout:

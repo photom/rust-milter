@@ -52,7 +52,7 @@ graph TB
 ### 1. Server
 
 Responsibilities:
-- bind and listen on sockets (Unix, IPv4, IPv6)
+- bind and listen on TCP sockets (IPv4, IPv6); Unix domain sockets are not supported
 - accept incoming connections and spawn a handler task for each
 - track active connections and manage their lifecycle
 - coordinate the graceful shutdown sequence
@@ -61,7 +61,7 @@ Responsibilities:
 - provide metrics and a health check
 
 Dependencies:
-- Tokio `TcpListener` and `UnixListener`
+- Tokio `TcpListener`
 - the `Handler` trait, implemented by the user
 - the Connection component
 
@@ -81,7 +81,7 @@ Responsibilities:
 - enforce the read, write, and idle timeouts
 
 Dependencies:
-- Tokio `TcpStream` or `UnixStream`
+- Tokio `TcpStream`
 - the Frame component
 - `bytes::BytesMut` for buffering
 

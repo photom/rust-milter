@@ -16,7 +16,6 @@
   - [Resource limits configuration](#resource-limits-configuration)
   - [Default values](#default-values)
 - [Socket address types](#socket-address-types)
-  - [Unix domain sockets](#unix-domain-sockets)
   - [IPv4 sockets](#ipv4-sockets)
   - [IPv6 sockets](#ipv6-sockets)
   - [Address parsing errors](#address-parsing-errors)
@@ -70,55 +69,56 @@
 
 ## Overview
 
-Design and requirements for the async TCP server in rust-milter. The server speaks the milter protocol over TCP/IP and Unix domain sockets, handles many concurrent connections, and shuts down gracefully.
+Design and requirements for the async TCP server in rust-milter. The server speaks the milter protocol over TCP/IP (IPv4 and IPv6), handles many concurrent connections, and shuts down gracefully.
+
+rust-milter does not support Unix domain sockets. An MTA that talks to rust-milter must use an `inet:` or `inet6:` milter address.
 
 ## Requirements summary
 
 | Requirement | Target |
 |-------------|--------|
 | Concurrent connections | 10,000+ (C10K) |
-| Socket types | Unix, IPv4, IPv6 |
+| Socket types | IPv4, IPv6 |
 | Graceful shutdown | SIGTERM and SIGINT signals |
 | Configurable backlog | Yes |
-| Configurable timeouts | Read/Write/Idle |
+| Configurable timeouts | Connect/Read/Write/Idle |
 | Async runtime | Tokio |
 
 ## Architecture
 
 ### Component overview
 
+```mermaid
+flowchart TB
+    subgraph server["TCP server"]
+        direction TB
+        l4["Listener (IPv4)"]
+        l6["Listener (IPv6)"]
+        more["Listener (...)"]
+        acceptor["Connection acceptor<br/>(kernel backlog)"]
+        h1["Connection handler"]
+        h2["Connection handler"]
+        h3["Connection handler (...)"]
+        l4 --> acceptor
+        l6 --> acceptor
+        more --> acceptor
+        acceptor --> h1
+        acceptor --> h2
+        acceptor --> h3
+    end
+    subgraph coordinator["Shutdown coordinator"]
+        direction TB
+        signals["Signal handling<br/>(SIGTERM, SIGINT, SIGQUIT)"]
+        drain["Connection draining"]
+        terminate["Graceful termination"]
+    end
+    coordinator -. "stop accepting" .-> acceptor
+    coordinator -. "cancel" .-> h1
+    coordinator -. "cancel" .-> h2
+    coordinator -. "cancel" .-> h3
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        TCP Server                                │
-├─────────────────────────────────────────────────────────────────┤
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │
-│  │   Listener  │  │   Listener  │  │   Listener  │   ...        │
-│  │  (Unix)     │  │  (IPv4)     │  │  (IPv6)     │              │
-│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘              │
-│         │                │                │                      │
-│         └────────────────┼────────────────┘                      │
-│                          ▼                                       │
-│              ┌───────────────────────┐                          │
-│              │   Connection Acceptor │                          │
-│              │   (with backlog)      │                          │
-│              └───────────┬───────────┘                          │
-│                          │                                       │
-│         ┌────────────────┼────────────────┐                     │
-│         ▼                ▼                ▼                     │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │
-│  │ Connection  │  │ Connection  │  │ Connection  │   ...        │
-│  │  Handler    │  │  Handler    │  │  Handler    │              │
-│  └─────────────┘  └─────────────┘  └─────────────┘              │
-│                                                                  │
-├─────────────────────────────────────────────────────────────────┤
-│  ┌─────────────────────────────────────────────────────────────┐│
-│  │                  Shutdown Coordinator                        ││
-│  │  - Signal handling (SIGTERM, SIGINT, SIGQUIT)               ││
-│  │  - Connection draining                                       ││
-│  │  - Graceful termination                                      ││
-│  └─────────────────────────────────────────────────────────────┘│
-└─────────────────────────────────────────────────────────────────┘
-```
+
+Each listener accepts TCP connections from its own address. The server spawns one connection handler task per accepted connection. The shutdown coordinator stops the listeners and cancels the handlers through a shared `CancellationToken`.
 
 ### Async runtime
 
@@ -150,10 +150,12 @@ The server MUST use Tokio as its async runtime, configured as follows:
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `connect_timeout` | Duration | Time allowed from `accept()` until the MTA's first command (`SMFIC_OPTNEG`) arrives |
 | `read_timeout` | Duration | Read timeout for socket operations |
 | `write_timeout` | Duration | Write timeout for socket operations |
 | `idle_timeout` | Duration | Connection idle timeout (no data exchanged) |
-| `connect_timeout` | Duration | Initial connection timeout (time to complete handshake) |
+
+The server cannot observe the TCP handshake: the kernel completes it before `accept()` returns. `connect_timeout` therefore covers the time between accepting the socket and receiving the first command.
 
 ### Socket options
 
@@ -161,7 +163,7 @@ The server MUST use Tokio as its async runtime, configured as follows:
 |-------|------|-------------|
 | `tcp_nodelay` | bool | Enable TCP_NODELAY (disable Nagle's algorithm) |
 | `reuse_addr` | bool | Enable SO_REUSEADDR |
-| `reuse_port` | bool | Enable SO_REUSEPORT (Linux 3.9+) |
+| `reuse_port` | bool | Enable SO_REUSEPORT (Linux 3.9+, BSD) |
 | `keepalive` | Option\<KeepaliveConfig\> | TCP keepalive settings |
 | `recv_buffer_size` | Option\<usize\> | Receive buffer size (SO_RCVBUF), None = OS default |
 | `send_buffer_size` | Option\<usize\> | Send buffer size (SO_SNDBUF), None = OS default |
@@ -188,19 +190,19 @@ The server MUST use Tokio as its async runtime, configured as follows:
 |-------|------|-------------|
 | `max_fds` | Option\<usize\> | Maximum file descriptors (None = system limit) |
 | `max_memory` | Option\<usize\> | Memory limit for buffers in bytes (None = unlimited) |
-| `per_connection_buffer` | usize | Per-connection buffer limit in bytes |
+| `per_connection_buffer` | usize | Per-connection buffer limit in bytes; must hold one complete milter packet |
 
 ### Default values
 
-| Parameter | Default Value | Range |
+| Parameter | Default value | Range |
 |-----------|---------------|-------|
 | `backlog` | 1024 | 1 - 65535 |
 | `max_connections` | 10000 | 0 (unlimited) - 1000000 |
 | `worker_threads` | CPU cores | 1 - 1024 |
+| `connect_timeout` | 10 seconds | 1ms - 5 minutes |
 | `read_timeout` | 30 seconds | 1ms - 1 hour |
 | `write_timeout` | 30 seconds | 1ms - 1 hour |
 | `idle_timeout` | 300 seconds | 1s - 24 hours |
-| `connect_timeout` | 10 seconds | 1ms - 5 minutes |
 | `tcp_nodelay` | true | - |
 | `reuse_addr` | true | - |
 | `reuse_port` | false | - |
@@ -214,30 +216,13 @@ The server MUST use Tokio as its async runtime, configured as follows:
 | `drain_timeout` | 30 seconds | 1s - 5 minutes |
 | `max_fds` | System limit | - |
 | `max_memory` | Unlimited | - |
-| `per_connection_buffer` | 64 KB | 1KB - 16MB |
+| `per_connection_buffer` | 128 KB | 65,540 bytes - 16MB |
+
+The lower bound of `per_connection_buffer` is one full default-size milter packet: 4 length bytes, 1 command byte, and 65,535 data bytes. A body chunk from either MTA can reach that size, so a smaller buffer would reject valid traffic.
 
 ## Socket address types
 
-The server MUST support these socket types, as the milter protocol defines them.
-
-### Unix domain sockets
-
-| Format | Example |
-|--------|---------|
-| `unix:/path/to/socket` | `unix:/var/run/milter.sock` |
-| `local:/path/to/socket` | `local:/tmp/milter.sock` |
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `file_permissions` | 0o660 | Unix file permissions for socket |
-| `remove_existing` | true | Remove existing socket file before binding |
-| `max_path_length` | 108 bytes | Maximum socket path length (OS limit) |
-
-Unix socket handling:
-- Remove an existing socket file before binding (configurable).
-- Set the file permissions (default: 0o660).
-- Handle `EADDRINUSE` without crashing.
-- The path MUST NOT exceed 108 bytes (the `sun_path` limit).
+The server MUST support these TCP address types, in the libmilter (`smfi_setconn`) style and in plain socket address style.
 
 ### IPv4 sockets
 
@@ -265,55 +250,42 @@ IPv6 handling:
 
 | Error | Description |
 |-------|-------------|
-| `InvalidFormat` | Address format not recognized |
+| `InvalidFormat` | Address format not recognized, including `unix:` and `local:` addresses |
 | `InvalidHost` | Host name or IP address invalid |
 | `InvalidPort` | Port number out of range (1-65535) |
-| `PathTooLong` | Unix socket path exceeds 108 bytes |
 
 ## Connection lifecycle
 
 ### State machine
 
+```mermaid
+stateDiagram-v2
+    [*] --> CONNECTED: accept() returns
+    CONNECTED --> ACTIVE: first command received
+    CONNECTED --> ERROR: connect_timeout expired or setup error
+    CONNECTED --> CLOSED: client closed or shutdown signal
+    IDLE --> ACTIVE: data received
+    ACTIVE --> IDLE: request processing complete
+    IDLE --> ERROR: idle_timeout expired
+    ACTIVE --> ERROR: I/O or protocol error
+    IDLE --> DRAINING: shutdown signal
+    ACTIVE --> DRAINING: shutdown signal (after current request)
+    IDLE --> CLOSED: client closed
+    ACTIVE --> CLOSED: client closed
+    ERROR --> CLOSED: error logged, cleanup complete
+    DRAINING --> CLOSED: current work complete or drain_timeout expired
+    CLOSED --> [*]
 ```
-                              ┌─────────────────────────────────────┐
-                              │                                     │
-                              ▼                                     │
-┌─────────┐   accept()   ┌───────────┐                              │
-│ PENDING │─────────────▶│ CONNECTED │──────────────────────────────┤
-└─────────┘              └─────┬─────┘                              │
-                               │                                    │
-              ┌────────────────┼────────────────┐                   │
-              │                │                │                   │
-              ▼                ▼                ▼                   │
-       ┌───────────┐    ┌───────────┐    ┌───────────┐             │
-       │   IDLE    │◀──▶│  ACTIVE   │───▶│   ERROR   │─────────────┤
-       │ (waiting  │    │(processing│    │           │             │
-       │ for data) │    │ request)  │    │           │             │
-       └─────┬─────┘    └─────┬─────┘    └───────────┘             │
-             │                │                                     │
-             │                │   shutdown signal                   │
-             │                ▼                                     │
-             │        ┌───────────────┐                             │
-             └───────▶│   DRAINING    │                             │
-                      │(completing    │                             │
-                      │ current work) │                             │
-                      └───────┬───────┘                             │
-                              │                                     │
-                              ▼                                     │
-                      ┌───────────────┐                             │
-                      │    CLOSED     │◀────────────────────────────┘
-                      └───────────────┘
-```
+
+A connection waiting in the kernel's accept queue is not visible to the server. The state machine starts when `accept()` returns.
 
 ### State transition rules
 
 | From | To | Trigger |
 |------|----|---------|
-| PENDING | CONNECTED | `accept()` succeeds |
-| PENDING | CLOSED | `accept()` fails or server shutting down |
-| CONNECTED | IDLE | Connection ready, waiting for first data |
-| CONNECTED | ERROR | Handshake timeout or error |
-| CONNECTED | CLOSED | Immediate close (client disconnect) |
+| CONNECTED | ACTIVE | First command received |
+| CONNECTED | ERROR | `connect_timeout` expired, or socket setup failed |
+| CONNECTED | CLOSED | Client closed the connection, or a shutdown signal arrived before any command |
 | IDLE | ACTIVE | Data received |
 | IDLE | ERROR | Idle timeout exceeded |
 | IDLE | DRAINING | Shutdown signal received |
@@ -329,8 +301,7 @@ IPv6 handling:
 
 | State | Description |
 |-------|-------------|
-| `PENDING` | Connection in accept queue (backlog) |
-| `CONNECTED` | TCP handshake complete, ready for data |
+| `CONNECTED` | Accepted, waiting for the MTA's first command |
 | `IDLE` | Waiting for data, subject to idle timeout |
 | `ACTIVE` | Currently processing a request |
 | `DRAINING` | Shutdown initiated, completing current work |
@@ -347,8 +318,8 @@ The TCP server MUST handle these signals for graceful shutdown:
 |--------|----------|----------|
 | `SIGTERM` | REQUIRED | Initiate graceful shutdown |
 | `SIGINT` | REQUIRED | Initiate graceful shutdown (Ctrl+C) |
-| `SIGQUIT` | Optional | Graceful shutdown with core dump (if enabled) |
-| `SIGHUP` | Optional | Reserved for future configuration reload |
+| `SIGQUIT` | Optional | Initiate graceful shutdown. Handling the signal replaces its default action, a core dump |
+| `SIGHUP` | Optional | Reload the configuration through the registered loader (designed in [hot-reload.md](hot-reload.md)) |
 
 Signal handling rules:
 
@@ -360,7 +331,7 @@ Signal handling rules:
 
 A second signal during shutdown:
 
-| First Signal | Second Signal | Behavior |
+| First signal | Second signal | Behavior |
 |--------------|---------------|----------|
 | SIGTERM | SIGTERM | Force immediate shutdown (skip drain) |
 | SIGINT | SIGINT | Force immediate shutdown (skip drain) |
@@ -376,13 +347,13 @@ A second signal during shutdown:
 5. It notifies every active connection through the cancellation token.
 6. It lets existing connections finish within `drain_timeout`.
 7. When the drain timeout expires, it force-closes the remaining connections.
-8. It releases resources and removes Unix socket files.
+8. It releases resources.
 9. It logs shutdown completion at INFO level.
 10. The process exits with code 0.
 
 ### Shutdown exit codes
 
-| Condition | Exit Code |
+| Condition | Exit code |
 |-----------|-----------|
 | Normal shutdown (SIGTERM/SIGINT) | 0 |
 | Forced shutdown (double signal) | 0 |
@@ -407,17 +378,18 @@ Shutdown reasons:
 
 ### Shutdown timeline
 
-```
-Signal     Grace Period          Drain Timeout              Force Close
-  │        (5 seconds)           (30 seconds)                    │
-  │             │                      │                         │
-  ▼             ▼                      ▼                         ▼
-──┬─────────────┬──────────────────────┬─────────────────────────┬──▶ time
-  │             │                      │                         │
-  │ Stop        │ Start draining       │ Force close             │ Exit
-  │ accepting   │ existing             │ remaining               │
-  │ new         │ connections          │ connections             │
-  │ connections │                      │                         │
+With the default `grace_period` (5 seconds) and `drain_timeout` (30 seconds):
+
+```mermaid
+gantt
+    title Shutdown timeline with default settings
+    dateFormat X
+    axisFormat %S s
+    section Server
+    Signal received, stop accepting new connections :milestone, stop, 0, 0
+    Grace period (grace_period)                     :grace, 0, 5
+    Drain existing connections (drain_timeout)      :drain, 5, 35
+    Force-close remaining connections, exit         :milestone, close, 35, 35
 ```
 
 ## Connection handling
@@ -437,9 +409,9 @@ The connection handler trait defines these methods:
 | Property | Type | Description |
 |----------|------|-------------|
 | `id` | ConnectionId | Unique connection identifier (see below) |
-| `remote_addr` | Option\<SocketAddr\> | Remote address (None for Unix sockets without SO_PEERCRED) |
+| `remote_addr` | SocketAddr | Remote address of the MTA |
 | `local_addr` | SocketAddr | Local address |
-| `connected_at` | Instant | Connection established time |
+| `connected_at` | Instant | Time `accept()` returned |
 | `state` | ConnectionState | Current connection state |
 | `bytes_read` | u64 | Total bytes read on this connection |
 | `bytes_written` | u64 | Total bytes written on this connection |
@@ -468,9 +440,10 @@ Disconnect reasons:
 |--------|-------------|
 | `ClientClosed` | Client initiated close |
 | `ServerShutdown` | Server shutdown in progress |
-| `Timeout` | Idle or read/write timeout |
+| `Timeout` | Connect, idle, or read/write timeout |
 | `Error` | Error occurred |
 | `Reset` | Connection reset by peer |
+| `LimitReached` | Closed at once because `max_connections` was reached |
 
 ### Connection identifier
 
@@ -506,7 +479,7 @@ To support 10,000 or more concurrent connections:
 
 As the server approaches its resource limits:
 
-1. When the connection limit is reached, it rejects new connections with `ECONNREFUSED`.
+1. When `max_connections` is reached, the server accepts each new connection and closes it at once. The MTA sees the connection close during option negotiation and applies its own failure policy (Sendmail `F=` flags, Postfix `milter_default_action`). A TCP server cannot answer an incoming connection with `ECONNREFUSED`; only a port with no listener does that.
 2. Under memory pressure, it applies backpressure to slow clients.
 3. When the CPU is saturated, it limits concurrent request processing.
 
@@ -528,6 +501,7 @@ As the server approaches its resource limits:
 | Error | Description |
 |-------|-------------|
 | `Io` | I/O error |
+| `ConnectTimeout` | No first command within `connect_timeout` |
 | `ReadTimeout` | Read timeout exceeded |
 | `WriteTimeout` | Write timeout exceeded |
 | `IdleTimeout` | Idle timeout exceeded |
@@ -535,24 +509,23 @@ As the server approaches its resource limits:
 | `Closed` | Connection closed (EOF) |
 | `BrokenPipe` | Broken pipe (EPIPE) |
 | `NotConnected` | Socket not connected (ENOTCONN) |
-| `WouldBlock` | Operation would block (should not occur in async) |
 | `Protocol` | Protocol error |
 | `Shutdown` | Shutdown requested |
 
 ### Error recovery
 
-| Error | Recovery Action |
-|-------|-----------------|
-| `EMFILE` (too many open files) | Log, reject new connections temporarily, back off |
-| `ENFILE` (system file table full) | Log, reject new connections temporarily, back off |
-| `ECONNRESET` | Log at debug level, close connection |
-| `ETIMEDOUT` | Close connection, log |
-| `EPIPE` | Close connection, log at debug level |
-| `ENOTCONN` | Close connection, log at debug level |
-| `EWOULDBLOCK` / `EAGAIN` | Retry (handled by Tokio automatically) |
-| `EINTR` | Retry operation (handled by Tokio automatically) |
-| `ECONNREFUSED` | Log, close connection |
-| Temporary errors | Retry with exponential backoff (max 5 retries) |
+| Error | Where | Recovery action |
+|-------|-------|-----------------|
+| `EMFILE` (too many open files) | `accept()` | Log, stop accepting for a short back-off, then retry |
+| `ENFILE` (system file table full) | `accept()` | Log, stop accepting for a short back-off, then retry |
+| `ECONNABORTED` | `accept()` | The client gave up before `accept()` returned. Log at debug level and keep accepting |
+| `ECONNRESET` | connection | Log at debug level, close connection |
+| `ETIMEDOUT` | connection | Close connection, log |
+| `EPIPE` | connection | Close connection, log at debug level |
+| `ENOTCONN` | connection | Close connection, log at debug level |
+| `EWOULDBLOCK` / `EAGAIN` | any | Retry (handled by Tokio) |
+| `EINTR` | any | Retry operation (handled by Tokio) |
+| Temporary errors | any | Retry with exponential backoff (max 5 retries) |
 
 ### Partial bind failure
 
@@ -583,23 +556,24 @@ In `BestEffort` mode the server:
 
 ### Connection lifecycle logs
 
-| Event | Level | Required Fields |
+| Event | Level | Required fields |
 |-------|-------|-----------------|
 | Connection accepted | DEBUG | `conn_id`, `remote_addr`, `local_addr` |
-| Connection established | DEBUG | `conn_id`, `remote_addr`, `local_addr`, `duration_ms` (time to establish) |
+| First command received | DEBUG | `conn_id`, `remote_addr`, `local_addr`, `duration_ms` (time since accept) |
 | Connection active | TRACE | `conn_id`, `state` |
 | Connection idle | TRACE | `conn_id`, `idle_since` |
 | Connection draining | DEBUG | `conn_id`, `reason` |
 | Connection closed (normal) | DEBUG | `conn_id`, `remote_addr`, `duration_ms`, `bytes_read`, `bytes_written`, `reason` |
 | Connection closed (error) | WARN | `conn_id`, `remote_addr`, `duration_ms`, `bytes_read`, `bytes_written`, `error`, `reason` |
 | Connection timeout | DEBUG | `conn_id`, `timeout_type`, `timeout_value` |
+| Connection rejected (limit) | WARN | `conn_id`, `remote_addr`, `max_connections` |
 
 Fields of the "connection accepted" log:
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `conn_id` | u64 | Unique connection identifier |
-| `remote_addr` | String | Remote address (IP:port or "unix") |
+| `remote_addr` | String | Remote address (IP:port) |
 | `local_addr` | String | Local address |
 | `listener` | String | Listener address that accepted |
 
@@ -618,7 +592,7 @@ Fields of the "connection closed" log:
 
 ### Server lifecycle logs
 
-| Event | Level | Required Fields |
+| Event | Level | Required fields |
 |-------|-------|-----------------|
 | Server starting | INFO | `version`, `bind_addresses` |
 | Server started | INFO | `bind_addresses`, `pid` |
@@ -634,7 +608,7 @@ Fields of the "connection closed" log:
 
 ### Error logs
 
-| Event | Level | Required Fields |
+| Event | Level | Required fields |
 |-------|-------|-----------------|
 | Accept error | WARN | `listener`, `error`, `consecutive_errors` |
 | Accept error (fatal) | ERROR | `listener`, `error` |
@@ -664,12 +638,13 @@ The server SHOULD expose these metrics:
 | `connections_accepted_total` | Counter | Total connections accepted |
 | `connections_active` | Gauge | Current active connections |
 | `connections_closed_total` | Counter | Total connections closed |
-| `connections_rejected_total` | Counter | Connections rejected (limit reached) |
+| `connections_rejected_total` | Counter | Connections closed at once because `max_connections` was reached |
 | `connection_errors_total` | Counter (labeled) | Connection errors by type |
 | `connection_duration_seconds` | Histogram | Connection duration distribution |
 | `bytes_received_total` | Counter | Total bytes received |
 | `bytes_sent_total` | Counter | Total bytes sent |
-| `backlog_size` | Gauge | Current backlog size (approximate) |
+
+The length of the kernel's accept queue is not available through Tokio or the standard socket API, so the server does not report it.
 
 ### Health check
 
@@ -704,6 +679,7 @@ The server uses the builder pattern with these methods:
 | `backlog(size)` | Set listen backlog |
 | `max_connections(count)` | Set maximum concurrent connections |
 | `worker_threads(count)` | Set number of worker threads |
+| `connect_timeout(duration)` | Set the time allowed until the first command |
 | `read_timeout(duration)` | Set read timeout |
 | `write_timeout(duration)` | Set write timeout |
 | `idle_timeout(duration)` | Set idle timeout |
@@ -732,7 +708,7 @@ The server handle provides:
 
 ### Test coverage
 
-| Category | Minimum Coverage |
+| Category | Minimum coverage |
 |----------|------------------|
 | Unit tests | 80% line coverage |
 | Integration tests | All public APIs |
@@ -742,7 +718,7 @@ The server handle provides:
 ### Unit tests
 
 - configuration validation
-- socket address parsing
+- socket address parsing, including rejection of `unix:` and `local:` addresses
 - error handling
 - timeout behavior
 - state machine transitions
@@ -750,13 +726,13 @@ The server handle provides:
 
 ### Integration tests
 
-- accepting connections on every socket type (Unix, IPv4, IPv6)
+- accepting connections on IPv4, IPv6, and dual-stack sockets
 - handling 100 or more concurrent connections
 - graceful shutdown with active connections
-- timeout enforcement (read, write, idle)
+- timeout enforcement (connect, read, write, idle)
 - reconnection after a server restart
 - partial bind failure
-- resource limit enforcement
+- resource limit enforcement, including the close-at-once behavior at `max_connections`
 
 ### Load tests
 
@@ -768,7 +744,7 @@ The server handle provides:
 ### Chaos tests
 
 - random connection drops
-- network partitions (TCP)
+- network partitions
 - resource exhaustion (FDs, memory)
 - signals during high load
 - slow clients (slowloris style)
@@ -777,21 +753,19 @@ The server handle provides:
 
 1. Validate every configuration parameter.
 2. Enforce resource limits to prevent denial of service.
-3. Restrict access to the Unix socket (0o660 by default).
-4. The server should not require root privileges.
+3. The milter protocol has no authentication or encryption. Bind to a loopback address unless the MTA runs on another host, and restrict access with firewall rules when it does.
+4. The server should not require root privileges. Use a port above 1023.
 5. Enforce timeouts to stop slowloris-style attacks.
 6. Optionally rate-limit connections per source.
-7. Validate Unix socket paths against path traversal.
 
 ## Implementation notes
 
 ### Tokio practices
 
 1. Use `tokio::select!` for cancellation-safe operations.
-2. Prefer `tokio::io::copy` for data transfer.
-3. Use `BufReader` and `BufWriter` for buffered I/O.
-4. Avoid blocking operations in async code.
-5. Use `tokio::task::spawn_blocking` for CPU-intensive work.
+2. Use `BufReader` and `BufWriter` for buffered I/O.
+3. Avoid blocking operations in async code.
+4. Use `tokio::task::spawn_blocking` for CPU-intensive work.
 
 ### Memory
 
@@ -809,20 +783,20 @@ The server handle provides:
 
 ## Dependencies
 
-| Crate | Purpose | Version |
-|-------|---------|---------|
-| `tokio` | Async runtime | 1.x |
-| `tokio-util` | Utilities (CancellationToken, etc.) | 0.7.x |
-| `socket2` | Advanced socket options | 0.5.x |
-| `tracing` | Structured logging | 0.1.x |
-| `thiserror` | Error types | 1.x |
-| `bytes` | Efficient byte handling | 1.x |
+| Crate | Purpose |
+|-------|---------|
+| `tokio` | Async runtime |
+| `tokio-util` | Utilities (CancellationToken, etc.) |
+| `socket2` | Advanced socket options |
+| `tracing` | Structured logging |
+| `thiserror` | Error types |
+| `bytes` | Efficient byte handling |
 
 ## Future considerations
 
 - TLS support: optional TLS termination
-- connection pooling for milter client connections
-- hot reload: reload the configuration without a restart (SIGHUP)
+- connection pooling for milter client connections: designed in [milter-client.md](milter-client.md)
+- hot reload of the configuration on SIGHUP: designed in [hot-reload.md](hot-reload.md)
 - clustering: coordination between several server instances
 - metrics export: Prometheus or OpenTelemetry integration
 
