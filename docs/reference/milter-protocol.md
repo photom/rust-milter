@@ -1,10 +1,15 @@
 # Milter protocol specification <!-- omit from toc -->
 - [Overview](#overview)
+- [rust-milter protocol support](#rust-milter-protocol-support)
 - [MTA-specific differences](#mta-specific-differences)
   - [Connection lifecycle](#connection-lifecycle)
   - [Hostname handling (SMFIC\_CONNECT)](#hostname-handling-smfic_connect)
   - [SMTP reply code handling (SMFIR\_REPLYCODE)](#smtp-reply-code-handling-smfir_replycode)
   - [Protocol version configuration](#protocol-version-configuration)
+  - [Replies accepted at each stage](#replies-accepted-at-each-stage)
+  - [Macros](#macros)
+  - [Abort handling](#abort-handling)
+  - [Headers and body](#headers-and-body)
   - [Error handling and cleanup](#error-handling-and-cleanup)
   - [Multi-line reply handling](#multi-line-reply-handling)
 - [Protocol architecture](#protocol-architecture)
@@ -47,8 +52,9 @@
   - [2. Hostname processing](#2-hostname-processing)
   - [3. Reply code formatting](#3-reply-code-formatting)
   - [4. Protocol version negotiation](#4-protocol-version-negotiation)
-  - [5. Error recovery](#5-error-recovery)
-  - [6. Testing strategy](#6-testing-strategy)
+  - [5. Stage-restricted replies](#5-stage-restricted-replies)
+  - [6. Error recovery](#6-error-recovery)
+  - [7. Testing strategy](#7-testing-strategy)
 - [Security considerations](#security-considerations)
 - [Example: simple milter implementation](#example-simple-milter-implementation)
 - [Protocol constants summary](#protocol-constants-summary)
@@ -62,11 +68,20 @@
 
 Milter (mail filter) is the protocol between a Mail Transfer Agent (MTA), such as Sendmail or Postfix, and external mail filter programs. Through it, a third-party program sees each message while the MTA processes it and can filter on the metadata and the content.
 
-This specification follows two implementations:
-- Sendmail libmilter, version 8.18.2
-- Postfix milter, the milter8 module
+This specification is checked against the source code of:
+- Sendmail 8.19.0.2: libmilter (`include/libmilter/`, `libmilter/`) and the MTA side (`sendmail/milter.c`)
+- Postfix 3.12: the `milter8` module (`src/milter/milter8.c`)
 
 Both MTAs implement the same core protocol. Where their behavior differs, this specification says so.
+
+## rust-milter protocol support
+
+rust-milter supports Milter protocol versions 2 through 6. The minimum is 2, the same as libmilter (`SMFI_PROT_VERSION_MIN` in `libmilter/engine.c`).
+
+- If the MTA offers a version below 2 in `SMFIC_OPTNEG`, rust-milter closes the connection without replying.
+- Otherwise rust-milter answers with the lower of the MTA's version and 6, as libmilter does.
+- rust-milter uses only the commands, replies, and flags that the negotiated version and the MTA's offered flags allow. See [Protocol version](#protocol-version) for what each version adds.
+- There is no protocol version 5. Neither MTA sends it, and Postfix rejects it in `milter_protocol`.
 
 ## MTA-specific differences
 
@@ -74,49 +89,97 @@ Sendmail and Postfix both implement protocol version 6, but they behave differen
 
 ### Connection lifecycle
 
+Both MTAs open one milter connection per SMTP session. Neither one sends `SMFIC_QUIT_NC` or reuses a milter connection for a second SMTP session. libmilter accepts `SMFIC_QUIT_NC` and other MTAs may send it, so a milter should still support it.
+
 Sendmail:
-- keeps persistent connections to milter applications
-- reuses one socket connection across several SMTP sessions, using SMFIC_QUIT_NC
-- keeps the connection open until it closes it with SMFIC_QUIT
+- opens the milter connection when the SMTP session starts and negotiates options at once
+- sends `SMFIC_QUIT` and closes the socket when the session ends
+- after a connect- or HELO-level `SMFIR_ACCEPT`, marks the filter as done, sends `SMFIC_QUIT`, and closes the socket
+- after a connect-level reject or tempfail, sends `SMFIC_QUIT` to all filters
 
 Postfix:
-- closes the MTA-to-filter socket when the SMTP client disconnects
-- opens a new MTA-to-filter socket for each SMTP client connection
-- never reuses a connection across SMTP sessions
-- hardcodes this behavior (`LIBMILTER_AUTO_DISCONNECT` in milter8.c)
+- opens the milter connection on demand, when it first has an event to send
+- sends `SMFIC_QUIT` and closes the socket when the SMTP client disconnects
+- closes the socket without sending `SMFIC_QUIT` when the milter replied `SMFIR_ACCEPT`, `SMFIR_REJECT`, `SMFIR_TEMPFAIL`, or `SMFIR_REPLYCODE` to `SMFIC_CONNECT` or `SMFIC_HELO`, after `SMFIR_SHUTDOWN`, and after an error
+- hardcodes this behavior (`LIBMILTER_AUTO_DISCONNECT` in milter8.c), because libmilter closes its socket when the SMTP client goes away
 
 What this means for a milter:
-- It must support both connection models.
-- It cannot rely on connection reuse under Postfix.
-- Per-connection state survives across sessions under Sendmail, but not under Postfix.
-- Connection pooling works differently with the two MTAs.
+- Treat end of file without `SMFIC_QUIT` as a normal end of session, and run the same cleanup.
+- Per-connection state lives exactly as long as one SMTP session with both MTAs.
 
 ### Hostname handling (SMFIC_CONNECT)
 
-Sendmail sends an unknown hostname as it has it, which can be "unknown" or empty.
+Both MTAs send `[<ip_address>]` when the client's hostname did not resolve.
 
-Postfix converts an unknown hostname to a Sendmail-compatible form. If `client_name` is "unknown" and `client_addr` is valid, it sends `"[<ip_address>]"`. For example, an unknown host at 192.168.1.1 arrives as `"[192.168.1.1]"`.
+Sendmail sends the value of its `{client_name}` macro, which is already `[<ip_address>]` for an unresolved client.
+
+Postfix converts its own placeholder: if `client_name` is "unknown" and `client_addr` is known, it sends `[<ip_address>]`. If the address is also "unknown", it sends "unknown". For example, an unresolved host at 192.168.1.1 arrives as `[192.168.1.1]` from either MTA.
 
 ### SMTP reply code handling (SMFIR_REPLYCODE)
 
-Sendmail uses the reply as a format string and doubles each `%` (`%` becomes `%%`).
+Sendmail uses the reply text as a format string. It rejects a reply that contains a `%` not followed by a second `%`, and uses its default reply in its place.
 
-Postfix does not treat replies as format strings. It replaces `%%` with `%` and removes any invalid single `%`.
+Postfix does not use replies as format strings. It replaces `%%` with `%` and deletes any single `%`.
 
-Example:
-- reply: `"550 5.7.1 Rejected: 100% spam"`
-- Sendmail expects: `"550 5.7.1 Rejected: 100%% spam"`
-- Postfix expects: `"550 5.7.1 Rejected: 100% spam"`, with no escaping
+A literal `%` must therefore be written as `%%`. Both MTAs then show a single `%`.
+
+Example, to show `550 5.7.1 Rejected: 100% spam`:
+- send: `"550 5.7.1 Rejected: 100%% spam"`
+- an unescaped `"550 5.7.1 Rejected: 100% spam"` makes Sendmail use its default reply, and Postfix shows "100 spam"
+
+Other differences:
+- Sendmail ignores the text of a reply code sent for `SMFIC_CONNECT` and keeps only its meaning: `421` shuts the session down, other `4xx` codes tempfail, and `5xx` codes reject.
+- With `soft_bounce = yes`, Postfix turns `5xx` codes (and `5.x.x` enhanced codes) into `4xx`.
 
 ### Protocol version configuration
 
-Sendmail determines the protocol version through negotiation. Which versions it supports depends on the libmilter it was built with.
+Sendmail always offers protocol version 6, all action flags (`SMFI_CURR_ACTS`), and all protocol flags (`SMFI_CURR_PROT`). It accepts any version from the milter except 1. When the milter answers with version 2 or lower, Sendmail stops sending `SMFIC_UNKNOWN`. When it answers with version 3 or lower, Sendmail also stops sending `SMFIC_DATA`.
 
-Postfix needs the version set in `main.cf`:
-- parameter: `milter_protocol` (default: 6)
+Postfix sends the version set in `main.cf`:
+- parameter: `milter_protocol` (default: 6 since Postfix 2.6; 2 before that)
 - supported versions: 2, 3, 4, and 6
 - example: `milter_protocol = 6`
-- extensions can follow the version: `milter_protocol = 6, no_header_reply`
+- the extension `no_header_reply` can follow the version, as in `milter_protocol = 6, no_header_reply`. It offers `SMFIP_NR_HDR` at any version.
+
+Postfix offers only the protocol flags that its configured version defines, but it offers all action flags at every version. It rejects a milter that answers with a higher version than its own. If the milter answers with a lower version, Postfix stops sending the events that the lower version lacks.
+
+### Replies accepted at each stage
+
+| Reply | Sendmail | Postfix |
+|-------|----------|---------|
+| `SMFIR_PROGRESS` | end of message only; other stages treat it as an error | any stage |
+| `SMFIR_QUARANTINE` | end of message only | any stage; no state change |
+| `SMFIR_SKIP` | acts on body chunks only | skips further events of the same type, any stage |
+| `SMFIR_DISCARD` | any stage | not allowed for connect or HELO; Postfix logs a warning and uses its default reply |
+| `SMFIR_SHUTDOWN` | not accepted from a milter | closes the session with 421 |
+| `SMFIR_CONN_FAIL` | not accepted | not accepted |
+| Modification actions | end of message only | end of message only |
+
+### Macros
+
+The MTA sends `SMFIC_MACRO` just before the command the macros belong to. The first data byte is the command code of that command.
+
+- Sendmail sends macros for connect, HELO, MAIL, RCPT, DATA, end of headers, and end of message. It sends none for `SMFIC_UNKNOWN`, headers, or body chunks.
+- Postfix also sends macros for `SMFIC_UNKNOWN` (`U`), and repeats the end-of-headers macros before each `SMFIC_HEADER` (`L`) and the end-of-data macros before each `SMFIC_BODY` (`B`).
+- Postfix sends the macros for an event even when the milter turned that event off with an `SMFIP_NO*` flag, so a `SMFIC_MACRO` can arrive with no command after it.
+- libmilter ignores `SMFIC_MACRO` with a stage byte it does not know and sends no reply.
+
+### Abort handling
+
+Sendmail sends `SMFIC_ABORT` only while a message transaction is open, that is after a `SMFIC_MAIL` that the milter accepted with `SMFIR_CONTINUE`.
+
+Postfix sends `SMFIC_ABORT` whenever the session state allows envelope commands. A milter can therefore receive `SMFIC_ABORT` outside a transaction, for example after HELO or after a rejected MAIL. libmilter ignores such an abort without calling `xxfi_abort`.
+
+### Headers and body
+
+Both MTAs:
+- hide their own first `Received:` header from the milter
+- remove one leading space from each header value unless `SMFIP_HDR_LEADSPC` was negotiated
+- send a folded header value as one string, with LF (`\n`) between the lines
+- send the body with CRLF line endings, in chunks of at most 65535 bytes
+- send `SMFIC_BODYEOB` without data. libmilter would also accept trailing body data in it.
+
+Postfix applies `SMFIR_INSHEADER` relative to the message as delivered, which includes its own `Received:` header, and `SMFIR_CHGHEADER` relative to the headers the milter saw.
 
 ### Error handling and cleanup
 
@@ -127,18 +190,28 @@ Postfix tolerates local errors better. After a local queue file error, such as a
 - skips further milter replies until the final decision
 - keeps the SMTP session going for further deliveries
 
+When a milter is unavailable or fails, Sendmail follows the `F=` flags of the filter (see [Connection errors](#connection-errors)) and Postfix follows `milter_default_action`.
+
 ### Multi-line reply handling
 
-Sendmail uses the standard RFC 5321 multi-line reply format: lines separated by `\r\n`, with `-` after the code on continuation lines.
+Sendmail checks only the start of the reply: the first character must be `4` or `5` and the next two must be digits.
 
-Postfix validates every line of a multi-line reply. Each line must start with `4` or `5`, and its second character must be a digit.
+Postfix checks every line. Each line must:
+- be at least 4 characters long
+- start with `4` or `5` followed by two digits
+- continue with `-` on a non-final line and a space on the final line
+- if an enhanced status code follows, start it with the same digit as the reply code
+
+Non-final lines end in CRLF. The final line has no line terminator, and the reply must contain no NUL byte except the terminating one.
+
+libmilter's `smfi_setmlreply()` builds replies in this format, with at most 32 lines of at most 980 characters each.
 
 ## Protocol architecture
 
 ### Connection model
 
 - The MTA connects to the milter over a Unix domain socket or TCP/IP.
-- Each SMTP session corresponds to one milter connection.
+- Sendmail and Postfix use one milter connection per SMTP session. With `SMFIC_QUIT_NC` an MTA could reuse a connection for further sessions; libmilter supports this, but neither MTA does it.
 - The milter listens on a socket and accepts connections from the MTA.
 - The MTA sends commands and the milter sends replies over the same connection.
 
@@ -159,9 +232,14 @@ Every message in the milter protocol has this layout:
 +------------------+------------------+------------------+
 ```
 
-- Length: a 4-byte unsigned integer in network byte order (big endian). It includes the command byte, so the data length is Length - 1.
+- Length: a 4-byte unsigned integer in network byte order (big endian). It includes the command byte, so the data length is Length - 1. A length of 0 is invalid.
 - Command: one ASCII character, the command code.
 - Data: optional, variable length. It can hold null-terminated strings, binary data, and so on.
+
+Size limits differ by side:
+- libmilter rejects a command whose data is longer than its maximum data size, 65535 bytes by default.
+- Postfix accepts reply packets up to `INT_MAX / 2` bytes. Sendmail sets no limit on replies.
+- Postfix splits only the body into 65535-byte chunks. Other commands, such as a long header, can exceed 65535 bytes of data.
 
 ### Reading a message
 
@@ -178,7 +256,7 @@ Every message in the milter protocol has this layout:
 
 ## Protocol states
 
-The milter protocol is a state machine with these states:
+libmilter runs the protocol as a state machine with these states:
 
 | State | Code | Description |
 |-------|------|-------------|
@@ -200,7 +278,7 @@ The milter protocol is a state machine with these states:
 
 ### State transitions
 
-The protocol allows only the transitions in this diagram:
+libmilter (`next_states` in `libmilter/engine.c`) allows only the transitions in this diagram:
 
 ```mermaid
 stateDiagram-v2
@@ -283,11 +361,16 @@ What each state accepts:
 - `ST_HDRS`: headers arriving. Accepts more headers or end of headers.
 - `ST_EOHS`: end of headers. Accepts body chunks or end of message.
 - `ST_BODY`: body chunks arriving. Accepts more chunks or end of message.
-- `ST_ENDM`: end of message. Accepts QUIT, a new MAIL for the next message, or unknown commands.
-- `ST_ABRT`: message aborted. This state is not terminal: the connection stays open and waits for the next command, usually returning to a state equivalent to `ST_HELO`.
+- `ST_ENDM`: end of message. Accepts QUIT, QUIT_NC, a new MAIL for the next message, or unknown commands.
+- `ST_ABRT`: message aborted. The state has no allowed transitions of its own; the next command goes through the recovery rule below, which in effect returns to `ST_HELO`. The connection stays open.
 - `ST_UNKN`: unknown command received. Can move to most other states, which allows flexible recovery.
 - `ST_Q_NC`: quit with a new connection to follow. Accepts a new connect or unknown commands.
-- `ST_QUIT`: the terminal state, and the only state that ends the connection.
+- `ST_QUIT`: the terminal state, and the only state that ends the connection normally.
+
+Recovery and resets in libmilter:
+- On an invalid transition, libmilter calls `xxfi_abort` if a message transaction is open, then retries the transition from `ST_HELO`. If that also fails, it ignores the command and sends no reply.
+- After the milter replies `SMFIS_ACCEPT`, the state returns to `ST_HELO`.
+- After `SMFIS_REJECT`, `SMFIS_DISCARD`, or `SMFIS_TEMPFAIL`, the state returns to `ST_HELO`, except for `SMFIC_RCPT` and `SMFIC_UNKNOWN`, where it stays put.
 
 Abort in detail:
 - `SMFIC_ABORT` does not close the connection.
@@ -305,7 +388,7 @@ The commands the MTA sends to the milter use the `SMFIC_` prefix:
 | `SMFIC_BODY` | 'B' (0x42) | Body chunk | Binary data (up to 65535 bytes) |
 | `SMFIC_CONNECT` | 'C' (0x43) | Connection information | See Connection Info Format |
 | `SMFIC_MACRO` | 'D' (0x44) | Define macro | Stage code + macro pairs |
-| `SMFIC_BODYEOB` | 'E' (0x45) | End of body | Optional trailing body data |
+| `SMFIC_BODYEOB` | 'E' (0x45) | End of body | Optional trailing body data (neither MTA sends any) |
 | `SMFIC_HELO` | 'H' (0x48) | HELO/EHLO command | HELO string\0 |
 | `SMFIC_QUIT_NC` | 'K' (0x4B) | Quit, new connection follows | None |
 | `SMFIC_HEADER` | 'L' (0x4C) | Header field | Header name\0Header value\0 |
@@ -342,7 +425,8 @@ Notes:
 - The port is in network byte order (big endian), as received from the socket.
 - For IPv4, the address is a dotted-decimal string such as "192.168.1.1".
 - For IPv6, the address is a colon-hex string such as "::1" or "2001:db8::1".
-- For Unix sockets, the address is the socket path.
+- Sendmail reports an IPv4-mapped IPv6 client with family `SMFIA_INET`.
+- For Unix sockets the port is 0. Sendmail sends the socket path as the address; Postfix sends its client address string.
 
 ### Macro format (SMFIC_MACRO)
 
@@ -353,19 +437,22 @@ Notes:
 +------------------+------------------+
 ```
 
-The stage byte names the SMTP command the macros belong to. It uses the same codes as the matching SMFIC_* commands:
+The stage byte names the command the macros belong to. It uses the same codes as the matching SMFIC_* commands:
 
-| Stage Byte | Corresponds To |
-|------------|----------------|
-| 'C' (0x43) | SMFIC_CONNECT |
-| 'H' (0x48) | SMFIC_HELO |
-| 'M' (0x4D) | SMFIC_MAIL |
-| 'R' (0x52) | SMFIC_RCPT |
-| 'T' (0x54) | SMFIC_DATA |
-| 'N' (0x4E) | SMFIC_EOH |
-| 'E' (0x45) | SMFIC_BODYEOB (end of message) |
+| Stage byte | Corresponds to | Sent by |
+|------------|----------------|---------|
+| 'C' (0x43) | SMFIC_CONNECT | Sendmail, Postfix |
+| 'H' (0x48) | SMFIC_HELO | Sendmail, Postfix |
+| 'M' (0x4D) | SMFIC_MAIL | Sendmail, Postfix |
+| 'R' (0x52) | SMFIC_RCPT | Sendmail, Postfix |
+| 'T' (0x54) | SMFIC_DATA | Sendmail, Postfix |
+| 'L' (0x4C) | SMFIC_HEADER | Postfix only (the end-of-headers macros) |
+| 'N' (0x4E) | SMFIC_EOH | Sendmail, Postfix |
+| 'B' (0x42) | SMFIC_BODY | Postfix only (the end-of-data macros) |
+| 'E' (0x45) | SMFIC_BODYEOB (end of message) | Sendmail, Postfix |
+| 'U' (0x55) | SMFIC_UNKNOWN | Postfix only |
 
-The MTA always sends the macros before the command they belong to.
+The MTA always sends the macros before the command they belong to. A milter must accept stage bytes it does not use and must not reply to `SMFIC_MACRO`.
 
 ### Internal error codes
 
@@ -386,26 +473,26 @@ libmilter uses these codes internally to signal errors. They are not protocol co
 
 The replies the milter sends to the MTA use the `SMFIR_` prefix:
 
-| Reply | Code | Description | Data Format |
+| Reply | Code | Description | Data format |
 |-------|------|-------------|-------------|
 | `SMFIR_ADDRCPT` | '+' (0x2B) | Add recipient | Recipient address\0 |
 | `SMFIR_DELRCPT` | '-' (0x2D) | Delete recipient | Recipient address\0 |
-| `SMFIR_ADDRCPT_PAR` | '2' (0x32) | Add recipient with ESMTP args | Recipient\0Args\0 |
-| `SMFIR_SHUTDOWN` | '4' (0x34) | 421 shutdown (internal to MTA) | None |
+| `SMFIR_ADDRCPT_PAR` | '2' (0x32) | Add recipient with ESMTP args | Recipient\0[Args\0] |
+| `SMFIR_SHUTDOWN` | '4' (0x34) | 421 shutdown; accepted from a milter by Postfix only | None |
 | `SMFIR_ACCEPT` | 'a' (0x61) | Accept message | None |
 | `SMFIR_REPLBODY` | 'b' (0x62) | Replace body (chunk) | Body data (≤65535 bytes) |
 | `SMFIR_CONTINUE` | 'c' (0x63) | Continue processing | None |
 | `SMFIR_DISCARD` | 'd' (0x64) | Discard message silently | None |
 | `SMFIR_CHGFROM` | 'e' (0x65) | Change envelope sender | Sender\0[Args\0] |
-| `SMFIR_CONN_FAIL` | 'f' (0x66) | Cause connection failure | None |
+| `SMFIR_CONN_FAIL` | 'f' (0x66) | Cause connection failure; neither MTA accepts it | None |
 | `SMFIR_ADDHEADER` | 'h' (0x68) | Add header | Header name\0Header value\0 |
 | `SMFIR_INSHEADER` | 'i' (0x69) | Insert header at position | Index (4 bytes) + Name\0Value\0 |
-| `SMFIR_SETSYMLIST` | 'l' (0x6C) | Set list of symbols (macros) | Stage (4 bytes) + Macros\0 |
+| `SMFIR_SETSYMLIST` | 'l' (0x6C) | Defined but never sent as a packet; the macro list travels in the `SMFIC_OPTNEG` response | n/a |
 | `SMFIR_CHGHEADER` | 'm' (0x6D) | Change/delete header | Index (4 bytes) + Name\0Value\0 |
-| `SMFIR_PROGRESS` | 'p' (0x70) | Progress (reset timeout) | None |
+| `SMFIR_PROGRESS` | 'p' (0x70) | Progress (reset the read timeout) | None |
 | `SMFIR_QUARANTINE` | 'q' (0x71) | Quarantine message | Reason string\0 |
 | `SMFIR_REJECT` | 'r' (0x72) | Reject with 5xx | None |
-| `SMFIR_SKIP` | 's' (0x73) | Skip remaining callbacks of same type | None |
+| `SMFIR_SKIP` | 's' (0x73) | Skip the remaining body chunks | None |
 | `SMFIR_TEMPFAIL` | 't' (0x74) | Temporary failure (4xx) | None |
 | `SMFIR_REPLYCODE` | 'y' (0x79) | Custom SMTP reply code | SMTP reply string\0 |
 
@@ -425,7 +512,7 @@ Insert header (SMFIR_INSHEADER):
 | (network order)  |                  |                  |
 +------------------+------------------+------------------+
 ```
-Index 0 inserts at the beginning, index 1 after the first header, and so on.
+Index 0 inserts at the beginning, index 1 after the first header, and so on. Sendmail requires `SMFIF_ADDHDRS` for this request.
 
 Change header (SMFIR_CHGHEADER):
 ```
@@ -434,8 +521,10 @@ Change header (SMFIR_CHGHEADER):
 | (network order)  |                  | (empty = delete) |
 +------------------+------------------+------------------+
 ```
-The index is 1-based: index 1 is the first occurrence of the header, index 2 the second, and so on.
+The index is 1-based: index 1 is the first occurrence of the header, index 2 the second, and so on. Postfix treats index 0 as 1 for Sendmail compatibility.
 An empty value deletes the header.
+
+Sendmail logs a warning when a milter sends a modification without the matching action flag, but carries it out anyway. Postfix rejects `SMFIR_REPLBODY` once other modification requests have come between two body replacement chunks.
 
 ### Custom reply code format (SMFIR_REPLYCODE)
 
@@ -448,7 +537,9 @@ An empty value deletes the header.
 
 Example: `"550 5.7.1 Rejected by policy\0"`
 
-In a multi-line reply, `\r\n` separates the lines. Each continuation line starts with the reply code followed by `-` in place of the space.
+In a multi-line reply, `\r\n` separates the lines. Each continuation line starts with the reply code followed by `-` in place of the space. See [Multi-line reply handling](#multi-line-reply-handling) for the rules each MTA enforces.
+
+libmilter sends `SMFIR_REPLYCODE` only when its first digit matches the decision: `4` with `SMFIS_TEMPFAIL`, `5` with `SMFIS_REJECT`. Otherwise it sends the plain `SMFIR_TEMPFAIL` or `SMFIR_REJECT`.
 
 ## Option negotiation
 
@@ -467,7 +558,15 @@ The MTA's request and the milter's response both use `SMFIC_OPTNEG` ('O'):
 
 All multi-byte integers are in network byte order (big endian).
 
-An option negotiation message is at least 12 bytes long (`MILTER_OPTLEN`).
+An option negotiation message is at least 12 bytes long (`MILTER_OPTLEN`). libmilter closes the connection on a shorter one.
+
+How libmilter builds its response:
+- If the MTA's action flags are 0, it assumes `SMFI_V1_ACTS` (0x0F). If the MTA's protocol flags are 0, it assumes `SMFI_V1_PROT` (0x3F).
+- It answers with the actions and protocol flags the milter wants. If the MTA did not offer every requested action, or every requested protocol flag, libmilter closes the connection.
+- It drops `SMFIP_NODATA` and `SMFIP_NOUNKNOWN` from its answer when the MTA did not offer them, because an older MTA never sends those commands anyway.
+- It drops the no-reply flags (`SMFIP_NR_*`) that the MTA did not offer, and sends `SMFIR_CONTINUE` for those stages in their place.
+
+Sendmail closes the connection when the milter's protocol flags are not a subset of the flags Sendmail offered. A milter must therefore answer with a subset of the MTA's offer.
 
 ### Protocol version
 
@@ -476,51 +575,55 @@ An option negotiation message is at least 12 bytes long (`MILTER_OPTLEN`).
 | `SMFI_PROT_VERSION_MIN` | 2 | Minimum supported version |
 | `SMFI_PROT_VERSION` | 6 | Current version (Sendmail 8.14+) |
 
-The negotiated version is the lower of the MTA's version and the milter's version.
+The negotiated version is the lower of the MTA's version and the milter's version. libmilter rejects an MTA version below 2.
 
 #### Protocol version history
 
-Version 2 (Sendmail 8.10 to 8.12):
+Version 2 is the default of Sendmail 8.11 to 8.13 and of Postfix 2.3 to 2.5:
 - the base protocol with the core callbacks
-- events: connect, HELO, MAIL, RCPT, headers, body, end of message
+- events: connect, HELO, MAIL, RCPT, headers, end of headers, body, end of message
 - protocol flags: `SMFIP_NOCONNECT`, `SMFIP_NOHELO`, `SMFIP_NOMAIL`, `SMFIP_NORCPT`, `SMFIP_NOBODY`, `SMFIP_NOHDRS`, `SMFIP_NOEOH`
 
-Version 3 (Sendmail 8.13) added:
+Version 3 added:
 - the `SMFIC_UNKNOWN` command
 - the `SMFIP_NOUNKNOWN` protocol flag
-- the `SMFIF_QUARANTINE` action flag
 
-Version 4 (Sendmail 8.13 and later) added:
+Version 4 added:
 - the `SMFIC_DATA` command
 - the `SMFIP_NODATA` protocol flag
 
-Version 6 (Sendmail 8.14 and later) added:
-- the `SMFIC_QUIT_NC` command (quit, new connection follows)
-- the `SMFIR_SKIP` reply (skip the remaining callbacks of the same type)
+Postfix's source attributes `SMFIC_DATA` and `SMFIC_UNKNOWN` to Sendmail 8.13. libmilter gained the matching callbacks, `xxfi_data` and `xxfi_unknown`, in Sendmail 8.14.0.
+
+Version 6 is the default of Sendmail 8.14 and later and of Postfix 2.6 and later. It added:
+- the `SMFIC_QUIT_NC` command (quit, new connection follows), which libmilter accepts but neither MTA sends
+- the `SMFIR_SKIP` reply (skip the remaining body chunks)
 - the no-reply flags `SMFIP_NR_CONN`, `SMFIP_NR_HELO`, `SMFIP_NR_MAIL`, `SMFIP_NR_RCPT`, `SMFIP_NR_DATA`, `SMFIP_NR_UNKN`, `SMFIP_NR_EOH`, and `SMFIP_NR_BODY`
 - the `SMFIP_SKIP` flag (the MTA understands SMFIR_SKIP)
 - the `SMFIP_RCPT_REJ` flag (send rejected RCPTs to the filter)
 - the `SMFIP_HDR_LEADSPC` flag (preserve leading spaces in header values)
-- the action flags `SMFIF_CHGFROM`, `SMFIF_ADDRCPT_PAR`, and `SMFIF_SETSYMLIST`
+- the symbol list in the `SMFIC_OPTNEG` response
+
+There is no version 5.
 
 Version compatibility:
 
 | Feature | V2 | V3 | V4 | V6 |
 |---------|----|----|----|----|
-| Core callbacks (connect, helo, mail, rcpt, header, body, eom) | ✓ | ✓ | ✓ | ✓ |
+| Core callbacks (connect, helo, mail, rcpt, header, eoh, body, eom) | ✓ | ✓ | ✓ | ✓ |
 | SMFIC_UNKNOWN | ✗ | ✓ | ✓ | ✓ |
 | SMFIC_DATA | ✗ | ✗ | ✓ | ✓ |
-| SMFIC_QUIT_NC | ✗ | ✗ | ✗ | ✓ |
-| SMFIR_SKIP | ✗ | ✗ | ✗ | ✓ |
-| No-Reply flags (SMFIP_NR_*) | ✗ | ✗ | ✗ | ✓ |
+| SMFIC_QUIT_NC (libmilter only) | ✗ | ✗ | ✗ | ✓ |
+| SMFIR_SKIP, SMFIP_SKIP | ✗ | ✗ | ✗ | ✓ |
+| No-reply flags (SMFIP_NR_*) | ✗ | ✗ | ✗ | ✓ |
+| SMFIP_NR_HDR through Postfix `no_header_reply` | ✓ | ✓ | ✓ | ✓ |
 | SMFIP_RCPT_REJ | ✗ | ✗ | ✗ | ✓ |
-| SMFIF_QUARANTINE | ✗ | ✓ | ✓ | ✓ |
-| SMFIF_CHGFROM | ✗ | ✗ | ✗ | ✓ |
-| SMFIF_ADDRCPT_PAR | ✗ | ✗ | ✗ | ✓ |
-| SMFIF_SETSYMLIST | ✗ | ✗ | ✗ | ✓ |
+| SMFIP_HDR_LEADSPC | ✗ | ✗ | ✗ | ✓ |
+| Symbol list in SMFIC_OPTNEG response | ✗ | ✗ | ✗ | ✓ |
+
+Action flags (`SMFIF_*`) do not depend on the protocol version. The MTA offers the actions it supports and the milter picks from them. Sendmail 8.14 and later, and every Postfix version that implements a given action, offer it at every protocol version.
 
 Version support by MTA:
-- Sendmail negotiates the version based on its libmilter build.
+- Sendmail always offers version 6.
 - Postfix supports versions 2, 3, 4, and 6, set with the `milter_protocol` parameter (default: 6).
 
 ### Action flags (SMFIF_*)
@@ -581,6 +684,8 @@ The protocol flags list the protocol features each side supports or requests:
 
 Alias: `SMFIP_NOHREPL` = `SMFIP_NR_HDR`, kept for backward compatibility.
 
+`SMFIP_MDS_256K` and `SMFIP_MDS_1M` exist only in Sendmail and libmilter builds compiled with `_FFR_MDS_NEGOTIATE`, which is off by default. Postfix never offers them.
+
 Predefined protocol sets:
 
 | Set | Value | Description |
@@ -601,9 +706,9 @@ After the three 4-byte integers, the milter can add a symbol list to request spe
 +------------------+------------------+
 ```
 
-The pattern can repeat for several stages. Example macro list: `"{mail_mailer} {mail_host} {mail_addr}"`
+The stage is an `SMFIM_*` value. The pattern can repeat for several stages. Macro names are separated by spaces or commas. Example macro list: `"{mail_mailer} {mail_host} {mail_addr}"`
 
-At most 50 macros per stage (`MAXFILTERMACROS`).
+Sendmail accepts at most 50 macros per stage (`MAXFILTERMACROS`) and rejects an unknown stage value. Postfix ignores an unknown stage value.
 
 ## Macro stages (SMFIM_*)
 
@@ -678,7 +783,11 @@ MTA → Milter: SMFIC_QUIT
 (no reply, connection closed by both sides)
 ```
 
+Postfix may close the socket without `SMFIC_QUIT`; see [Connection lifecycle](#connection-lifecycle).
+
 ### 4. Connection reuse (QUIT_NC)
+
+libmilter accepts this flow, but neither Sendmail nor Postfix sends `SMFIC_QUIT_NC`.
 
 ```
 MTA → Milter: SMFIC_QUIT_NC
@@ -720,7 +829,7 @@ A milter implementation provides these callback functions:
 When libmilter calls `xxfi_close`:
 - when the connection ends, after `SMFIC_QUIT`
 - after `SMFIC_QUIT_NC`
-- on errors and failures, even without an explicit QUIT
+- on errors, failures, and end of file, even without an explicit QUIT
 
 ### Return status codes (SMFIS_*)
 
@@ -742,14 +851,16 @@ When libmilter calls `xxfi_close`:
 | `MILTER_LEN_BYTES` | 4 | Size of length field |
 | `MILTER_OPTLEN` | 12 | Minimum option negotiation (3×4 bytes) |
 | `MILTER_CHUNK_SIZE` | 65535 | Max body chunk size |
-| `MILTER_MAX_DATA_SIZE` | 65535 | Default max data size |
-| `MILTER_MDS_256K` | 262143 | 256K - 1 (when negotiated) |
-| `MILTER_MDS_1M` | 1048575 | 1M - 1 (when negotiated) |
-| `MAXFILTERMACROS` | 50 | Max macros per stage |
+| `MILTER_MAX_DATA_SIZE` | 65535 | Default max data size (libmilter) |
+| `MILTER_MDS_256K` | 262143 | 256K - 1 (when negotiated; `_FFR_MDS_NEGOTIATE` builds only) |
+| `MILTER_MDS_1M` | 1048575 | 1M - 1 (when negotiated; `_FFR_MDS_NEGOTIATE` builds only) |
+| `MAXFILTERMACROS` | 50 | Max macros per stage (Sendmail) |
+| `MAXREPLIES` | 32 | Max lines in a multi-line reply (libmilter) |
+| `MAXREPLYLEN` | 980 | Max length of one reply line (libmilter) |
 
 ## Timeouts
 
-Default timeouts:
+libmilter's defaults:
 - `MI_TIMEOUT`: 7210 seconds, the default read and write timeout
 - `MI_CHK_TIME`: 5 seconds, the interval for checking for termination
 
@@ -765,6 +876,16 @@ T=C:5m;S:10s;R:10s;E:5m
 | R | Receive timeout | 10 seconds |
 | E | End-of-message timeout | 5 minutes |
 
+The `E` timeout runs from the moment Sendmail sends `SMFIC_BODYEOB` until the final reply. `SMFIR_PROGRESS` restarts only the per-read `R` timeout, not `E`.
+
+Postfix timeouts, set in `main.cf`:
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `milter_connect_timeout` | Connecting to the milter and negotiating options | 30s |
+| `milter_command_timeout` | Sending an SMTP command and receiving the reply | 30s |
+| `milter_content_timeout` | Sending message content and receiving the reply | 300s |
+
 ## Error handling
 
 ### Connection errors
@@ -775,10 +896,13 @@ The Sendmail `F=` flags choose what happens when a milter fails:
 - `4`: shut down with a 421 error
 - no flag: accept the message as if the filter were not there
 
+Postfix uses `milter_default_action`: `accept`, `reject`, `tempfail`, `quarantine`, or `shutdown`. The default is `shutdown` since Postfix 3.11 and `tempfail` before.
+
 ### Protocol errors
 
-- Invalid state transition: try to recover to `ST_HELO`; otherwise ignore the command.
-- Unknown command: abort the connection.
+These are libmilter's reactions:
+- Invalid state transition: call `xxfi_abort` if a message is open, then try to recover to `ST_HELO`; if that fails, ignore the command.
+- Unknown command code: abort the connection.
 - Timeout: abort the connection, and call `xxfi_abort` if a message is in progress.
 - Malformed message: abort the connection.
 
@@ -788,43 +912,38 @@ Follow these guidelines so the milter works with both Sendmail and Postfix.
 
 ### 1. Connection management
 
-Design for short-lived connections:
-- Do not rely on connection reuse across SMTP sessions.
+- Expect one SMTP session per milter connection.
 - Initialize per-session state on each `SMFIC_CONNECT`.
-- Clean up per-session state in `xxfi_close`.
-- Assume each SMTP session gets a new connection, as under Postfix.
-
-Support both models:
-- Handle `SMFIC_QUIT_NC` for Sendmail connection reuse.
+- Clean up per-session state when the session ends: on `SMFIC_QUIT`, on `SMFIC_QUIT_NC`, and on end of file without `SMFIC_QUIT`.
+- Support `SMFIC_QUIT_NC` anyway, for MTAs other than Sendmail and Postfix.
 - Reset all per-message state after `SMFIC_BODYEOB` or `SMFIC_ABORT`.
-- Treat `xxfi_close` as the final cleanup under either connection model.
+- Accept `SMFIC_ABORT` outside a message transaction and ignore it.
 
 ### 2. Hostname processing
 
-Normalize unknown hostnames:
-- Accept both "unknown" and "[<ip>]" as forms of an unknown hostname.
+- Expect `[<ip>]` as the hostname of an unresolved client from either MTA, and "unknown" from Postfix when the address is unknown too.
 - If the hostname is "unknown" or starts with `[`, take the IP from the address field.
-- Do not expect the two MTAs to format hostnames the same way.
 
 ### 3. Reply code formatting
 
 SMFIR_REPLYCODE:
-- Do not double `%` characters in reply strings.
-- Send plain-text replies without format string escaping.
-- Postfix applies any transformation it needs.
-- Validate the reply format: `<3-digit> <space> <text>`.
+- Write every literal `%` as `%%`.
+- Validate the reply format: `<3-digit> <space> <text>`, with a first digit of `4` or `5`.
+- Match the first digit to the decision: `4` for a temporary failure, `5` for a rejection.
+- If an enhanced status code follows, give it the same first digit.
+- Do not count on Sendmail showing the text of a reply to `SMFIC_CONNECT`.
 
 Multi-line replies:
 - Start each line with the 3-digit code.
 - Put `-` after the code on continuation lines and a space on the final line.
 - Format: `"<code>-<text>\r\n<code>-<text>\r\n<code> <text>"`
-- Start each line with `4` or `5` (tempfail or reject).
+- Do not end the final line with CRLF.
 
 ### 4. Protocol version negotiation
 
-Detect the version:
-- Accept negotiation for versions 2, 3, 4, and 6.
-- Drop features cleanly for older versions.
+- Accept MTA versions 2 and higher, and answer with the lower of the MTA's version and 6. Close the connection on a version below 2.
+- Answer with a subset of the action and protocol flags the MTA offered.
+- Treat zero action or protocol flags from the MTA as the V1 defaults.
 - Send only the events and replies that the negotiated version supports.
 
 Version-specific behavior:
@@ -840,21 +959,30 @@ if (negotiated_version >= 3) {
 }
 ```
 
-### 5. Error recovery
+### 5. Stage-restricted replies
+
+- Send `SMFIR_PROGRESS` and `SMFIR_QUARANTINE` only at end of message.
+- Send `SMFIR_SKIP` only in reply to `SMFIC_BODY`, and only if the MTA offered `SMFIP_SKIP`.
+- Do not send `SMFIR_DISCARD` in reply to `SMFIC_CONNECT` or `SMFIC_HELO`.
+- Do not send `SMFIR_SHUTDOWN`, `SMFIR_CONN_FAIL`, or a separate `SMFIR_SETSYMLIST` packet.
+- Do not reply to `SMFIC_MACRO`, `SMFIC_ABORT`, `SMFIC_QUIT`, or `SMFIC_QUIT_NC`, or to a stage whose `SMFIP_NR_*` flag was negotiated.
+
+### 6. Error recovery
 
 - Keep processing after non-fatal errors.
 - Do not assume an error closes the connection.
-- Use `SMFIR_PROGRESS` to avoid timeouts.
+- Use `SMFIR_PROGRESS` to keep the read timeout from expiring at end of message. Sendmail's total `E` timeout still applies.
 - Handle missing or malformed commands without crashing.
+- Accept `SMFIC_MACRO` with any stage byte, including `L`, `B`, and `U`.
 
-### 6. Testing strategy
+### 7. Testing strategy
 
 Test with both MTAs:
-- the connection lifecycle under Sendmail (persistent connections)
-- the connection lifecycle under Postfix (one connection per session)
-- hostname handling with the unknown and bracketed forms
-- protocol version negotiation (v2, v3, v4, v6)
+- the connection lifecycle, including Postfix closing without `SMFIC_QUIT` after a connect-level decision
+- hostname handling with the bracketed and "unknown" forms
+- protocol version negotiation (v2, v3, v4, v6), with Postfix's `milter_protocol`
 - reply codes that contain `%`
+- `SMFIC_ABORT` outside a transaction
 - cleanup after errors
 
 ## Security considerations
@@ -862,8 +990,8 @@ Test with both MTAs:
 1. Do not run milters as root. libmilter does not need root privileges.
 2. Set restrictive permissions on Unix domain sockets.
 3. With TCP/IP, use firewall rules and consider binding to localhost.
-4. Validate all data received from the MTA.
-5. Send `SMFIR_PROGRESS` during long operations so the MTA does not time out.
+4. Validate all data received from the MTA, and reject oversized packet lengths before allocating memory.
+5. Send `SMFIR_PROGRESS` during long end-of-message processing so the MTA does not time out.
 6. Do not base security decisions on behavior specific to one MTA.
 
 ## Example: simple milter implementation
@@ -985,26 +1113,29 @@ int main(void)
 
 | Constant | Value | Description |
 |----------|-------|-------------|
-| `SMFI_PROT_VERSION_MIN` | 2 | Minimum protocol version |
+| `SMFI_PROT_VERSION_MIN` | 2 | Minimum protocol version (libmilter, rust-milter) |
 | `SMFI_PROT_VERSION` | 6 | Current protocol version |
-| `SMFI_VERSION` | 0x01000001 or 0x01000002 | libmilter API version (depends on MDS support) |
-| `SMFI_VERSION_MDS` | 0x01000002 | First version with MDS (Max Data Size) support |
+| `SMFI_VERSION` | 0x01000001, or 0x01000002 in `_FFR_MDS_NEGOTIATE` builds | libmilter API version |
+| `SMFI_VERSION_MDS` | 0x01000002 | First libmilter API version with MDS (max data size) support |
 
 ## References
 
 ### Primary sources
-- Sendmail libmilter source code, version 8.18.2
-  - `sendmail-8.18.2/include/libmilter/mfdef.h`: protocol definitions
-  - `sendmail-8.18.2/include/libmilter/mfapi.h`: API definitions
-  - `sendmail-8.18.2/libmilter/`: implementation
-- Postfix milter8 source code (latest)
-  - `postfix/src/milter/milter.h`: Postfix milter interface
-  - `postfix/src/milter/milter8.c`: Sendmail 8 protocol implementation
-  - `postfix/src/smtpd/smtpd_milter.c`: SMTP integration
+- Sendmail 8.19.0.2 source code
+  - `include/libmilter/mfdef.h`: protocol definitions
+  - `include/libmilter/mfapi.h`: API definitions
+  - `libmilter/engine.c`: libmilter state machine and option negotiation
+  - `libmilter/smfi.c`: reply code and modification functions
+  - `sendmail/milter.c`: the MTA side of the protocol
+- Postfix 3.12 source code
+  - `src/milter/milter.h`: Postfix milter interface
+  - `src/milter/milter8.c`: Sendmail 8 protocol implementation
+  - `src/smtpd/smtpd_milter.c`: SMTP integration
 
 ### Documentation
-- [Postfix MILTER_README](http://www.postfix.org/MILTER_README.html): the official Postfix milter documentation
-- [Sendmail libmilter documentation](https://www.sendmail.org/releases/8.18.1.html): the official Sendmail documentation
+- [Postfix MILTER_README](https://www.postfix.org/MILTER_README.html): the official Postfix milter documentation
+- [Postfix postconf(5)](https://www.postfix.org/postconf.5.html): `milter_protocol`, `milter_default_action`, and the milter timeouts
+- `libmilter/docs/` in the Sendmail source: the official libmilter API documentation
 - RFC 5321: Simple Mail Transfer Protocol (SMTP)
 - RFC 5322: Internet Message Format
 
@@ -1019,19 +1150,19 @@ int main(void)
 6. The MTA sends macros before the command they belong to.
 7. Message modifications are allowed only in `xxfi_eom`.
 8. A body replacement must be split into chunks of at most `MILTER_CHUNK_SIZE`.
-9. After `SMFIS_ACCEPT`, `SMFIS_REJECT`, `SMFIS_DISCARD`, or `SMFIS_TEMPFAIL`, the filter receives no more callbacks for that message.
+9. After `SMFIS_ACCEPT`, `SMFIS_REJECT`, `SMFIS_DISCARD`, or `SMFIS_TEMPFAIL`, the filter receives no more callbacks for that message. A reject or tempfail at `SMFIC_RCPT` affects only that recipient.
 10. `SMFIS_NOREPLY` requires the matching `SMFIP_NR_*` flag to have been negotiated.
 
 ### MTA-specific considerations
-11. Connection reuse: Sendmail reuses connections with `SMFIC_QUIT_NC`; Postfix opens a new connection per SMTP session.
-12. Hostname format: Postfix turns unknown hostnames into `[<ip>]`; Sendmail sends them unchanged.
-13. Reply escaping: only Sendmail doubles `%` in `SMFIR_REPLYCODE`; Postfix uses plain text.
-14. Protocol version: Postfix needs `milter_protocol` configured; Sendmail negotiates the version itself.
+11. Connection reuse: neither Sendmail nor Postfix reuses a milter connection; both open one per SMTP session.
+12. Hostname format: both MTAs send `[<ip>]` for an unresolved client.
+13. Reply escaping: write `%` as `%%`. Sendmail rejects a lone `%`; Postfix deletes it.
+14. Protocol version: Postfix needs `milter_protocol` configured; Sendmail always offers version 6.
 15. Error recovery: Postfix keeps connections open after local errors; Sendmail may close them at once.
-16. Auto-disconnect: Postfix closes the milter connection when the SMTP client disconnects.
+16. Disconnect: Postfix closes the milter connection when the SMTP client disconnects, and without `SMFIC_QUIT` after a connect-level decision.
 
 ### Protocol version features
-17. Version 2 is the baseline. Versions 3, 4, and 6 each add features.
+17. Version 2 is the baseline and rust-milter's minimum. Versions 3, 4, and 6 each add features; there is no version 5.
 18. Implement version detection, and drop features the negotiated version lacks.
 19. Use version 6 in production; it has the full feature set.
 20. Test with several protocol versions to confirm backward compatibility.
