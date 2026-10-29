@@ -1,62 +1,69 @@
 ---
 name: external-integration
-description: Guidelines and reliability patterns for integrating with external systems, APIs, and third-party SaaS. Use to ensure loose coupling, data consistency, resilience (retries/backoff), and secure data handling across domain boundaries.
+description: Rules and reliability patterns for integrating with external systems, APIs, and third-party SaaS. Use when code crosses a domain boundary, to keep coupling loose, data consistent, retries safe, and external data validated.
 ---
 
-# 🔌 External System Integration Principles
+# External system integration
 
-This skill provides architectural rules and implementation patterns to safely integrate internal systems with external domains (third-party APIs, SaaS, or separate microservices), ensuring resilience, loose coupling, and security.
+Apply these rules when internal code talks to an external domain: a third-party API, a SaaS product, or a separate microservice.
 
-## 1. Domain Boundaries & Consistency
-- **Loose Coupling**: Maintain a clear separation between internal and external domains to minimize the impact of external design changes or failures.
-- **Eventual Consistency**: Prioritize eventual consistency over strong consistency for external integrations to ensure system resilience.
-- **Reference vs. Entity**: Treat external data as references rather than internal entities.
-  - Store **Reference Keys** in your system instead of full external data structures.
-  - This prevents external schema changes from forcing immediate internal database migrations.
+## 1. Domain boundaries and consistency
 
-## 2. Data Retrieval & Caching Strategy
-- **Low Frequency Access**: Fetch data on-demand using reference keys to ensure data freshness and minimize coupling.
-- **High Frequency / Mission Critical**: 
-  - Implement Caching (e.g., Valkey/Redis) for volatile data.
-  - If using an RDBMS for caching, separate tables/databases physically or logically to maintain decoupling.
+- Keep internal and external domains separate, so that a design change or outage on the other side has limited effect on yours.
+- Prefer eventual consistency over strong consistency for external integrations. It keeps your system running when the other side is slow or down.
+- Treat external data as a reference. Store the external system's reference key in place of a copy of its data structure, so a change in their schema does not force a migration in yours.
 
-## 3. Resilience & Risk Mitigation
-- **Zero Trust Policy**: Never trust external responses. Assume that external systems (especially third-party/SaaS) can return unexpected, malicious, or malformed data at any time.
-- **Logging**: Record all requests and responses for external systems to facilitate troubleshooting.
-  - *Exception*: Mask PII, credentials, or excessively large payloads (see **logging-principles**).
-- **Validation**: Apply strict filtering, normalization, and validation on all incoming data.
-  - If validation fails, log it as an `ERROR` immediately, as it may indicate an unannounced API change.
+## 2. Retrieval and caching
 
-## 4. Advanced Reliability Patterns
-- **Retry Logic**: Implement retries for `5xx` status codes, connection errors, and timeouts.
-  - **Max Retries**: Default to 10 attempts.
-  - **Strategy**: Use Exponential Backoff **with jitter** (e.g., "full jitter") starting at a short interval (e.g., <10s) to avoid slamming the external service and synchronized retry storms.
-  - **Rate Limits**: Treat `429 Too Many Requests` and `503` as retryable and honor the `Retry-After` header (RFC 9110 / RFC 6585) when present, overriding the computed backoff.
-  - **Idempotency**: Only auto-retry idempotent requests (`GET`, `PUT`, `DELETE`) or requests carrying an idempotency key; never blindly retry a non-idempotent `POST`.
-  - If implementing fixed intervals, use a 1-minute delay for external SaaS systems to allow transient loads to subside.
-- **Write Safety (GET before PUT)**: 
-  - Prefer `PATCH` for partial updates.
-  - If only `PUT` is available, `GET` the current state first and merge it with internal changes. This prevents accidental deletion of new attributes added by the external provider that your system does not yet recognize.
-  - Send the write as a conditional request (`If-Match: <ETag from the GET>`, RFC 9110) so a concurrent change between the `GET` and the `PUT` yields `412 Precondition Failed` (re-fetch and re-merge) instead of a silent lost update.
-- **Failure Testing**: Mandate unit tests for "unlikely" external scenarios (e.g., unexpected JSON schemas, empty responses, `403` errors, or `429` with and without `Retry-After`).
+- For data you read rarely, fetch it on demand by reference key. The data stays fresh and the coupling stays low.
+- For data you read often or that is mission critical, cache volatile data in a cache such as Valkey or Redis. If you cache in an RDBMS, keep the cache in its own tables or database, physically or logically.
 
-## 🛠️ Implementation Checklist
-- [ ] Use Reference Keys instead of duplicating external schemas.
-- [ ] Implement Exponential Backoff with jitter for 5xx/429/Timeout errors, honoring `Retry-After`.
-- [ ] Log all External I/O (masked).
-- [ ] Validate every field of an external response before processing.
-- [ ] Write Unit Tests specifically for "Malformed/Unexpected Response" cases.
+## 3. Trust and validation
 
-## 📚 References & Sources
-These principles are based on enterprise integration patterns and resilience engineering:
-- **Enterprise Integration Patterns**: Messaging Channels & Decoupling (Loose coupling and reference keys).
-- **AWS Architecture Blog**: Exponential Backoff and Jitter (Retry logic best practices).
-- **Microsoft Azure Design Patterns**: Anti-Corruption Layer (Protecting the internal domain from external schema changes).
+- Never trust an external response. Third-party and SaaS systems can return unexpected, malicious, or malformed data at any time.
+- Log every request to and response from an external system so you can troubleshoot later. Mask PII, credentials, and oversized payloads (see logging-principles).
+- Filter, normalize, and validate all incoming data. Log a validation failure as `ERROR` right away, because it can mean the provider changed the API without notice.
 
-## Related Skills
-- For defining the architectural boundaries (like Anti-Corruption Layers), see **design-master**.
-- For handling masked logging of External I/O, see **logging-principles**.
-- For testing these robust integrations, follow **canon-tdd**.
-- For Rust-specific implementation (Tokio Retries, Serde Validation), refer to **rust-master**.
-- For diagramming these external connections before building, use **docs-first**.
-- If integrating external anti-spam/DNS APIs into an MTA context, see **milter-protocol**.
+## 4. Reliability patterns
+
+### Retries
+
+- Retry on `5xx` status codes, connection errors, and timeouts.
+- Default to 10 attempts at most.
+- Use exponential backoff with jitter ("full jitter", for example), starting from a short interval under 10 seconds. Jitter keeps many clients from retrying in lockstep.
+- If you use a fixed interval against an external SaaS system, wait 1 minute between attempts so transient load can clear.
+- Treat `429 Too Many Requests` and `503` as retryable. When the response carries a `Retry-After` header (RFC 9110, RFC 6585), wait that long in place of the computed backoff.
+- Retry automatically only for idempotent requests (`GET`, `PUT`, `DELETE`) or for requests that carry an idempotency key. Do not retry a plain `POST`.
+
+### Safe writes
+
+- Use `PATCH` for partial updates when the API offers it.
+- If the API offers only `PUT`, `GET` the current state first and merge your changes into it. Otherwise you can delete attributes the provider added that your system does not know about yet.
+- Send that `PUT` as a conditional request with `If-Match: <ETag from the GET>` (RFC 9110). If someone else changed the resource between your `GET` and `PUT`, you get `412 Precondition Failed`; re-fetch, merge again, and retry. Without the condition, their change is lost without any error.
+
+### Failure tests
+
+Write unit tests for the unlikely external cases: unexpected JSON schemas, empty responses, `403`, and `429` both with and without `Retry-After`.
+
+## Checklist
+
+- [ ] Store reference keys and do not copy external schemas.
+- [ ] Retry 5xx, 429, and timeout errors with exponential backoff and jitter, and honor `Retry-After`.
+- [ ] Log all external I/O with masking.
+- [ ] Validate every field of an external response before you use it.
+- [ ] Unit-test malformed and unexpected responses.
+
+## Sources
+
+- Enterprise Integration Patterns, messaging channels and decoupling: loose coupling and reference keys.
+- AWS Architecture Blog, "Exponential Backoff and Jitter": retry strategy.
+- Microsoft Azure design patterns, Anti-Corruption Layer: protecting the internal domain from external schema changes.
+
+## Related skills
+
+- design-master: architectural boundaries such as Anti-Corruption Layers.
+- logging-principles: masked logging of external I/O.
+- canon-tdd: testing these integrations.
+- rust-master: Rust implementation, such as Tokio retries and Serde validation.
+- docs-first: diagram the external connections before you build them.
+- milter-protocol: external anti-spam or DNS APIs called from an MTA filter.

@@ -1,20 +1,18 @@
-# API Specification
+# API specification
 
-## Overview
+The public API of the rust-milter library: its types, traits, error handling, and usage contracts.
 
-This document specifies the public API surface of the rust-milter library, including types, traits, error handling, and usage contracts.
+## Design principles
 
-## API Design Principles
+1. Type safety: the Rust type system enforces protocol correctness.
+2. Async first: every I/O operation is async.
+3. Zero-cost abstractions: safety adds no runtime overhead.
+4. Ergonomics: the API is easy to use correctly and hard to use incorrectly.
+5. Composability: traits and generics give flexibility.
 
-1. **Type Safety**: Leverage Rust's type system for protocol correctness
-2. **Async-First**: All I/O operations are async
-3. **Zero-Cost Abstractions**: No runtime overhead for safety
-4. **Ergonomic**: Easy to use correctly, hard to use incorrectly
-5. **Composable**: Traits and generics for flexibility
+## Public API surface
 
-## Public API Surface
-
-### Exported Types
+### Exported types
 
 | Type | Category | Description |
 |------|----------|-------------|
@@ -22,19 +20,19 @@ This document specifies the public API surface of the rust-milter library, inclu
 | `ServerConfig` | Configuration | Server configuration builder |
 | `Connection` | I/O | Per-connection handle |
 | `Frame` | Protocol | Milter protocol frame |
-| `Command` | Protocol | MTA→Milter commands (SMFIC_*) |
-| `Reply` | Protocol | Milter→MTA replies (SMFIR_*) |
-| `Handler` | Trait | User-implementable connection handler |
+| `Command` | Protocol | Commands from MTA to milter (SMFIC_*) |
+| `Reply` | Protocol | Replies from milter to MTA (SMFIR_*) |
+| `Handler` | Trait | Connection handler that the user implements |
 | `Error` | Error | Library error type |
 | `Result<T>` | Error | Library result type alias |
 
-### Exported Traits
+### Exported traits
 
 | Trait | Purpose | Requirements |
 |-------|---------|--------------|
 | `Handler` | Connection processing | async, Send, Sync, Clone |
 
-### Re-exported Types
+### Re-exported types
 
 | Type | Source | Purpose |
 |------|--------|---------|
@@ -42,455 +40,406 @@ This document specifies the public API surface of the rust-milter library, inclu
 | `Duration` | std::time | Timeout configuration |
 | `SocketAddr` | std::net | Network address types |
 
-## Type Specifications
+## Type specifications
 
-### Server Type
+### Server
 
-**Purpose:** Main server type that manages listeners and connections
+The main server type. It manages the listeners and the connections.
 
-**Lifecycle:**
-- Created via `Server::new(config)`
-- Started via `server.run(handler)`
-- Stopped via shutdown signal or error
+Lifecycle:
+- `Server::new(config)` creates it.
+- `server.run(handler)` starts it.
+- A shutdown signal or an error stops it.
 
-**Ownership:**
-- Owns listener sockets
-- Spawns connection tasks
-- Coordinates shutdown
+Ownership: it owns the listener sockets, spawns the connection tasks, and coordinates shutdown.
 
-**Thread Safety:** Send + Sync (can be shared across threads)
+Thread safety: `Send + Sync`, so threads can share it.
 
-**Methods:**
-- `new(config)` - Create server instance
-- `run(handler)` - Start server (consumes self)
-- `shutdown_token()` - Get cancellation token for shutdown
+Methods:
+- `new(config)`: creates a server instance.
+- `run(handler)`: starts the server. Consumes `self`.
+- `shutdown_token()`: returns the cancellation token for shutdown.
 
-### ServerConfig Type
+### ServerConfig
 
-**Purpose:** Server configuration with builder pattern
+Server configuration, built with the builder pattern. `Server::new()` consumes it. The builder validates every parameter on build.
 
-**Mutability:** Consumed by Server::new()
+Fields:
+- `bind_addresses`: `Vec` of socket addresses
+- `backlog`: listen queue size (`u32`)
+- `max_connections`: connection limit (`usize`)
+- `read_timeout`: read operation timeout
+- `write_timeout`: write operation timeout
+- `idle_timeout`: idle connection timeout
+- `grace_period`: shutdown grace period
+- `drain_timeout`: connection drain timeout
 
-**Validation:** All parameters validated on build
+Defaults come from the `Default` trait.
 
-**Fields:**
-- `bind_addresses` - Vec of socket addresses
-- `backlog` - Listen queue size (u32)
-- `max_connections` - Connection limit (usize)
-- `read_timeout` - Read operation timeout
-- `write_timeout` - Write operation timeout
-- `idle_timeout` - Idle connection timeout
-- `grace_period` - Shutdown grace period
-- `drain_timeout` - Connection drain timeout
+Constraints:
+- At least one bind address is required.
+- Timeout values must be positive.
+- Backlog must be between 1 and 65535.
+- Max connections is 0 (unlimited) or a positive number.
 
-**Defaults:** Available via `Default` trait
+### Connection
 
-**Constraints:**
-- At least one bind address required
-- Timeout values must be positive
-- Backlog must be 1-65535
-- Max connections 0 (unlimited) or positive
+The I/O handle for one connection. It owns its socket exclusively and lives as long as the connection.
 
-### Connection Type
+Buffering:
+- internal read buffer (`BytesMut`)
+- `BufWriter` for writes
+- configurable buffer sizes
 
-**Purpose:** Per-connection I/O handle
+Methods:
+- `read_frame()`: reads the next frame (async).
+- `write_frame(&frame)`: writes a frame (async).
+- `peer_addr()`: returns the peer address.
+- `local_addr()`: returns the local address.
 
-**Ownership:** Exclusive ownership of socket
+Thread safety: `Send`, so it can move between tasks. It is not `Sync`.
 
-**Lifetime:** Lives for duration of connection
+Errors: methods return `Result` on I/O errors.
 
-**Buffering:**
-- Internal read buffer (BytesMut)
-- BufWriter for writes
-- Configurable buffer sizes
+### Frame
 
-**Methods:**
-- `read_frame()` - Read next frame (async)
-- `write_frame(&frame)` - Write frame (async)
-- `peer_addr()` - Get peer address
-- `local_addr()` - Get local address
+A Milter protocol frame.
 
-**Thread Safety:** Send (can be moved between tasks), NOT Sync
+Structure:
+- `command`: `u8`, the protocol command code
+- `data`: `Bytes`, the frame payload
 
-**Error Handling:** Returns Result on I/O errors
+All fields are public and immutable.
 
-### Frame Type
+Size constraints:
+- total frame size ≤ 65,535 bytes
+- command: 1 byte
+- data: 0 to 65,534 bytes
 
-**Purpose:** Milter protocol frame representation
+Methods:
+- `new(command, data)`: creates a frame.
+- `check(buffer)`: checks whether the buffer holds a complete frame.
+- `parse(buffer)`: parses a frame from the buffer.
+- `write_to(&buffer)`: serializes the frame into the buffer.
 
-**Structure:**
-- `command`: u8 (protocol command code)
-- `data`: Bytes (frame payload)
+Thread safety: `Send + Sync`, because the type is immutable.
 
-**Immutability:** All fields public and immutable
+Zero copy: the payload uses `bytes::Bytes`.
 
-**Size Constraints:**
-- Total frame size ≤ 65,535 bytes
-- Command: 1 byte
-- Data: 0-65,534 bytes
+### Command
 
-**Methods:**
-- `new(command, data)` - Create frame
-- `check(buffer)` - Validate frame completeness
-- `parse(buffer)` - Parse frame from buffer
-- `write_to(&buffer)` - Serialize to buffer
+Type-safe representation of the commands the MTA sends to the milter.
 
-**Thread Safety:** Send + Sync (immutable)
+Variants:
+- `Abort`: SMFIC_ABORT
+- `Body(Bytes)`: SMFIC_BODY
+- `Connect { hostname, family, port, address }`: SMFIC_CONNECT
+- `Macro { stage, macros }`: SMFIC_MACRO
+- `BodyEob`: SMFIC_BODYEOB
+- `Helo(String)`: SMFIC_HELO
+- `QuitNewConnection`: SMFIC_QUIT_NC
+- `Header { name, value }`: SMFIC_HEADER
+- `Mail(Vec<String>)`: SMFIC_MAIL
+- `Eoh`: SMFIC_EOH
+- `OptNeg { version, actions, protocol }`: SMFIC_OPTNEG
+- `Quit`: SMFIC_QUIT
+- `Rcpt(Vec<String>)`: SMFIC_RCPT
+- `Data`: SMFIC_DATA
+- `Unknown(String)`: SMFIC_UNKNOWN
 
-**Zero-Copy:** Uses bytes::Bytes for data
+Conversion: `from_frame(frame)` parses a `Frame` into a `Command` and validates the command code and the data format.
 
-### Command Enum
+Errors: returns `Error::Protocol` on invalid data.
 
-**Purpose:** Type-safe representation of MTA→Milter commands
+Thread safety: `Send + Sync`.
 
-**Variants:**
-- `Abort` - SMFIC_ABORT
-- `Body(Bytes)` - SMFIC_BODY
-- `Connect { hostname, family, port, address }` - SMFIC_CONNECT
-- `Macro { stage, macros }` - SMFIC_MACRO
-- `BodyEob` - SMFIC_BODYEOB
-- `Helo(String)` - SMFIC_HELO
-- `QuitNewConnection` - SMFIC_QUIT_NC
-- `Header { name, value }` - SMFIC_HEADER
-- `Mail(Vec<String>)` - SMFIC_MAIL
-- `Eoh` - SMFIC_EOH
-- `OptNeg { version, actions, protocol }` - SMFIC_OPTNEG
-- `Quit` - SMFIC_QUIT
-- `Rcpt(Vec<String>)` - SMFIC_RCPT
-- `Data` - SMFIC_DATA
-- `Unknown(String)` - SMFIC_UNKNOWN
+### Reply
 
-**Conversion:**
-- `from_frame(frame)` - Parse Frame into Command
-- Validates command code and data format
+Type-safe representation of the replies the milter sends to the MTA.
 
-**Error Handling:** Returns Error::Protocol on invalid data
+Variants:
+- `Continue`: SMFIR_CONTINUE
+- `Accept`: SMFIR_ACCEPT
+- `Reject`: SMFIR_REJECT
+- `Discard`: SMFIR_DISCARD
+- `TempFail`: SMFIR_TEMPFAIL
+- `ReplyCode(String)`: SMFIR_REPLYCODE
+- `Progress`: SMFIR_PROGRESS
+- `Quarantine(String)`: SMFIR_QUARANTINE
+- `Skip`: SMFIR_SKIP
+- `AddHeader { name, value }`: SMFIR_ADDHEADER
+- `InsHeader { index, name, value }`: SMFIR_INSHEADER
+- `ChangeHeader { index, name, value }`: SMFIR_CHGHEADER
+- `AddRecipient(String)`: SMFIR_ADDRCPT
+- `DelRecipient(String)`: SMFIR_DELRCPT
+- `AddRecipientPar { rcpt, args }`: SMFIR_ADDRCPT_PAR
+- `ChangeFrom { from, args }`: SMFIR_CHGFROM
+- `ReplaceBody(Bytes)`: SMFIR_REPLBODY
+- `OptNeg { version, actions, protocol }`: SMFIR_OPTNEG (response)
 
-**Thread Safety:** Send + Sync
+Conversion: `to_frame()` converts a `Reply` into a `Frame`.
 
-### Reply Enum
+Thread safety: `Send + Sync`.
 
-**Purpose:** Type-safe representation of Milter→MTA replies
+Validation: header names and values are checked against the protocol rules.
 
-**Variants:**
-- `Continue` - SMFIR_CONTINUE
-- `Accept` - SMFIR_ACCEPT
-- `Reject` - SMFIR_REJECT
-- `Discard` - SMFIR_DISCARD
-- `TempFail` - SMFIR_TEMPFAIL
-- `ReplyCode(String)` - SMFIR_REPLYCODE
-- `Progress` - SMFIR_PROGRESS
-- `Quarantine(String)` - SMFIR_QUARANTINE
-- `Skip` - SMFIR_SKIP
-- `AddHeader { name, value }` - SMFIR_ADDHEADER
-- `InsHeader { index, name, value }` - SMFIR_INSHEADER
-- `ChangeHeader { index, name, value }` - SMFIR_CHGHEADER
-- `AddRecipient(String)` - SMFIR_ADDRCPT
-- `DelRecipient(String)` - SMFIR_DELRCPT
-- `AddRecipientPar { rcpt, args }` - SMFIR_ADDRCPT_PAR
-- `ChangeFrom { from, args }` - SMFIR_CHGFROM
-- `ReplaceBody(Bytes)` - SMFIR_REPLBODY
-- `OptNeg { version, actions, protocol }` - SMFIR_OPTNEG (response)
+## Handler trait
 
-**Conversion:**
-- `to_frame()` - Convert Reply to Frame
+The trait the user implements to process connections.
 
-**Thread Safety:** Send + Sync
+Definition:
+- trait name: `Handler`
+- method: `handle`
+- async: yes
+- parameters: `&self, Connection, CancellationToken`
+- return type: `Result<()>`
 
-**Validation:** Header names/values validated for protocol compliance
+Trait bounds:
+- `Send`: the handler can move across threads.
+- `Sync`: threads can share it.
+- `Clone`: the server clones it for each connection.
+- `'static`: it holds no borrowed references.
 
-## Handler Trait Specification
+Contract:
+- The server calls `handle` once per connection.
+- The handler receives exclusive ownership of the `Connection`.
+- The handler must respect the `CancellationToken` for shutdown.
+- A returned error closes the connection.
+- The handler must implement the full protocol exchange.
 
-**Purpose:** User-implementable trait for connection processing
+Lifecycle: the server clones the handler for each new connection, runs it in a separate task per connection, and drops it when the connection closes.
 
-**Definition:**
-- Trait name: `Handler`
-- Method: `handle`
-- Async: Yes
-- Parameters: `&self, Connection, CancellationToken`
-- Return: `Result<()>`
+Concurrency:
+- Multiple handlers run concurrently.
+- Each handler has exclusive use of its `Connection`.
+- Handlers share no state unless the implementation adds it on purpose.
 
-**Trait Bounds:**
-- `Send` - Can be sent across threads
-- `Sync` - Can be shared across threads
-- `Clone` - Can be cloned for each connection
-- `'static` - No borrowed references
+Shutdown:
+- The handler receives a `CancellationToken`.
+- It must check the token periodically.
+- It should finish the current operation cleanly.
+- It returns once it detects cancellation.
 
-**Contract:**
-- Called once per connection
-- Receives exclusive Connection ownership
-- Must respect CancellationToken for shutdown
-- Errors returned close connection
-- Must implement full protocol exchange
+## Error handling
 
-**Lifecycle:**
-- Cloned for each new connection
-- Executed in separate task per connection
-- Dropped when connection closes
+### Error type
 
-**Concurrency:**
-- Multiple handlers run concurrently
-- Each handler has exclusive Connection
-- No shared state between handlers (unless explicitly designed)
+One error type, an enum, covers all library operations, with variants for each error category.
 
-**Shutdown Handling:**
-- Handler receives CancellationToken
-- Must check token periodically
-- Should complete current operation gracefully
-- Return when cancellation detected
+Categories:
+- protocol errors: malformed frames, invalid commands
+- I/O errors: connection failures, timeouts
+- configuration errors: invalid parameters
+- resource errors: limits exceeded
 
-## Error Handling Specification
+Variants:
+- `Io(io::Error)`: I/O error
+- `Protocol(String)`: protocol violation
+- `Timeout`: operation timed out
+- `ConnectionClosed`: the connection closed unexpectedly
+- `FrameTooLarge`: the frame exceeds the size limit
+- `InvalidConfig(String)`: configuration error
+- `ResourceLimitExceeded`: a limit was exceeded
 
-### Error Type
+Implemented traits:
+- `std::error::Error`
+- `Display`, for human-readable messages
+- `Debug`
+- `Send + Sync`
 
-**Purpose:** Unified error type for all library operations
+Context:
+- Errors carry context about where they happened.
+- The error chain preserves the source error.
+- Errors integrate with `tracing` for logging.
 
-**Design:** Enum with variants for each error category
+### Result type alias
 
-**Error Categories:**
-- Protocol errors (malformed frames, invalid commands)
-- I/O errors (connection failures, timeouts)
-- Configuration errors (invalid parameters)
-- Resource errors (limits exceeded)
+Definition: `type Result<T> = std::result::Result<T, Error>`
 
-**Error Variants:**
-- `Io(io::Error)` - I/O errors
-- `Protocol(String)` - Protocol violations
-- `Timeout` - Operation timeout
-- `ConnectionClosed` - Unexpected connection close
-- `FrameTooLarge` - Frame exceeds size limit
-- `InvalidConfig(String)` - Configuration error
-- `ResourceLimitExceeded` - Limit exceeded
-
-**Error Traits:**
-- `std::error::Error` - Standard error trait
-- `Display` - Human-readable error messages
-- `Debug` - Debug formatting
-- `Send + Sync` - Thread-safe
-
-**Error Context:**
-- Errors include contextual information
-- Source errors preserved via error chain
-- Integration with tracing for logging
-
-### Result Type Alias
-
-**Definition:** `type Result<T> = std::result::Result<T, Error>`
-
-**Usage:** All fallible operations return `Result<T>`
-
-**Error Propagation:** Use `?` operator throughout
+Every fallible operation returns `Result<T>`. Propagate errors with `?`.
 
 ## Configuration API
 
-### ServerConfig Fields
+### ServerConfig fields
 
-**Required Fields:**
-- `bind_addresses` - At least one address required
+Required:
+- `bind_addresses`: at least one address
 
-**Optional Fields (with defaults):**
-- `backlog` - Default: 1024
-- `max_connections` - Default: 10000
-- `read_timeout` - Default: 30 seconds
-- `write_timeout` - Default: 30 seconds
-- `idle_timeout` - Default: 300 seconds
-- `grace_period` - Default: 5 seconds
-- `drain_timeout` - Default: 30 seconds
+Optional, with defaults:
+- `backlog`: 1024
+- `max_connections`: 10000
+- `read_timeout`: 30 seconds
+- `write_timeout`: 30 seconds
+- `idle_timeout`: 300 seconds
+- `grace_period`: 5 seconds
+- `drain_timeout`: 30 seconds
 
-**Builder Methods:**
-- Chainable setters for all fields
-- Validation on build
-- Returns Result<ServerConfig>
+Builder:
+- chainable setters for every field
+- validation on build
+- `build` returns `Result<ServerConfig>`
 
-**Validation Rules:**
-- Timeouts must be positive
-- Backlog 1-65535
-- Max connections ≥ 0
-- At least one bind address
+Validation rules:
+- Timeouts must be positive.
+- Backlog is between 1 and 65535.
+- Max connections ≥ 0.
+- At least one bind address.
 
-## Async/Await Patterns
+## Async patterns
 
-### Async Functions
+### Async and sync functions
 
-**All I/O Operations:**
-- `Connection::read_frame()` - Async
-- `Connection::write_frame()` - Async
-- `Handler::handle()` - Async
-- `Server::run()` - Async
+Async (all I/O):
+- `Connection::read_frame()`
+- `Connection::write_frame()`
+- `Handler::handle()`
+- `Server::run()`
 
-**Sync Operations:**
-- `Frame::parse()` - Sync
-- `Command::from_frame()` - Sync
-- `Reply::to_frame()` - Sync
-- Configuration builders - Sync
+Sync:
+- `Frame::parse()`
+- `Command::from_frame()`
+- `Reply::to_frame()`
+- the configuration builders
 
-### Cancellation Safety
+### Cancellation safety
 
-**Safe Operations:**
-- `Connection::read_frame()` - Safe to drop mid-await
-- `Connection::write_frame()` - Buffered, safe to drop
+- `Connection::read_frame()` is safe to drop in the middle of an await.
+- `Connection::write_frame()` is buffered and safe to drop.
 
-**Unsafe Operations:**
-- None - all operations designed for cancellation safety
+No operation is cancellation-unsafe; the library designs every operation for cancellation safety.
 
-**Pattern:** Use `tokio::select!` with CancellationToken
+Pattern: use `tokio::select!` with the `CancellationToken`.
 
-## Type Safety Guarantees
+## Type safety guarantees
 
-### Protocol Correctness
+### Protocol correctness
 
-**Type System Enforcement:**
-- Commands are validated at parse time
-- Invalid command codes generate errors
-- Data formats checked during conversion
-- Reply types match protocol requirements
+Type system enforcement:
+- Commands are validated when they are parsed.
+- Invalid command codes produce errors.
+- Data formats are checked during conversion.
+- Reply types match the protocol requirements.
 
-**State Machine Safety:**
-- Connection state tracked internally
-- Invalid state transitions prevented
-- Protocol sequence validated
+State machine:
+- The connection tracks its state internally.
+- Invalid state transitions are rejected.
+- The protocol sequence is validated.
 
-### Memory Safety
+### Memory safety
 
-**Rust Guarantees:**
-- No null pointers
-- No use-after-free
-- No data races
-- No buffer overflows
+Rust guarantees no null pointers, no use-after-free, no data races, and no buffer overflows.
 
-**Zero-Copy Safety:**
-- bytes::Bytes provides safe shared buffers
-- Reference counting for memory management
-- No unsafe code in public API
+Zero-copy buffers:
+- `bytes::Bytes` provides safe shared buffers with reference counting.
+- The public API contains no unsafe code.
 
-## Versioning and Stability
+## Versioning and stability
 
-### Semantic Versioning
+### Semantic versioning
 
-**Version Format:** MAJOR.MINOR.PATCH
+Version format: MAJOR.MINOR.PATCH
 
-**Stability:**
-- Breaking changes: MAJOR version bump
-- New features: MINOR version bump
-- Bug fixes: PATCH version bump
+- Breaking changes bump MAJOR.
+- New features bump MINOR.
+- Bug fixes bump PATCH.
 
-### API Stability Guarantees
+### Stability guarantees
 
-**Stable (v1.0+):**
-- Public types and traits
-- Method signatures
-- Error variants
-- Configuration fields
+From v1.0, these are stable:
+- public types and traits
+- method signatures
+- error variants
+- configuration fields
 
-**Unstable (v0.x):**
-- All APIs subject to change
-- Breaking changes allowed
+In v0.x, any API can change, including breaking changes.
 
-### Deprecation Policy
+### Deprecation policy
 
-**Process:**
-- Mark deprecated with `#[deprecated]`
-- Provide migration path
-- Remove in next MAJOR version
-- Document in CHANGELOG
+1. Mark the item with `#[deprecated]`.
+2. Provide a migration path.
+3. Remove it in the next MAJOR version.
+4. Record it in the CHANGELOG.
 
-## Thread Safety
+## Thread safety
 
-### Send Types
+| Type | Send | Sync |
+|------|------|------|
+| `Server` | yes | yes |
+| `Connection` | yes | no (exclusive I/O ownership) |
+| `Frame` | yes | yes |
+| `Command` | yes | yes |
+| `Reply` | yes | yes |
+| `Error` | yes | yes |
 
-**Can be sent across threads:**
-- Server
-- Connection
-- Frame
-- Command
-- Reply
-- Error
+A `Handler` must be `Send + Sync + Clone`:
+- `Send` so it can move to worker threads
+- `Sync` so threads can share references to it
+- `Clone` so each connection gets its own instance
 
-### Sync Types
+## Performance characteristics
 
-**Can be shared across threads:**
-- Server
-- Frame
-- Command
-- Reply
-- Error
+### Copying
 
-**NOT Sync:**
-- Connection (exclusive I/O ownership)
+Zero copy:
+- frame data (`bytes::Bytes`)
+- body chunks
+- header values
 
-### Handler Requirements
+Minimal copying:
+- string conversions, where required
+- configuration cloning
 
-**Must be:** Send + Sync + Clone
-- Send: Can move to worker threads
-- Sync: Can share references
-- Clone: Per-connection instance
+### Allocation
 
-## Performance Characteristics
+Per connection:
+- read buffer (4KB default)
+- write buffer (4KB default)
+- frame storage, as needed
 
-### Zero-Copy Operations
+Shared:
+- configuration (wrapped in `Arc`)
+- handler (cloned per connection)
 
-**Zero-Copy:**
-- Frame data (bytes::Bytes)
-- Body chunks
-- Header values
+### Latency targets
 
-**Minimal Copy:**
-- String conversions (when required)
-- Configuration cloning
+| Percentile | Target per frame |
+|------------|------------------|
+| P50 | < 100μs |
+| P99 | < 1ms |
+| P99.9 | < 10ms |
 
-### Allocation Patterns
+## Usage constraints
 
-**Per-Connection Allocations:**
-- Read buffer (4KB default)
-- Write buffer (4KB default)
-- Frame storage (as needed)
+### Runtime
 
-**Shared Allocations:**
-- Configuration (Arc-wrapped)
-- Handler (cloned per connection)
+The library requires the Tokio multi-threaded runtime and does not work with other runtimes. The application must initialize the runtime.
 
-### Latency Targets
+### Resources
 
-**P50:** < 100μs per frame
-**P99:** < 1ms per frame
-**P99.9:** < 10ms per frame
-
-## Usage Constraints
-
-### Required Runtime
-
-**Tokio Multi-threaded Runtime:**
-- Library requires Tokio runtime
-- Will not work with other runtimes
-- Application must initialize runtime
-
-### Resource Requirements
-
-**Minimum:**
+Minimum:
 - Rust 1.70+ (edition 2021)
 - Linux, macOS, or BSD
-- File descriptors: max_connections + 10
+- file descriptors: max_connections + 10
 
-**Recommended:**
+Recommended:
 - 4+ CPU cores for production
 - 1GB+ RAM for 10K connections
-- ulimit -n ≥ 10010
+- `ulimit -n` ≥ 10010
 
-## Future API Considerations
+## Possible future additions
 
-**Potential Additions:**
 - TLS support trait
-- Custom metrics trait
-- Authentication trait
-- Connection pool API
+- custom metrics trait
+- authentication trait
+- connection pool API
 
-**Backward Compatibility:**
-- New traits added without breaking existing code
-- Default implementations where possible
-- Feature flags for optional functionality
+Backward compatibility:
+- New traits can be added without breaking existing code.
+- Traits get default implementations where possible.
+- Optional functionality goes behind feature flags.
 
 ## References
 
-- [Library Architecture](architecture.md)
-- [Milter Protocol Specification](milter-protocol.md)
-- [TCP Server Specification](tcp-server.md)
+- [Library architecture](architecture.md)
+- [Milter protocol specification](milter-protocol.md)
+- [TCP server specification](tcp-server.md)

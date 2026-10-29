@@ -1,18 +1,16 @@
-# Library Architecture Specification
+# Library architecture specification
 
-## Overview
+The high-level architecture of the rust-milter library: its components, their responsibilities and interactions, and the module boundaries.
 
-This document specifies the high-level architecture of the rust-milter library, including component breakdown, responsibilities, interactions, and module boundaries.
+## Architecture principles
 
-## Architecture Principles
+1. Separation of concerns: protocol handling, I/O, and business logic live in separate components.
+2. Async first: all I/O is asynchronous and runs on Tokio.
+3. Type safety: protocol messages are strongly typed.
+4. Zero copy: `bytes::Bytes` keeps data copying to a minimum.
+5. Trait-based extension: users extend the library by implementing the `Handler` trait.
 
-1. **Separation of Concerns**: Protocol handling, I/O, and business logic are separated
-2. **Async-First**: All I/O operations are asynchronous using Tokio
-3. **Type Safety**: Protocol messages are strongly typed
-4. **Zero-Copy**: Minimize data copying using `bytes::Bytes`
-5. **Trait-Based Extension**: Users extend via Handler trait implementation
-
-## Component Architecture
+## Component architecture
 
 ```mermaid
 graph TB
@@ -49,155 +47,114 @@ graph TB
     style Frame fill:#ffb,stroke:#333,stroke-width:2px
 ```
 
-## Component Specifications
+## Component specifications
 
-### 1. Server Component
+### 1. Server
 
-**Responsibility:**
-- Socket binding and listening (Unix, IPv4, IPv6)
-- Connection acceptance
-- Connection lifecycle management
-- Graceful shutdown coordination
-- Resource limit enforcement
-- Signal handling (SIGTERM, SIGINT, SIGQUIT)
+Responsibilities:
+- bind and listen on sockets (Unix, IPv4, IPv6)
+- accept incoming connections and spawn a handler task for each
+- track active connections and manage their lifecycle
+- coordinate the graceful shutdown sequence
+- enforce resource limits, including the maximum connection count
+- handle signals (SIGTERM, SIGINT, SIGQUIT)
+- provide metrics and a health check
 
-**Key Responsibilities:**
-- Accept incoming connections
-- Spawn connection handlers
-- Track active connections
-- Coordinate shutdown sequence
-- Enforce max connection limits
-- Provide metrics and health check
+Dependencies:
+- Tokio `TcpListener` and `UnixListener`
+- the `Handler` trait, implemented by the user
+- the Connection component
 
-**Dependencies:**
-- Tokio TcpListener, UnixListener
-- Handler trait (user-provided)
-- Connection component
+Concurrency:
+- one task per listening socket
+- one task per connection
+- shutdown coordination shared through `CancellationToken`
 
-**Concurrency:**
-- One task per socket listener
-- One task per connection
-- Shared shutdown coordination via CancellationToken
+### 2. Connection
 
-### 2. Connection Component
+Responsibilities:
+- manage I/O for one connection
+- read frames from and write frames to the socket
+- manage the read and write buffers
+- track the connection state
+- handle connection errors
+- enforce the read, write, and idle timeouts
 
-**Responsibility:**
-- Per-connection I/O management
-- Frame reading and writing
-- Buffered I/O operations
-- Connection state tracking
-- Timeout enforcement
+Dependencies:
+- Tokio `TcpStream` or `UnixStream`
+- the Frame component
+- `bytes::BytesMut` for buffering
 
-**Key Responsibilities:**
-- Read frames from socket
-- Write frames to socket
-- Manage read/write buffers
-- Handle connection errors
-- Enforce timeouts (read, write, idle)
+Concurrency:
+- one connection per task
+- exclusive ownership of the socket
+- `BufWriter` for write buffering
 
-**Dependencies:**
-- Tokio TcpStream or UnixStream
-- Frame component
-- bytes::BytesMut for buffering
+### 3. Frame
 
-**Concurrency:**
-- One connection per task
-- Exclusive ownership of socket
-- BufWriter for write buffering
+Responsibilities:
+- parse Milter protocol frames: a 4-byte length, a 1-byte command, then the data
+- validate the frame structure
+- convert bytes to structured data and structured data back to bytes
+- handle incomplete frames
 
-### 3. Frame Component
+Dependencies:
+- `bytes::Bytes` and `bytes::BytesMut`
+- no async operations; parsing is pure
 
-**Responsibility:**
-- Milter protocol frame parsing
-- Frame serialization
-- Protocol validation
-- Length-prefixed message handling
+Data format:
+- length: 4 bytes, network byte order
+- command: 1 byte, ASCII
+- data: variable length
 
-**Key Responsibilities:**
-- Parse 4-byte length + 1-byte command + data
-- Validate frame structure
-- Convert bytes to structured data
-- Serialize structured data to bytes
-- Handle incomplete frames
+### 4. Message
 
-**Dependencies:**
-- bytes::Bytes and bytes::BytesMut
-- No async operations (pure parsing)
+Responsibilities:
+- define every protocol command type (`SMFIC_*`) and reply type (`SMFIR_*`) as Rust types
+- convert a `Frame` into a `Command`, and a `Reply` into a `Frame`
+- validate protocol state transitions
 
-**Data Format:**
-- Length: 4 bytes (network byte order)
-- Command: 1 byte (ASCII)
-- Data: variable length
+Dependencies:
+- the Frame component
+- the protocol constants
 
-### 4. Message Component
+Types:
+- `Command` enum, with every `SMFIC_*` variant
+- `Reply` enum, with every `SMFIR_*` variant
+- data structures for the complex messages
 
-**Responsibility:**
-- Milter protocol message types
-- Command parsing (SMFIC_*)
-- Reply generation (SMFIR_*)
-- Type-safe protocol representation
+### 5. Handler trait
 
-**Key Responsibilities:**
-- Define all protocol command types
-- Define all protocol reply types
-- Convert Frame to Command
-- Convert Reply to Frame
-- Validate protocol state transitions
+The `Handler` trait is where user business logic plugs in. The library calls it once per connection.
 
-**Dependencies:**
-- Frame component
-- Protocol constants
+The implementation:
+- processes the incoming connection
+- implements the milter filtering logic and the protocol exchange
+- returns the right replies
+- handles errors cleanly
+- respects shutdown signals
 
-**Types:**
-- Command enum (all SMFIC_* variants)
-- Reply enum (all SMFIR_* variants)
-- Data structures for complex messages
+Interface contract:
+- receives a `Connection` and a `CancellationToken`
+- runs as an async method
+- must be `Send + Sync + Clone`
+- returns a `Result`
 
-### 5. Handler Trait
+### 6. Error handling
 
-**Responsibility:**
-- User-implementable trait
-- Connection processing callback
-- Business logic integration point
+Responsibilities:
+- define the error types and their hierarchy
+- define how errors propagate and how the library recovers from them
+- separate protocol errors from I/O errors, and recoverable errors from fatal ones
+- attach context and integrate with `tracing`
 
-**Key Responsibilities:**
-- Process incoming connections
-- Implement milter filtering logic
-- Handle shutdown signals
-- Return appropriate replies
+Error categories:
+- protocol errors: malformed frames, invalid state
+- I/O errors: connection failures, timeouts
+- configuration errors: invalid parameters
+- resource errors: limits exceeded
 
-**Interface Contract:**
-- Receives Connection and CancellationToken
-- Async method execution
-- Must be Send + Sync + Clone
-- Returns Result type
-
-**User Responsibility:**
-- Implement protocol logic
-- Generate appropriate replies
-- Handle errors gracefully
-- Respect shutdown signals
-
-### 6. Error Handling Component
-
-**Responsibility:**
-- Error type definitions
-- Error propagation patterns
-- Error recovery strategies
-
-**Key Responsibilities:**
-- Define error hierarchy
-- Protocol errors vs I/O errors
-- Recoverable vs fatal errors
-- Error context and tracing
-
-**Error Categories:**
-- Protocol errors (malformed frames, invalid state)
-- I/O errors (connection failures, timeouts)
-- Configuration errors (invalid parameters)
-- Resource errors (limits exceeded)
-
-## Module Structure
+## Module structure
 
 ```mermaid
 graph LR
@@ -232,9 +189,9 @@ graph LR
     style error fill:#fbb,stroke:#333,stroke-width:2px
 ```
 
-## Data Flow
+## Data flow
 
-### Inbound Flow (MTA → Milter)
+### Inbound: MTA to milter
 
 ```mermaid
 sequenceDiagram
@@ -251,14 +208,13 @@ sequenceDiagram
     Handler-->>Message: return Reply
 ```
 
-**Steps:**
-1. Connection reads bytes from socket
-2. Frame parser validates and extracts frame
-3. Message decoder converts to Command enum
-4. Handler processes command
-5. Handler returns Reply
+1. Connection reads bytes from the socket.
+2. The frame parser validates and extracts a frame.
+3. The message decoder converts it into a `Command`.
+4. The handler processes the command.
+5. The handler returns a `Reply`.
 
-### Outbound Flow (Milter → MTA)
+### Outbound: milter to MTA
 
 ```mermaid
 sequenceDiagram
@@ -275,14 +231,13 @@ sequenceDiagram
     Socket-->>Socket: flush to network
 ```
 
-**Steps:**
-1. Handler returns Reply enum
-2. Message encoder converts to frame structure
-3. Frame serializer writes bytes
-4. Connection writes to socket buffer
-5. Tokio flushes to network
+1. The handler returns a `Reply`.
+2. The message encoder converts it into a frame.
+3. The frame serializer writes the bytes.
+4. Connection writes them to the socket buffer.
+5. Tokio flushes the buffer to the network.
 
-### Shutdown Flow
+### Shutdown
 
 ```mermaid
 sequenceDiagram
@@ -300,53 +255,52 @@ sequenceDiagram
     Server->>Server: exit process
 ```
 
-**Steps:**
-1. Signal received (SIGTERM/SIGINT)
-2. Server stops accepting new connections
-3. Grace period wait (allow in-flight requests)
-4. Send cancellation to all handlers
-5. Wait for connections to drain (with timeout)
-6. Force close remaining connections
-7. Exit process
+1. The server receives SIGTERM or SIGINT.
+2. The server stops accepting new connections.
+3. The server waits for the grace period so in-flight requests can finish.
+4. The server sends cancellation to every handler.
+5. The server waits, up to a timeout, for the connections to drain.
+6. The server force-closes any remaining connections.
+7. The process exits.
 
-## Concurrency Model
+## Concurrency model
 
-### Threading Model
+### Threads
 
-**Tokio Multi-threaded Runtime:**
-- Worker threads = CPU cores (default)
-- Work-stealing scheduler
-- One task per connection
-- Shared shutdown coordinator
+The library runs on the Tokio multi-threaded runtime:
+- one worker thread per CPU core by default
+- work-stealing scheduler
+- one task per connection
+- one shared shutdown coordinator
 
-### Synchronization Points
+### Shared state
 
-**Shared State:**
-- Active connection counter (atomic)
-- Shutdown coordination (CancellationToken)
-- Metrics aggregation (atomic or channels)
+Shared between tasks:
+- the active connection counter (atomic)
+- shutdown coordination (`CancellationToken`)
+- metrics aggregation (atomics or channels)
 
-**Isolation:**
-- Each connection has exclusive socket ownership
-- No shared mutable state between connections
-- Message passing via channels for coordination
+Isolated per connection:
+- Each connection owns its socket exclusively.
+- Connections share no mutable state.
+- Coordination uses message passing over channels.
 
-### Async Boundaries
+### Async and sync operations
 
-**Async Operations:**
-- Socket I/O (read, write)
-- Handler execution
-- Timeout enforcement
-- Shutdown coordination
+Async:
+- socket I/O (read, write)
+- handler execution
+- timeout enforcement
+- shutdown coordination
 
-**Sync Operations:**
-- Frame parsing
-- Message encoding/decoding
-- Configuration validation
+Sync:
+- frame parsing
+- message encoding and decoding
+- configuration validation
 
-## Protocol State Management
+## Protocol state management
 
-### Connection States
+### Connection states
 
 ```mermaid
 stateDiagram-v2
@@ -368,92 +322,86 @@ stateDiagram-v2
     note right of CLOSED: Terminated
 ```
 
-**State Enforcement:**
-- Connection tracks current state
-- Commands validated against current state
-- Invalid transitions generate protocol errors
+The connection tracks its current state and validates each command against it. An invalid transition produces a protocol error.
 
-## Resource Management
+## Resource management
 
-### Memory Management
+### Memory
 
-**Buffer Allocation:**
-- Per-connection read buffer: 4KB default
-- Per-connection write buffer: 4KB default
-- Frame data: Zero-copy using bytes::Bytes
-- Configurable buffer sizes
+Buffers:
+- per-connection read buffer: 4KB default
+- per-connection write buffer: 4KB default
+- frame data: zero copy with `bytes::Bytes`
+- buffer sizes are configurable
 
-**Limits:**
-- Max connections: 10,000 default
-- Max frame size: 65,535 bytes (protocol limit)
-- Per-connection buffer limit: 64KB default
-- Total memory limit: Configurable
+Limits:
+- max connections: 10,000 default
+- max frame size: 65,535 bytes (protocol limit)
+- per-connection buffer limit: 64KB default
+- total memory limit: configurable
 
-### File Descriptor Management
+### File descriptors
 
-**FD Usage:**
-- One FD per active connection
-- One FD per listener socket
-- OS limit enforcement
-- Graceful handling of FD exhaustion
+- one FD per active connection
+- one FD per listening socket
+- the OS limit is enforced
+- the server handles FD exhaustion gracefully
 
-## Error Handling Strategy
+## Error handling strategy
 
-### Error Classification
+### Error classes
 
-**Fatal Errors (Connection Close):**
-- Protocol violations
-- Malformed frames
-- Timeout expiration
+Fatal errors close the connection:
+- protocol violations
+- malformed frames
+- expired timeouts
 - I/O errors
 
-**Recoverable Errors (Continue):**
-- Incomplete frames (need more data)
-- Transient I/O errors (retry)
+Recoverable errors let the connection continue:
+- incomplete frames, which need more data
+- transient I/O errors, which are retried
 
-**Configuration Errors (Startup Failure):**
-- Invalid bind addresses
-- Port already in use
-- Invalid configuration parameters
+Configuration errors stop startup:
+- invalid bind addresses
+- port already in use
+- invalid configuration parameters
 
-### Error Propagation
+### Propagation
 
-**Pattern:**
-- Use Result<T, Error> throughout
-- Convert errors at boundaries
-- Add context with tracing
-- Preserve error chain
+- Use `Result<T, Error>` throughout.
+- Convert errors at component boundaries.
+- Add context with `tracing`.
+- Preserve the error chain.
 
-## Security Architecture
+## Security architecture
 
-### Security Boundaries
+### Trust boundaries
 
-**Trust Boundaries:**
-- Network I/O (untrusted)
-- Handler implementation (trusted)
-- Configuration (trusted)
+- network I/O: untrusted
+- handler implementation: trusted
+- configuration: trusted
 
-**Input Validation:**
-- Frame length validation
-- Command code validation
-- Data format validation
-- Resource limit checks
+Input validation:
+- frame length
+- command code
+- data format
+- resource limits
 
-### Attack Mitigation
+### Attack mitigation
 
-**DoS Protection:**
-- Connection limits
-- Timeout enforcement
-- Buffer size limits
-- Rate limiting (optional)
+Denial of service:
+- connection limits
+- timeouts
+- buffer size limits
+- optional rate limiting
 
-**Resource Exhaustion:**
-- Max connection enforcement
-- Memory limits
+Resource exhaustion:
+- maximum connection count
+- memory limits
 - FD limits
-- Graceful degradation
+- graceful degradation
 
-## Dependencies Between Components
+## Component dependencies
 
 ```mermaid
 graph TD
@@ -478,60 +426,55 @@ graph TD
     style Server fill:#bbf,stroke:#333,stroke-width:2px
 ```
 
-**Dependency Rules:**
-- No circular dependencies
-- Lower layers don't depend on higher layers
-- Traits define boundaries
-- Error types are shared
+Rules:
+- no circular dependencies
+- lower layers do not depend on higher layers
+- traits define the boundaries
+- the error types are shared
 
-## Extension Points
+## Extension points
 
-### Trait-Based Extension
+The `Handler` trait is the main extension point. The user implements the filtering logic in it, and an application can have several implementations.
 
-**Handler Trait:**
-- Primary extension point
-- User implements filtering logic
-- Multiple implementations supported
+Possible future extension traits:
+- metrics collector
+- health check provider
+- authentication provider
 
-**Future Extension Traits:**
-- Metrics collector trait
-- Health check provider trait
-- Authentication provider trait
+## Testing architecture
 
-## Testing Architecture
+### Unit tests
 
-### Unit Testing Strategy
+All synchronous:
+- frame parsing
+- message encoding and decoding
+- configuration validation
+- error type conversions
 
-**Component Testing:**
-- Frame parsing (sync)
-- Message encoding/decoding (sync)
-- Configuration validation (sync)
-- Error type conversions (sync)
+### Integration tests
 
-### Integration Testing Strategy
+Connection:
+- socket communication
+- frame I/O
+- protocol flows
+- timeout behavior
 
-**Connection Testing:**
-- Socket communication
-- Frame I/O
-- Protocol flows
-- Timeout behavior
+Server:
+- handling many connections
+- graceful shutdown
+- resource limits
+- error recovery
 
-**Server Testing:**
-- Multi-connection handling
-- Graceful shutdown
-- Resource limits
-- Error recovery
+### Load tests
 
-### Load Testing Strategy
-
-**Performance Targets:**
+Performance targets:
 - 10,000 concurrent connections
-- Sub-millisecond latency (p99)
-- No memory leaks under load
-- Graceful degradation
+- p99 latency under 1 millisecond
+- no memory leaks under load
+- graceful degradation
 
 ## References
 
-- [TCP Server Specification](tcp-server.md)
-- [Milter Protocol Specification](milter-protocol.md)
-- [API Specification](api-specification.md)
+- [TCP server specification](tcp-server.md)
+- [Milter protocol specification](milter-protocol.md)
+- [API specification](api-specification.md)

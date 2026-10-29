@@ -1,67 +1,60 @@
 ---
 name: logging-principles
-description: Guidelines for structured logging, telemetry, data privacy, and log levels. Tailored for server-side MTA integrations and the milter library. Use to ensure consistent observability.
+description: Rules for structured logging, telemetry, data privacy, and log levels in the milter library and other server-side MTA integrations. Use when adding or reviewing log output, metrics, or tracing.
 ---
 
-# Logging Principles & Security (Milter Context)
+# Logging principles for milters
 
-This skill provides mandatory guidelines for logging, telemetry, and data privacy, specifically adapted for building and maintaining mail filters (milters) and server-side SMTP integrations.
+These rules are mandatory for mail filters (milters) and other server-side SMTP integrations.
 
-## 1. Data Privacy & Masking
+## 1. Privacy and masking
 
-- **PII Protection**: Never log plain-text passwords, phone numbers, or highly sensitive personal data. While envelope addresses and message IDs are often logged for tracking, contents of the email body should be treated as highly sensitive.
-- **Masking Rules**: 
-  - Mask values for keys ending in `password`.
-  - Mask values for keys starting with `sec_`.
-  - Use common logging utility methods or filters to replace sensitive data with masks (e.g., `***`).
-- **Array Handling**: Avoid logging indeterminate or large arrays in a single line. If the count exceeds human-readable limits, omit it from the logs.
+- Never log plain-text passwords, phone numbers, or other highly sensitive personal data. Envelope addresses and message IDs are usually logged for tracing, but treat the message body as highly sensitive.
+- Mask the values of keys that end in `password` or start with `sec_`.
+- Do the masking in shared logging helpers or filters that replace the value with a mask such as `***`.
+- Do not log large arrays, or arrays of unknown size, on one line. If an array is too long for a person to read, leave it out of the log.
 
-## 2. Modern Observability & Telemetry
+## 2. Observability and telemetry
 
-- **Structured Logging**: Use JSON or other structured formats (e.g., key-value pairs) to facilitate integration with Cloud services and SIEM (Security Information and Event Management) platforms.
-- **Audit & Security**: Ensure audit/access logs comply with security requirements, including tampering detection and long-term retention.
-- **Unified Telemetry**: Integrate Logs, Metrics, and Traces as a unified telemetry strategy to achieve high observability and real-time system insights. Use OpenTelemetry (OTLP) as the vendor-neutral standard; OpenTracing and OpenCensus are archived. In Rust, instrument with the `tracing` crate (spans + structured fields) rather than the plain `log` facade, and export via `tracing-opentelemetry` when needed.
+- Write structured logs, as JSON or key-value pairs, so cloud services and SIEM (Security Information and Event Management) platforms can ingest them.
+- Audit and access logs must meet the security requirements, including tamper detection and long-term retention.
+- Treat logs, metrics, and traces as one telemetry system. Use OpenTelemetry (OTLP) as the vendor-neutral standard; OpenTracing and OpenCensus are archived. In Rust, instrument code with the `tracing` crate (spans and structured fields) in place of the plain `log` facade, and export through `tracing-opentelemetry` when you need OpenTelemetry output.
 
-## 🖥️ Server-Side Logging Guidelines (Milter)
+## Server-side logging (milter)
 
-### Operational Context
+### Transaction context
 
-Logs must empower operators. In a milter context, every log line must include context identifying the SMTP transaction to allow immediate impact assessment and message tracing.
+Operators read these logs to judge impact and trace messages, so every log line must identify its SMTP transaction. Put these fields on the same line whenever they are available:
 
-**Required Context for Milters:**
-Always include these on the same line if available:
 - `Connection ID` / `Session ID` (from the MTA)
 - `Client IP` / `Hostname`
-- `Message-ID` (from the email header)
-- `Queue ID` (if provided by the MTA macro)
+- `Message-ID` (from the message header)
+- `Queue ID` (when the MTA provides it as a macro)
 
-**Metrics (KGI/KPI/KAI)**: Output logs related to defined business and activity indicators (e.g., messages processed, spam detected, virus detected, quarantine actions) to enable continuous improvement cycles.
+Also log the business and activity indicators the project defines (KGI, KPI, KAI), such as messages processed, spam detected, viruses detected, and quarantine actions. The team uses these to measure and improve the filter.
 
-### Log Levels & Timing
+### Log levels
 
-| Level | Timing / Stage | Required Context |
+| Level | When | Required context |
 | :--- | :--- | :--- |
-| **INFO** | Milter Start/End, Connection Accepted, Envelope Sender/Recipients processed, Message Accepted/Rejected, External API Calls | Connection ID, Client IP, Message-ID, Action taken (Accept, Reject, Discard), SMTP reply codes, External request status. |
-| **WARN** | MTA macro resolution failures, External API timeouts (non-fatal), Malformed headers | Connection ID, Error details, Endpoint/Params for external calls, Specific malformed data (non-sensitive). |
-| **ERROR** | Unexpected errors / caught panics (Rust has no exceptions), Database connection failures, Critical external service failures causing message tempfails (`4xx`) | Connection ID, Message-ID (if known), Error content including the `source()` chain, Backtrace (`std::backtrace::Backtrace`, on a separate line). |
-| **DEBUG** | Detailed parsing of headers/body, raw bytes received, internal state transitions | Connection ID, Class/Method names, specific header keys being checked, return values of internal functions. |
+| INFO | Milter start and stop, connection accepted, envelope sender and recipients processed, message accepted or rejected, external API calls | Connection ID, client IP, Message-ID, action taken (accept, reject, discard), SMTP reply code, external request status |
+| WARN | MTA macro resolution failures, non-fatal external API timeouts, malformed headers | Connection ID, error details, endpoint and parameters of external calls, the malformed data if it is not sensitive |
+| ERROR | Unexpected errors and caught panics (Rust has no exceptions), database connection failures, external service failures that make the milter tempfail the message (`4xx`) | Connection ID, Message-ID if known, the error including its `source()` chain, the backtrace (`std::backtrace::Backtrace`) on a separate line |
+| DEBUG | Detailed header and body parsing, raw bytes received, internal state transitions | Connection ID, type and function names, the header keys being checked, return values of internal functions |
 
-## 💻 Client-Side Logging Guidelines
+## Client-side logging
 
-*(Included for completeness if building client admin interfaces for the milter)*
+This section applies only if the project builds a client or admin interface for the milter. For on-premises and client applications, the logs must give IT administrators and support staff what they need to debug.
 
-**Debugging & Support**
-For on-premise or client applications, ensure logs provide necessary information for IT administrators and support teams.
-
-| Level | Timing | Required Context |
+| Level | When | Required context |
 | :--- | :--- | :--- |
-| **DEBUG** | Public Method Entry/Exit | Resource ID, Class/Method names, Arguments, Return values. |
-| **INFO** | App Start/End, Validation Success, Successful mutations, External Comms | Version, Args, Input values, Status codes, Request/Response bodies. |
-| **WARN** | External 5xx errors (Permanent/Input errors), Config validation failure | Resource ID, Endpoint, Error line/item, Failed input values. |
-| **ERROR** | Unexpected errors / panics, External 4xx errors (Temporary/System errors), App crash | Resource ID, Error content, Backtrace (on a separate line). |
+| DEBUG | Entry to and exit from public methods | Resource ID, type and method names, arguments, return values |
+| INFO | App start and stop, validation success, successful changes, external communication | Version, arguments, input values, status codes, request and response bodies |
+| WARN | External 5xx errors (permanent or input errors), configuration validation failures | Resource ID, endpoint, the failing line or item, the input values that failed |
+| ERROR | Unexpected errors and panics, external 4xx errors (temporary or system errors), app crashes | Resource ID, the error, the backtrace on a separate line |
 
-## Related Skills
+## Related skills
 
-- For domain-specific context regarding SMTP and MTAs, see the **milter-protocol** skill.
-- For Rust implementation specifics, refer to the **rust-master** skill.
-- For ensuring third-party interactions are properly logged and masked, see **external-integration**.
+- milter-protocol: SMTP and MTA domain context.
+- rust-master: Rust implementation details.
+- external-integration: logging and masking for calls to third-party systems.
