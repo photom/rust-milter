@@ -30,16 +30,19 @@ This skill provides architectural rules and implementation patterns to safely in
 ## 4. Advanced Reliability Patterns
 - **Retry Logic**: Implement retries for `5xx` status codes, connection errors, and timeouts.
   - **Max Retries**: Default to 10 attempts.
-  - **Strategy**: Use Exponential Backoff starting at a short interval (e.g., <10s) to avoid slamming the external service.
+  - **Strategy**: Use Exponential Backoff **with jitter** (e.g., "full jitter") starting at a short interval (e.g., <10s) to avoid slamming the external service and synchronized retry storms.
+  - **Rate Limits**: Treat `429 Too Many Requests` and `503` as retryable and honor the `Retry-After` header (RFC 9110 / RFC 6585) when present, overriding the computed backoff.
+  - **Idempotency**: Only auto-retry idempotent requests (`GET`, `PUT`, `DELETE`) or requests carrying an idempotency key; never blindly retry a non-idempotent `POST`.
   - If implementing fixed intervals, use a 1-minute delay for external SaaS systems to allow transient loads to subside.
 - **Write Safety (GET before PUT)**: 
   - Prefer `PATCH` for partial updates.
   - If only `PUT` is available, `GET` the current state first and merge it with internal changes. This prevents accidental deletion of new attributes added by the external provider that your system does not yet recognize.
-- **Failure Testing**: Mandate unit tests for "unlikely" external scenarios (e.g., unexpected JSON schemas, empty responses, or `403`/`429` errors).
+  - Send the write as a conditional request (`If-Match: <ETag from the GET>`, RFC 9110) so a concurrent change between the `GET` and the `PUT` yields `412 Precondition Failed` (re-fetch and re-merge) instead of a silent lost update.
+- **Failure Testing**: Mandate unit tests for "unlikely" external scenarios (e.g., unexpected JSON schemas, empty responses, `403` errors, or `429` with and without `Retry-After`).
 
 ## 🛠️ Implementation Checklist
 - [ ] Use Reference Keys instead of duplicating external schemas.
-- [ ] Implement Exponential Backoff for 5xx/Timeout errors.
+- [ ] Implement Exponential Backoff with jitter for 5xx/429/Timeout errors, honoring `Retry-After`.
 - [ ] Log all External I/O (masked).
 - [ ] Validate every field of an external response before processing.
 - [ ] Write Unit Tests specifically for "Malformed/Unexpected Response" cases.

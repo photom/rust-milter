@@ -20,7 +20,7 @@ This skill provides mandatory guidelines for logging, telemetry, and data privac
 
 - **Structured Logging**: Use JSON or other structured formats (e.g., key-value pairs) to facilitate integration with Cloud services and SIEM (Security Information and Event Management) platforms.
 - **Audit & Security**: Ensure audit/access logs comply with security requirements, including tampering detection and long-term retention.
-- **Unified Telemetry**: Integrate Logs, Metrics, and Traces as a unified telemetry strategy to achieve high observability and real-time system insights.
+- **Unified Telemetry**: Integrate Logs, Metrics, and Traces as a unified telemetry strategy to achieve high observability and real-time system insights. Use OpenTelemetry (OTLP) as the vendor-neutral standard; OpenTracing and OpenCensus are archived. In Rust, instrument with the `tracing` crate (spans + structured fields) rather than the plain `log` facade, and export via `tracing-opentelemetry` when needed.
 
 ## 🖥️ Server-Side Logging Guidelines (Milter)
 
@@ -43,7 +43,7 @@ Always include these on the same line if available:
 | :--- | :--- | :--- |
 | **INFO** | Milter Start/End, Connection Accepted, Envelope Sender/Recipients processed, Message Accepted/Rejected, External API Calls | Connection ID, Client IP, Message-ID, Action taken (Accept, Reject, Discard), SMTP reply codes, External request status. |
 | **WARN** | MTA macro resolution failures, External API timeouts (non-fatal), Malformed headers | Connection ID, Error details, Endpoint/Params for external calls, Specific malformed data (non-sensitive). |
-| **ERROR** | Unhandled exceptions, Database connection failures, Critical external service failures causing message tempfails (`4xx`) | Connection ID, Message-ID (if known), Error content, Stack trace (on a separate line). |
+| **ERROR** | Unexpected errors / caught panics (Rust has no exceptions), Database connection failures, Critical external service failures causing message tempfails (`4xx`) | Connection ID, Message-ID (if known), Error content including the `source()` chain, Backtrace (`std::backtrace::Backtrace`, on a separate line). |
 | **DEBUG** | Detailed parsing of headers/body, raw bytes received, internal state transitions | Connection ID, Class/Method names, specific header keys being checked, return values of internal functions. |
 
 ## 💻 Client-Side Logging Guidelines
@@ -58,7 +58,7 @@ For on-premise or client applications, ensure logs provide necessary information
 | **DEBUG** | Public Method Entry/Exit | Resource ID, Class/Method names, Arguments, Return values. |
 | **INFO** | App Start/End, Validation Success, Successful mutations, External Comms | Version, Args, Input values, Status codes, Request/Response bodies. |
 | **WARN** | External 5xx errors (Permanent/Input errors), Config validation failure | Resource ID, Endpoint, Error line/item, Failed input values. |
-| **ERROR** | Unhandled exceptions, External 4xx errors (Temporary/System errors), App crash | Resource ID, Error content, Stack trace (on a separate line). |
+| **ERROR** | Unexpected errors / panics, External 4xx errors (Temporary/System errors), App crash | Resource ID, Error content, Backtrace (on a separate line). |
 
 ## Related Skills
 
