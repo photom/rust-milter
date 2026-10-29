@@ -402,16 +402,9 @@ Each log line carries `endpoint` and `conn_id`; session-level lines also carry `
 | Milter unavailable | WARN | `endpoint`, `error`, `failure_action` |
 | Pool exhausted | WARN | `endpoint`, `max_size`, `waiters` |
 
-| Metric | Type | Description |
-|--------|------|-------------|
-| `milter_client_connections_open` | Gauge | Open connections, labeled `idle` or `in_use` |
-| `milter_client_connections_created_total` | Counter | New TCP connections |
-| `milter_client_sessions_total` | Counter | Sessions, labeled `reused` or `new` |
-| `milter_client_not_reusable_total` | Counter | Sessions whose connection could not be reused, labeled by reason |
-| `milter_client_checkout_wait_seconds` | Histogram | Time spent waiting for a connection |
-| `milter_client_failures_total` | Counter | Milter-unavailable failures, labeled by error and `failure_action` |
+The client reports the metrics defined under "Milter client metrics" in [telemetry.md](telemetry.md).
 
-`milter_client_not_reusable_total{reason="mirror_state"}` shows how often the milter's replies prevent reuse. A high value suggests asking the milter's author to end messages with `SMFIR_CONTINUE`, or switching to `any_state` for rust-milter servers.
+`milter.client.connection.not_reusable` with `milter.not_reusable_reason = mirror_state` shows how often the milter's replies prevent reuse. A high value suggests asking the milter's author to end messages with `SMFIR_CONTINUE`, or switching to `any_state` for rust-milter servers.
 
 ## Testing requirements
 

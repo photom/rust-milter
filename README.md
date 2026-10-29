@@ -52,6 +52,7 @@ Available:
 - [API specification](docs/reference/api-specification.md)
 - [Milter client and connection pool](docs/reference/milter-client.md) (design)
 - [Configuration hot reload](docs/reference/hot-reload.md) (design)
+- [Telemetry (OpenTelemetry)](docs/reference/telemetry.md) (design)
 - API reference: run `cargo doc --open`
 
 ### [Explanation](docs/explanation/) (understanding)

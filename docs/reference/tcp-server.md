@@ -631,18 +631,7 @@ Every log entry SHOULD include:
 
 ### Metrics
 
-The server SHOULD expose these metrics:
-
-| Metric | Type | Description |
-|--------|------|-------------|
-| `connections_accepted_total` | Counter | Total connections accepted |
-| `connections_active` | Gauge | Current active connections |
-| `connections_closed_total` | Counter | Total connections closed |
-| `connections_rejected_total` | Counter | Connections closed at once because `max_connections` was reached |
-| `connection_errors_total` | Counter (labeled) | Connection errors by type |
-| `connection_duration_seconds` | Histogram | Connection duration distribution |
-| `bytes_received_total` | Counter | Total bytes received |
-| `bytes_sent_total` | Counter | Total bytes sent |
+The server reports the metrics defined under "Server metrics" in [telemetry.md](telemetry.md), through OpenTelemetry. The same counts are available in-process from `ServerHandle::status()`.
 
 The length of the kernel's accept queue is not available through Tokio or the standard socket API, so the server does not report it.
 
@@ -701,7 +690,7 @@ The server handle provides:
 | `force_shutdown()` | Force immediate shutdown |
 | `wait()` | Wait for server to stop |
 | `status()` | Get current server status |
-| `metrics()` | Get server metrics |
+| `status()` | Get an in-process snapshot of the status counters (see [telemetry.md](telemetry.md)) |
 | `is_running()` | Check if server is running |
 
 ## Testing requirements
@@ -791,6 +780,7 @@ The server handle provides:
 | `tracing` | Structured logging |
 | `thiserror` | Error types |
 | `bytes` | Efficient byte handling |
+| `opentelemetry` | Metrics instruments; API crate only, behind the optional `otel` feature |
 
 ## Future considerations
 
@@ -798,7 +788,7 @@ The server handle provides:
 - connection pooling for milter client connections: designed in [milter-client.md](milter-client.md)
 - hot reload of the configuration on SIGHUP: designed in [hot-reload.md](hot-reload.md)
 - clustering: coordination between several server instances
-- metrics export: Prometheus or OpenTelemetry integration
+- metrics export through OpenTelemetry: designed in [telemetry.md](telemetry.md)
 
 ## References
 
