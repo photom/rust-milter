@@ -1,176 +1,157 @@
-# Milter Protocol Specification <!-- omit from toc -->
+# Milter protocol specification <!-- omit from toc -->
 - [Overview](#overview)
-- [MTA-Specific Differences](#mta-specific-differences)
-  - [Connection Lifecycle](#connection-lifecycle)
-  - [Hostname Handling (SMFIC\_CONNECT)](#hostname-handling-smfic_connect)
-  - [SMTP Reply Code Handling (SMFIR\_REPLYCODE)](#smtp-reply-code-handling-smfir_replycode)
-  - [Protocol Version Configuration](#protocol-version-configuration)
-  - [Error Handling and Cleanup](#error-handling-and-cleanup)
-  - [Multi-line Reply Handling](#multi-line-reply-handling)
-- [Protocol Architecture](#protocol-architecture)
-  - [Connection Model](#connection-model)
-  - [Socket Types](#socket-types)
-- [Message Format](#message-format)
-  - [Reading a Message](#reading-a-message)
-  - [Writing a Message](#writing-a-message)
-- [Protocol States](#protocol-states)
-  - [State Transitions](#state-transitions)
-- [Commands from MTA to Milter](#commands-from-mta-to-milter)
-  - [Connection Info Format (SMFIC\_CONNECT)](#connection-info-format-smfic_connect)
-  - [Macro Format (SMFIC\_MACRO)](#macro-format-smfic_macro)
-  - [Internal Error Codes](#internal-error-codes)
-- [Replies from Milter to MTA](#replies-from-milter-to-mta)
-  - [Header Modification Data Formats](#header-modification-data-formats)
-  - [Custom Reply Code Format (SMFIR\_REPLYCODE)](#custom-reply-code-format-smfir_replycode)
-- [Option Negotiation](#option-negotiation)
-  - [Option Negotiation Message Format](#option-negotiation-message-format)
-  - [Protocol Version](#protocol-version)
-  - [Action Flags (SMFIF\_\*)](#action-flags-smfif_)
-  - [Protocol Flags (SMFIP\_\*)](#protocol-flags-smfip_)
-  - [Symbol List in Option Negotiation (Optional)](#symbol-list-in-option-negotiation-optional)
-- [Macro Stages (SMFIM\_\*)](#macro-stages-smfim_)
-- [Typical Protocol Flow](#typical-protocol-flow)
-  - [1. Connection Establishment](#1-connection-establishment)
-  - [2. SMTP Session](#2-smtp-session)
-  - [3. Connection Cleanup](#3-connection-cleanup)
-  - [4. Connection Reuse (QUIT\_NC)](#4-connection-reuse-quit_nc)
-  - [5. Message Abort](#5-message-abort)
-- [Callback Functions](#callback-functions)
-  - [Return Status Codes (SMFIS\_\*)](#return-status-codes-smfis_)
-- [Data Limits](#data-limits)
+- [MTA-specific differences](#mta-specific-differences)
+  - [Connection lifecycle](#connection-lifecycle)
+  - [Hostname handling (SMFIC\_CONNECT)](#hostname-handling-smfic_connect)
+  - [SMTP reply code handling (SMFIR\_REPLYCODE)](#smtp-reply-code-handling-smfir_replycode)
+  - [Protocol version configuration](#protocol-version-configuration)
+  - [Error handling and cleanup](#error-handling-and-cleanup)
+  - [Multi-line reply handling](#multi-line-reply-handling)
+- [Protocol architecture](#protocol-architecture)
+  - [Connection model](#connection-model)
+  - [Socket types](#socket-types)
+- [Message format](#message-format)
+  - [Reading a message](#reading-a-message)
+  - [Writing a message](#writing-a-message)
+- [Protocol states](#protocol-states)
+  - [State transitions](#state-transitions)
+- [Commands from MTA to milter](#commands-from-mta-to-milter)
+  - [Connection info format (SMFIC\_CONNECT)](#connection-info-format-smfic_connect)
+  - [Macro format (SMFIC\_MACRO)](#macro-format-smfic_macro)
+  - [Internal error codes](#internal-error-codes)
+- [Replies from milter to MTA](#replies-from-milter-to-mta)
+  - [Header modification data formats](#header-modification-data-formats)
+  - [Custom reply code format (SMFIR\_REPLYCODE)](#custom-reply-code-format-smfir_replycode)
+- [Option negotiation](#option-negotiation)
+  - [Option negotiation message format](#option-negotiation-message-format)
+  - [Protocol version](#protocol-version)
+  - [Action flags (SMFIF\_\*)](#action-flags-smfif_)
+  - [Protocol flags (SMFIP\_\*)](#protocol-flags-smfip_)
+  - [Symbol list in option negotiation (optional)](#symbol-list-in-option-negotiation-optional)
+- [Macro stages (SMFIM\_\*)](#macro-stages-smfim_)
+- [Typical protocol flow](#typical-protocol-flow)
+  - [1. Connection establishment](#1-connection-establishment)
+  - [2. SMTP session](#2-smtp-session)
+  - [3. Connection cleanup](#3-connection-cleanup)
+  - [4. Connection reuse (QUIT\_NC)](#4-connection-reuse-quit_nc)
+  - [5. Message abort](#5-message-abort)
+- [Callback functions](#callback-functions)
+  - [Return status codes (SMFIS\_\*)](#return-status-codes-smfis_)
+- [Data limits](#data-limits)
 - [Timeouts](#timeouts)
-- [Error Handling](#error-handling)
-  - [Connection Errors](#connection-errors)
-  - [Protocol Errors](#protocol-errors)
-- [Implementation Guidelines for MTA Compatibility](#implementation-guidelines-for-mta-compatibility)
-  - [1. Connection Management](#1-connection-management)
-  - [2. Hostname Processing](#2-hostname-processing)
-  - [3. Reply Code Formatting](#3-reply-code-formatting)
-  - [4. Protocol Version Negotiation](#4-protocol-version-negotiation)
-  - [5. Error Recovery](#5-error-recovery)
-  - [6. Testing Strategy](#6-testing-strategy)
-- [Security Considerations](#security-considerations)
-- [Example: Simple Milter Implementation](#example-simple-milter-implementation)
-- [Protocol Constants Summary](#protocol-constants-summary)
-  - [Command Codes](#command-codes)
-  - [Reply Codes](#reply-codes)
-  - [Version Constants](#version-constants)
+- [Error handling](#error-handling)
+  - [Connection errors](#connection-errors)
+  - [Protocol errors](#protocol-errors)
+- [Implementation guidelines for MTA compatibility](#implementation-guidelines-for-mta-compatibility)
+  - [1. Connection management](#1-connection-management)
+  - [2. Hostname processing](#2-hostname-processing)
+  - [3. Reply code formatting](#3-reply-code-formatting)
+  - [4. Protocol version negotiation](#4-protocol-version-negotiation)
+  - [5. Error recovery](#5-error-recovery)
+  - [6. Testing strategy](#6-testing-strategy)
+- [Security considerations](#security-considerations)
+- [Example: simple milter implementation](#example-simple-milter-implementation)
+- [Protocol constants summary](#protocol-constants-summary)
+  - [Command codes](#command-codes)
+  - [Reply codes](#reply-codes)
+  - [Version constants](#version-constants)
 - [References](#references)
 - [Notes](#notes)
 
 ## Overview
 
-The Milter (Mail Filter) protocol is a communication protocol between a Mail Transfer Agent (MTA) like Sendmail or Postfix and external mail filter programs. It allows third-party programs to access mail messages as they are being processed in order to filter meta-information and content.
+Milter (mail filter) is the protocol between a Mail Transfer Agent (MTA), such as Sendmail or Postfix, and external mail filter programs. Through it, a third-party program sees each message while the MTA processes it and can filter on the metadata and the content.
 
-This document is based on both:
-- **Sendmail libmilter** implementation (version 8.18.2)
-- **Postfix milter** implementation (milter8 module)
+This specification follows two implementations:
+- Sendmail libmilter, version 8.18.2
+- Postfix milter, the milter8 module
 
-Both MTAs implement the same core protocol with minor behavioral differences documented throughout this specification.
+Both MTAs implement the same core protocol. Where their behavior differs, this specification says so.
 
-## MTA-Specific Differences
+## MTA-specific differences
 
-While Sendmail and Postfix implement the same Milter protocol (protocol version 6), there are important behavioral differences:
+Sendmail and Postfix both implement protocol version 6, but they behave differently in the following areas.
 
-### Connection Lifecycle
+### Connection lifecycle
 
-**Sendmail:**
-- Maintains persistent connections to milter applications
-- Reuses the same socket connection across multiple SMTP sessions (with SMFIC_QUIT_NC)
-- Connection remains open until explicitly closed with SMFIC_QUIT
+Sendmail:
+- keeps persistent connections to milter applications
+- reuses one socket connection across several SMTP sessions, using SMFIC_QUIT_NC
+- keeps the connection open until it closes it with SMFIC_QUIT
 
-**Postfix:**
-- **Auto-disconnect behavior**: Automatically closes the MTA-to-filter socket when the SMTP client disconnects
-- Opens a new MTA-to-filter socket for **each SMTP client connection**
-- Does NOT reuse connections across SMTP sessions
-- This behavior is hardcoded (`LIBMILTER_AUTO_DISCONNECT` in milter8.c)
+Postfix:
+- closes the MTA-to-filter socket when the SMTP client disconnects
+- opens a new MTA-to-filter socket for each SMTP client connection
+- never reuses a connection across SMTP sessions
+- hardcodes this behavior (`LIBMILTER_AUTO_DISCONNECT` in milter8.c)
 
-**Impact for Milter Implementations:**
-- Must support both connection models
-- Cannot rely on connection reuse in Postfix environments
-- Per-connection state is preserved in Sendmail but not in Postfix
-- Connection pooling strategies differ between the two MTAs
+What this means for a milter:
+- It must support both connection models.
+- It cannot rely on connection reuse under Postfix.
+- Per-connection state survives across sessions under Sendmail, but not under Postfix.
+- Connection pooling works differently with the two MTAs.
 
-### Hostname Handling (SMFIC_CONNECT)
+### Hostname handling (SMFIC_CONNECT)
 
-**Sendmail:**
-- Sends unknown hostnames as provided (may be "unknown" or empty)
+Sendmail sends an unknown hostname as it has it, which can be "unknown" or empty.
 
-**Postfix:**
-- Transforms unknown hostname to Sendmail-compatible format
-- If `client_name` is "unknown" and `client_addr` is valid, sends `"[<ip_address>]"` format
-- Example: Unknown hostname with IP 192.168.1.1 → sends `"[192.168.1.1]"`
+Postfix converts an unknown hostname to a Sendmail-compatible form. If `client_name` is "unknown" and `client_addr` is valid, it sends `"[<ip_address>]"`. For example, an unknown host at 192.168.1.1 arrives as `"[192.168.1.1]"`.
 
-### SMTP Reply Code Handling (SMFIR_REPLYCODE)
+### SMTP reply code handling (SMFIR_REPLYCODE)
 
-**Sendmail:**
-- Uses reply as a format string
-- Doubles '%' characters (`%` → `%%`) in replies
+Sendmail uses the reply as a format string and doubles each `%` (`%` becomes `%%`).
 
-**Postfix:**
-- Does NOT use replies as format strings
-- Replaces '%%' with '%'
-- Removes invalid single '%' characters
+Postfix does not treat replies as format strings. It replaces `%%` with `%` and removes any invalid single `%`.
 
-**Example:**
-- Reply: `"550 5.7.1 Rejected: 100% spam"`
+Example:
+- reply: `"550 5.7.1 Rejected: 100% spam"`
 - Sendmail expects: `"550 5.7.1 Rejected: 100%% spam"`
-- Postfix expects: `"550 5.7.1 Rejected: 100% spam"` (no escaping needed)
+- Postfix expects: `"550 5.7.1 Rejected: 100% spam"`, with no escaping
 
-### Protocol Version Configuration
+### Protocol version configuration
 
-**Sendmail:**
-- Protocol version determined automatically via negotiation
-- Compiled with libmilter version support
+Sendmail determines the protocol version through negotiation. Which versions it supports depends on the libmilter it was built with.
 
-**Postfix:**
-- Protocol version must be **explicitly configured** in `main.cf`
-- Parameter: `milter_protocol` (default: 6)
-- Supports versions 2, 3, 4, and 6
-- Configuration example: `milter_protocol = 6`
-- Can also specify extensions: `milter_protocol = 6, no_header_reply`
+Postfix needs the version set in `main.cf`:
+- parameter: `milter_protocol` (default: 6)
+- supported versions: 2, 3, 4, and 6
+- example: `milter_protocol = 6`
+- extensions can follow the version: `milter_protocol = 6, no_header_reply`
 
-### Error Handling and Cleanup
+### Error handling and cleanup
 
-**Sendmail:**
-- Closes connection on protocol errors
-- Immediate abort on malformed messages
+Sendmail closes the connection on a protocol error and aborts at once on a malformed message.
 
-**Postfix:**
-- More resilient to local errors
-- After local queue file errors (file too big, write error), keeps Milter socket open
-- Skips further Milter replies until final decision
-- Maintains SMTP session continuity for multiple deliveries
+Postfix tolerates local errors better. After a local queue file error, such as a file that is too big or a write error, it:
+- keeps the milter socket open
+- skips further milter replies until the final decision
+- keeps the SMTP session going for further deliveries
 
-### Multi-line Reply Handling
+### Multi-line reply handling
 
-**Sendmail:**
-- Standard RFC 5321 multi-line reply format
-- Lines separated by `\r\n` with `-` for continuation
+Sendmail uses the standard RFC 5321 multi-line reply format: lines separated by `\r\n`, with `-` after the code on continuation lines.
 
-**Postfix:**
-- Enforces format validation for each line of multi-line replies
-- Verifies each line starts with '4' or '5' and second character is a digit
+Postfix validates every line of a multi-line reply. Each line must start with `4` or `5`, and its second character must be a digit.
 
-## Protocol Architecture
+## Protocol architecture
 
-### Connection Model
+### Connection model
 
-- The MTA connects to the milter over a socket (Unix domain socket or TCP/IP)
-- Each SMTP session corresponds to one milter connection
-- The milter listens on a socket and accepts connections from the MTA
-- Communication is bidirectional: MTA sends commands, milter sends replies
+- The MTA connects to the milter over a Unix domain socket or TCP/IP.
+- Each SMTP session corresponds to one milter connection.
+- The milter listens on a socket and accepts connections from the MTA.
+- The MTA sends commands and the milter sends replies over the same connection.
 
-### Socket Types
+### Socket types
 
-Milters can listen on:
-- **Unix domain sockets**: `local:/path/to/socket` or `unix:/path/to/socket`
-- **IPv4 sockets**: `inet:port@hostname`
-- **IPv6 sockets**: `inet6:port@hostname`
+A milter can listen on:
+- a Unix domain socket: `local:/path/to/socket` or `unix:/path/to/socket`
+- an IPv4 socket: `inet:port@hostname`
+- an IPv6 socket: `inet6:port@hostname`
 
-## Message Format
+## Message format
 
-All messages in the milter protocol follow this format:
+Every message in the milter protocol has this layout:
 
 ```
 +------------------+------------------+------------------+
@@ -178,27 +159,26 @@ All messages in the milter protocol follow this format:
 +------------------+------------------+------------------+
 ```
 
-- **Length**: 4-byte unsigned integer in network byte order (big-endian)
-  - Includes the command byte (so actual data length = Length - 1)
-- **Command**: Single ASCII character command code
-- **Data**: Optional variable-length data (null-terminated strings, binary data, etc.)
+- Length: a 4-byte unsigned integer in network byte order (big endian). It includes the command byte, so the data length is Length - 1.
+- Command: one ASCII character, the command code.
+- Data: optional, variable length. It can hold null-terminated strings, binary data, and so on.
 
-### Reading a Message
+### Reading a message
 
-1. Read 4 bytes for the length (network byte order)
-2. Read 1 byte for the command
-3. Read (Length - 1) bytes for the data
+1. Read 4 bytes for the length, in network byte order.
+2. Read 1 byte for the command.
+3. Read Length - 1 bytes for the data.
 
-### Writing a Message
+### Writing a message
 
-1. Calculate total length: data_length + 1 (for command byte)
-2. Write 4-byte length (network byte order)
-3. Write 1-byte command
-4. Write data
+1. Compute the total length: data length + 1 for the command byte.
+2. Write the length as 4 bytes in network byte order.
+3. Write the 1-byte command.
+4. Write the data.
 
-## Protocol States
+## Protocol states
 
-The milter protocol operates as a state machine with the following states:
+The milter protocol is a state machine with these states:
 
 | State | Code | Description |
 |-------|------|-------------|
@@ -218,9 +198,9 @@ The milter protocol operates as a state machine with the following states:
 | `ST_UNKN` | 13 | Unknown SMTP command |
 | `ST_Q_NC` | 14 | Quit, new connection follows |
 
-### State Transitions
+### State transitions
 
-Valid state transitions are enforced by the protocol. The following Mermaid diagram shows all valid state transitions:
+The protocol allows only the transitions in this diagram:
 
 ```mermaid
 stateDiagram-v2
@@ -291,33 +271,33 @@ stateDiagram-v2
     ST_QUIT --> [*]: Connection End
 ```
 
-**State Transition Rules:**
+What each state accepts:
 
-- **ST_INIT**: Initial state, only accepts option negotiation
-- **ST_OPTS**: Option negotiation completed, accepts connection or unknown commands
-- **ST_CONN**: Connection established, accepts HELO, MAIL, or unknown commands
-- **ST_HELO**: HELO received, can accept another HELO (retry), MAIL, or unknown
-- **ST_MAIL**: MAIL FROM received, accepts RCPT, ABORT, or unknown
-- **ST_RCPT**: RCPT TO received, can accept multiple RCPTs, headers, DATA, body, or end-of-message
-- **ST_DATA**: DATA command received, accepts headers or end-of-headers
-- **ST_HDRS**: Headers being received, can accept more headers or end-of-headers
-- **ST_EOHS**: End of headers, accepts body chunks or end-of-message
-- **ST_BODY**: Body chunks being received, can accept more chunks or end-of-message
-- **ST_ENDM**: End of message, accepts QUIT, new MAIL (for multiple messages), or unknown
-- **ST_ABRT**: Message aborted - **NOT a terminal state**; the connection continues and waits for the next command (typically recovers to ST_HELO equivalent state)
-- **ST_UNKN**: Unknown command received, can transition to most states (flexible recovery)
-- **ST_Q_NC**: Quit with new connection, accepts new connection or unknown
-- **ST_QUIT**: **Terminal state** - only state that ends the connection
+- `ST_INIT`: the initial state. Accepts option negotiation only.
+- `ST_OPTS`: option negotiation is complete. Accepts connect or unknown commands.
+- `ST_CONN`: the connection is established. Accepts HELO, MAIL, or unknown commands.
+- `ST_HELO`: HELO received. Accepts another HELO (a retry), MAIL, or unknown commands.
+- `ST_MAIL`: MAIL FROM received. Accepts RCPT, ABORT, or unknown commands.
+- `ST_RCPT`: RCPT TO received. Accepts more RCPTs, headers, DATA, body, or end of message.
+- `ST_DATA`: DATA received. Accepts headers or end of headers.
+- `ST_HDRS`: headers arriving. Accepts more headers or end of headers.
+- `ST_EOHS`: end of headers. Accepts body chunks or end of message.
+- `ST_BODY`: body chunks arriving. Accepts more chunks or end of message.
+- `ST_ENDM`: end of message. Accepts QUIT, a new MAIL for the next message, or unknown commands.
+- `ST_ABRT`: message aborted. This state is not terminal: the connection stays open and waits for the next command, usually returning to a state equivalent to `ST_HELO`.
+- `ST_UNKN`: unknown command received. Can move to most other states, which allows flexible recovery.
+- `ST_Q_NC`: quit with a new connection to follow. Accepts a new connect or unknown commands.
+- `ST_QUIT`: the terminal state, and the only state that ends the connection.
 
-**Important Notes on Abort:**
-- `SMFIC_ABORT` does NOT close the connection
-- After abort, the milter continues waiting for commands
-- The abort callback (`xxfi_abort`) is called, but no reply is sent
-- The MTA typically sends a new `SMFIC_MAIL` to start a new message transaction
+Abort in detail:
+- `SMFIC_ABORT` does not close the connection.
+- After an abort, the milter keeps waiting for commands.
+- libmilter calls the abort callback (`xxfi_abort`) but sends no reply.
+- The MTA usually sends a new `SMFIC_MAIL` next, to start a new message transaction.
 
-## Commands from MTA to Milter
+## Commands from MTA to milter
 
-Commands sent by the MTA to the milter use the `SMFIC_` prefix:
+The commands the MTA sends to the milter use the `SMFIC_` prefix:
 
 | Command | Code | Description | Data Format |
 |---------|------|-------------|-------------|
@@ -337,9 +317,9 @@ Commands sent by the MTA to the milter use the `SMFIC_` prefix:
 | `SMFIC_DATA` | 'T' (0x54) | DATA command | None |
 | `SMFIC_UNKNOWN` | 'U' (0x55) | Unknown SMTP command | Command string\0 |
 
-### Connection Info Format (SMFIC_CONNECT)
+### Connection info format (SMFIC_CONNECT)
 
-The `SMFIC_CONNECT` data contains:
+The `SMFIC_CONNECT` data has this layout:
 
 ```
 +------------------+------------------+------------------+------------------+
@@ -348,7 +328,7 @@ The `SMFIC_CONNECT` data contains:
 +------------------+------------------+------------------+------------------+
 ```
 
-**Family Codes (SMFIA_*):**
+Family codes (SMFIA_*):
 
 | Code | Value | Description |
 |------|-------|-------------|
@@ -357,14 +337,14 @@ The `SMFIC_CONNECT` data contains:
 | `SMFIA_INET` | '4' (0x34) | IPv4 address |
 | `SMFIA_INET6` | '6' (0x36) | IPv6 address |
 
-**Notes:**
-- If family is `SMFIA_UNKNOWN`, port and address fields are **not present**
-- Port is in **network byte order** (big-endian, as received from the socket)
-- For IPv4, address is the dotted-decimal string (e.g., "192.168.1.1")
-- For IPv6, address is the colon-hex string (e.g., "::1" or "2001:db8::1")
-- For Unix sockets, address is the socket path
+Notes:
+- If the family is `SMFIA_UNKNOWN`, the port and address fields are absent.
+- The port is in network byte order (big endian), as received from the socket.
+- For IPv4, the address is a dotted-decimal string such as "192.168.1.1".
+- For IPv6, the address is a colon-hex string such as "::1" or "2001:db8::1".
+- For Unix sockets, the address is the socket path.
 
-### Macro Format (SMFIC_MACRO)
+### Macro format (SMFIC_MACRO)
 
 ```
 +------------------+------------------+
@@ -373,7 +353,7 @@ The `SMFIC_CONNECT` data contains:
 +------------------+------------------+
 ```
 
-The stage byte indicates which SMTP command the macros are associated with. It uses the **same command codes** as the corresponding SMFIC_* commands:
+The stage byte names the SMTP command the macros belong to. It uses the same codes as the matching SMFIC_* commands:
 
 | Stage Byte | Corresponds To |
 |------------|----------------|
@@ -385,11 +365,11 @@ The stage byte indicates which SMTP command the macros are associated with. It u
 | 'N' (0x4E) | SMFIC_EOH |
 | 'E' (0x45) | SMFIC_BODYEOB (end of message) |
 
-**Note:** Macros are always sent **before** the command they are associated with.
+The MTA always sends the macros before the command they belong to.
 
-### Internal Error Codes
+### Internal error codes
 
-These are not actual protocol commands but internal error indicators used by libmilter:
+libmilter uses these codes internally to signal errors. They are not protocol commands.
 
 | Code | Value | Description |
 |------|-------|-------------|
@@ -402,9 +382,9 @@ These are not actual protocol commands but internal error indicators used by lib
 | `SMFIC_TOOBIG` | 7 | Data chunk too big |
 | `SMFIC_VALIDCMD` | ' ' (0x20) | First valid command code |
 
-## Replies from Milter to MTA
+## Replies from milter to MTA
 
-Replies sent by the milter to the MTA use the `SMFIR_` prefix:
+The replies the milter sends to the MTA use the `SMFIR_` prefix:
 
 | Reply | Code | Description | Data Format |
 |-------|------|-------------|-------------|
@@ -429,35 +409,35 @@ Replies sent by the milter to the MTA use the `SMFIR_` prefix:
 | `SMFIR_TEMPFAIL` | 't' (0x74) | Temporary failure (4xx) | None |
 | `SMFIR_REPLYCODE` | 'y' (0x79) | Custom SMTP reply code | SMTP reply string\0 |
 
-### Header Modification Data Formats
+### Header modification data formats
 
-**Add Header (SMFIR_ADDHEADER):**
+Add header (SMFIR_ADDHEADER):
 ```
 +------------------+------------------+
 | Header name\0    | Header value\0   |
 +------------------+------------------+
 ```
 
-**Insert Header (SMFIR_INSHEADER):**
+Insert header (SMFIR_INSHEADER):
 ```
 +------------------+------------------+------------------+
 | Index (4 bytes)  | Header name\0    | Header value\0   |
 | (network order)  |                  |                  |
 +------------------+------------------+------------------+
 ```
-Index 0 = insert at the beginning, index 1 = after first header, etc.
+Index 0 inserts at the beginning, index 1 after the first header, and so on.
 
-**Change Header (SMFIR_CHGHEADER):**
+Change header (SMFIR_CHGHEADER):
 ```
 +------------------+------------------+------------------+
 | Index (4 bytes)  | Header name\0    | Header value\0   |
 | (network order)  |                  | (empty = delete) |
 +------------------+------------------+------------------+
 ```
-Index is 1-based: index 1 = first occurrence, index 2 = second occurrence, etc.
-To delete a header, set the value to an empty string.
+The index is 1-based: index 1 is the first occurrence of the header, index 2 the second, and so on.
+An empty value deletes the header.
 
-### Custom Reply Code Format (SMFIR_REPLYCODE)
+### Custom reply code format (SMFIR_REPLYCODE)
 
 ```
 +------------------+------------------+------------------+
@@ -468,15 +448,15 @@ To delete a header, set the value to an empty string.
 
 Example: `"550 5.7.1 Rejected by policy\0"`
 
-For multi-line replies, lines are separated by `\r\n` followed by the reply code with `-` instead of space for continuation lines.
+In a multi-line reply, `\r\n` separates the lines. Each continuation line starts with the reply code followed by `-` in place of the space.
 
-## Option Negotiation
+## Option negotiation
 
-At the start of each connection, the MTA and milter negotiate capabilities through the `SMFIC_OPTNEG` command.
+At the start of each connection, the MTA and the milter negotiate capabilities with the `SMFIC_OPTNEG` command.
 
-### Option Negotiation Message Format
+### Option negotiation message format
 
-Both the MTA's request and the milter's response use `SMFIC_OPTNEG` ('O'):
+The MTA's request and the milter's response both use `SMFIC_OPTNEG` ('O'):
 
 ```
 +------------------+------------------+------------------+------------------+
@@ -485,45 +465,45 @@ Both the MTA's request and the milter's response use `SMFIC_OPTNEG` ('O'):
 +------------------+------------------+------------------+------------------+
 ```
 
-All multi-byte integers are in network byte order (big-endian).
+All multi-byte integers are in network byte order (big endian).
 
-The minimum option negotiation length is 12 bytes (`MILTER_OPTLEN`).
+An option negotiation message is at least 12 bytes long (`MILTER_OPTLEN`).
 
-### Protocol Version
+### Protocol version
 
 | Constant | Value | Description |
 |----------|-------|-------------|
 | `SMFI_PROT_VERSION_MIN` | 2 | Minimum supported version |
 | `SMFI_PROT_VERSION` | 6 | Current version (Sendmail 8.14+) |
 
-The negotiated version is the **minimum** of the MTA and milter versions.
+The negotiated version is the lower of the MTA's version and the milter's version.
 
-#### Protocol Version Evolution
+#### Protocol version history
 
-**Version 2** (Sendmail 8.10 - 8.12):
-- Base protocol with core callbacks
-- Supported events: Connect, HELO, MAIL, RCPT, Headers, Body, End-of-Message
-- Protocol flags: `SMFIP_NOCONNECT`, `SMFIP_NOHELO`, `SMFIP_NOMAIL`, `SMFIP_NORCPT`, `SMFIP_NOBODY`, `SMFIP_NOHDRS`, `SMFIP_NOEOH`
+Version 2 (Sendmail 8.10 to 8.12):
+- the base protocol with the core callbacks
+- events: connect, HELO, MAIL, RCPT, headers, body, end of message
+- protocol flags: `SMFIP_NOCONNECT`, `SMFIP_NOHELO`, `SMFIP_NOMAIL`, `SMFIP_NORCPT`, `SMFIP_NOBODY`, `SMFIP_NOHDRS`, `SMFIP_NOEOH`
 
-**Version 3** (Sendmail 8.13):
-- Added `SMFIC_UNKNOWN` command support
-- Added `SMFIP_NOUNKNOWN` protocol flag
-- Added `SMFIF_QUARANTINE` action flag
+Version 3 (Sendmail 8.13) added:
+- the `SMFIC_UNKNOWN` command
+- the `SMFIP_NOUNKNOWN` protocol flag
+- the `SMFIF_QUARANTINE` action flag
 
-**Version 4** (Sendmail 8.13+):
-- Added `SMFIC_DATA` command support
-- Added `SMFIP_NODATA` protocol flag
+Version 4 (Sendmail 8.13 and later) added:
+- the `SMFIC_DATA` command
+- the `SMFIP_NODATA` protocol flag
 
-**Version 6** (Sendmail 8.14+):
-- Added `SMFIC_QUIT_NC` (quit with new connection) command
-- Added `SMFIR_SKIP` reply (skip remaining callbacks of same type)
-- Added "No-Reply" optimization flags: `SMFIP_NR_CONN`, `SMFIP_NR_HELO`, `SMFIP_NR_MAIL`, `SMFIP_NR_RCPT`, `SMFIP_NR_DATA`, `SMFIP_NR_UNKN`, `SMFIP_NR_EOH`, `SMFIP_NR_BODY`
-- Added `SMFIP_SKIP` support flag (MTA understands SMFIR_SKIP)
-- Added `SMFIP_RCPT_REJ` flag (send rejected RCPTs to filter)
-- Added `SMFIP_HDR_LEADSPC` flag (preserve leading spaces in header values)
-- Added `SMFIF_CHGFROM`, `SMFIF_ADDRCPT_PAR`, `SMFIF_SETSYMLIST` action flags
+Version 6 (Sendmail 8.14 and later) added:
+- the `SMFIC_QUIT_NC` command (quit, new connection follows)
+- the `SMFIR_SKIP` reply (skip the remaining callbacks of the same type)
+- the no-reply flags `SMFIP_NR_CONN`, `SMFIP_NR_HELO`, `SMFIP_NR_MAIL`, `SMFIP_NR_RCPT`, `SMFIP_NR_DATA`, `SMFIP_NR_UNKN`, `SMFIP_NR_EOH`, and `SMFIP_NR_BODY`
+- the `SMFIP_SKIP` flag (the MTA understands SMFIR_SKIP)
+- the `SMFIP_RCPT_REJ` flag (send rejected RCPTs to the filter)
+- the `SMFIP_HDR_LEADSPC` flag (preserve leading spaces in header values)
+- the action flags `SMFIF_CHGFROM`, `SMFIF_ADDRCPT_PAR`, and `SMFIF_SETSYMLIST`
 
-**Version Compatibility Matrix:**
+Version compatibility:
 
 | Feature | V2 | V3 | V4 | V6 |
 |---------|----|----|----|----|
@@ -539,13 +519,13 @@ The negotiated version is the **minimum** of the MTA and milter versions.
 | SMFIF_ADDRCPT_PAR | ✗ | ✗ | ✗ | ✓ |
 | SMFIF_SETSYMLIST | ✗ | ✗ | ✗ | ✓ |
 
-**MTA Version Support:**
-- **Sendmail**: Automatically negotiates version based on libmilter build
-- **Postfix**: Supports versions 2, 3, 4, and 6; configured via `milter_protocol` parameter (default: 6)
+Version support by MTA:
+- Sendmail negotiates the version based on its libmilter build.
+- Postfix supports versions 2, 3, 4, and 6, set with the `milter_protocol` parameter (default: 6).
 
-### Action Flags (SMFIF_*)
+### Action flags (SMFIF_*)
 
-Action flags indicate what actions the milter requests to perform:
+The action flags list the actions the milter asks permission to perform:
 
 | Flag | Value | Description |
 |------|-------|-------------|
@@ -561,7 +541,7 @@ Action flags indicate what actions the milter requests to perform:
 | `SMFIF_ADDRCPT_PAR` | 0x00000080 | Add recipients with ESMTP args |
 | `SMFIF_SETSYMLIST` | 0x00000100 | Can set symbol (macro) list |
 
-**Predefined Action Sets:**
+Predefined action sets:
 
 | Set | Value | Description |
 |-----|-------|-------------|
@@ -569,9 +549,9 @@ Action flags indicate what actions the milter requests to perform:
 | `SMFI_V2_ACTS` | 0x0000003F | V2 filter actions |
 | `SMFI_CURR_ACTS` | 0x000001FF | Current version actions |
 
-### Protocol Flags (SMFIP_*)
+### Protocol flags (SMFIP_*)
 
-Protocol flags indicate which protocol features are supported/requested:
+The protocol flags list the protocol features each side supports or requests:
 
 | Flag | Value | Description |
 |------|-------|-------------|
@@ -599,10 +579,9 @@ Protocol flags indicate which protocol features are supported/requested:
 | `SMFIP_MDS_256K` | 0x10000000 | Max data size = 256K |
 | `SMFIP_MDS_1M` | 0x20000000 | Max data size = 1M |
 
-**Aliases:**
-- `SMFIP_NOHREPL` = `SMFIP_NR_HDR` (backwards compatibility)
+Alias: `SMFIP_NOHREPL` = `SMFIP_NR_HDR`, kept for backward compatibility.
 
-**Predefined Protocol Sets:**
+Predefined protocol sets:
 
 | Set | Value | Description |
 |-----|-------|-------------|
@@ -611,9 +590,9 @@ Protocol flags indicate which protocol features are supported/requested:
 | `SMFI_CURR_PROT` | 0x001FFFFF | Current protocol flags |
 | `SMFI_INTERNAL` | 0x70000000 | Internal flags (MTA-libmilter) |
 
-### Symbol List in Option Negotiation (Optional)
+### Symbol list in option negotiation (optional)
 
-After the three 4-byte integers, the milter can optionally include a symbol list to request specific macros. Format:
+After the three 4-byte integers, the milter can add a symbol list to request specific macros. Format:
 
 ```
 +------------------+------------------+
@@ -622,13 +601,13 @@ After the three 4-byte integers, the milter can optionally include a symbol list
 +------------------+------------------+
 ```
 
-This pattern can repeat for multiple stages. Example macro list: `"{mail_mailer} {mail_host} {mail_addr}"`
+The pattern can repeat for several stages. Example macro list: `"{mail_mailer} {mail_host} {mail_addr}"`
 
-**Maximum macros per stage:** 50 (`MAXFILTERMACROS`)
+At most 50 macros per stage (`MAXFILTERMACROS`).
 
-## Macro Stages (SMFIM_*)
+## Macro stages (SMFIM_*)
 
-These constants are used with `smfi_setsymlist()` and in the symbol list:
+`smfi_setsymlist()` and the symbol list use these constants:
 
 | Stage | Value | Description |
 |-------|-------|-------------|
@@ -640,19 +619,18 @@ These constants are used with `smfi_setsymlist()` and in the symbol list:
 | `SMFIM_EOM` | 5 | End of message stage |
 | `SMFIM_EOH` | 6 | End of headers stage |
 
-**Internal only:**
-- `SMFIM_NOMACROS` = -1 (no macros for this command, used internally)
+`SMFIM_NOMACROS` = -1 is internal only. It means the command has no macros.
 
-## Typical Protocol Flow
+## Typical protocol flow
 
-### 1. Connection Establishment
+### 1. Connection establishment
 
 ```
 MTA → Milter: SMFIC_OPTNEG (version=6, actions, protocol flags)
 Milter → MTA: SMFIC_OPTNEG (negotiated version, actions, protocol flags)
 ```
 
-### 2. SMTP Session
+### 2. SMTP session
 
 ```
 MTA → Milter: SMFIC_MACRO ('C', macros for connect)
@@ -693,14 +671,14 @@ MTA → Milter: SMFIC_BODYEOB
 Milter → MTA: [modifications...] then SMFIR_ACCEPT/REJECT/etc.
 ```
 
-### 3. Connection Cleanup
+### 3. Connection cleanup
 
 ```
 MTA → Milter: SMFIC_QUIT
 (no reply, connection closed by both sides)
 ```
 
-### 4. Connection Reuse (QUIT_NC)
+### 4. Connection reuse (QUIT_NC)
 
 ```
 MTA → Milter: SMFIC_QUIT_NC
@@ -710,7 +688,7 @@ MTA → Milter: SMFIC_CONNECT (new connection info)
 ...
 ```
 
-### 5. Message Abort
+### 5. Message abort
 
 ```
 MTA → Milter: SMFIC_ABORT
@@ -719,9 +697,9 @@ MTA → Milter: SMFIC_MAIL (start new message)
 ...
 ```
 
-## Callback Functions
+## Callback functions
 
-A milter implementation provides callback functions:
+A milter implementation provides these callback functions:
 
 | Callback | Triggered By | Valid Returns |
 |----------|--------------|---------------|
@@ -739,12 +717,12 @@ A milter implementation provides callback functions:
 | `xxfi_close` | Connection end | Return ignored (no reply sent) |
 | `xxfi_unknown` | `SMFIC_UNKNOWN` | Same as connect |
 
-**Notes on xxfi_close:**
-- Called when connection ends (after `SMFIC_QUIT`)
-- Also called after `SMFIC_QUIT_NC`
-- Called on errors/failures even without explicit QUIT
+When libmilter calls `xxfi_close`:
+- when the connection ends, after `SMFIC_QUIT`
+- after `SMFIC_QUIT_NC`
+- on errors and failures, even without an explicit QUIT
 
-### Return Status Codes (SMFIS_*)
+### Return status codes (SMFIS_*)
 
 | Status | Value | Description |
 |--------|-------|-------------|
@@ -757,7 +735,7 @@ A milter implementation provides callback functions:
 | `SMFIS_SKIP` | 8 | Skip remaining callbacks of same type |
 | `SMFIS_ALL_OPTS` | 10 | Accept all MTA options (negotiate only) |
 
-## Data Limits
+## Data limits
 
 | Constant | Value | Description |
 |----------|-------|-------------|
@@ -771,11 +749,11 @@ A milter implementation provides callback functions:
 
 ## Timeouts
 
-Default timeout values:
-- **MI_TIMEOUT**: 7210 seconds (default read/write timeout)
-- **MI_CHK_TIME**: 5 seconds (check interval for termination)
+Default timeouts:
+- `MI_TIMEOUT`: 7210 seconds, the default read and write timeout
+- `MI_CHK_TIME`: 5 seconds, the interval for checking for termination
 
-Sendmail.cf configuration using `T=` equate:
+In sendmail.cf, set the timeouts with the `T=` equate:
 ```
 T=C:5m;S:10s;R:10s;E:5m
 ```
@@ -787,69 +765,69 @@ T=C:5m;S:10s;R:10s;E:5m
 | R | Receive timeout | 10 seconds |
 | E | End-of-message timeout | 5 minutes |
 
-## Error Handling
+## Error handling
 
-### Connection Errors
+### Connection errors
 
-Sendmail `F=` flags for milter failure:
-- **R**: Reject the message
-- **T**: Temporary fail the message
-- **4**: Shut down with 421 error
-- **(none)**: Accept message as if filter wasn't present
+The Sendmail `F=` flags choose what happens when a milter fails:
+- `R`: reject the message
+- `T`: temporarily fail the message
+- `4`: shut down with a 421 error
+- no flag: accept the message as if the filter were not there
 
-### Protocol Errors
+### Protocol errors
 
-- Invalid state transitions: attempt recovery to ST_HELO, else ignore
-- Unknown commands: connection abort
-- Timeouts: connection abort, call xxfi_abort if in message
-- Malformed messages: connection abort
+- Invalid state transition: try to recover to `ST_HELO`; otherwise ignore the command.
+- Unknown command: abort the connection.
+- Timeout: abort the connection, and call `xxfi_abort` if a message is in progress.
+- Malformed message: abort the connection.
 
-## Implementation Guidelines for MTA Compatibility
+## Implementation guidelines for MTA compatibility
 
-To ensure your milter works correctly with both Sendmail and Postfix:
+Follow these guidelines so the milter works with both Sendmail and Postfix.
 
-### 1. Connection Management
+### 1. Connection management
 
-**Design for Ephemeral Connections:**
-- Do NOT rely on connection reuse across SMTP sessions
-- Initialize per-session state on each `SMFIC_CONNECT`
-- Clean up per-session state in `xxfi_close`
-- Assume each SMTP session gets a new connection (Postfix behavior)
+Design for short-lived connections:
+- Do not rely on connection reuse across SMTP sessions.
+- Initialize per-session state on each `SMFIC_CONNECT`.
+- Clean up per-session state in `xxfi_close`.
+- Assume each SMTP session gets a new connection, as under Postfix.
 
-**Handle Both Models:**
-- Support `SMFIC_QUIT_NC` for Sendmail connection reuse
-- Reset all message-specific state after `SMFIC_BODYEOB` or `SMFIC_ABORT`
-- Treat `xxfi_close` as the final cleanup regardless of connection model
+Support both models:
+- Handle `SMFIC_QUIT_NC` for Sendmail connection reuse.
+- Reset all per-message state after `SMFIC_BODYEOB` or `SMFIC_ABORT`.
+- Treat `xxfi_close` as the final cleanup under either connection model.
 
-### 2. Hostname Processing
+### 2. Hostname processing
 
-**Normalize Unknown Hostnames:**
-- Accept both "unknown" and "[<ip>]" formats for unknown hostnames
-- If hostname is "unknown" or starts with '[', extract IP from address field
-- Do not assume hostname format consistency between MTAs
+Normalize unknown hostnames:
+- Accept both "unknown" and "[<ip>]" as forms of an unknown hostname.
+- If the hostname is "unknown" or starts with `[`, take the IP from the address field.
+- Do not expect the two MTAs to format hostnames the same way.
 
-### 3. Reply Code Formatting
+### 3. Reply code formatting
 
-**SMFIR_REPLYCODE Best Practices:**
-- Do NOT double '%' characters in reply strings
-- Use plain text replies without format string escaping
-- Postfix will handle any necessary transformations
-- Validate reply format: `<3-digit> <space> <text>`
+SMFIR_REPLYCODE:
+- Do not double `%` characters in reply strings.
+- Send plain-text replies without format string escaping.
+- Postfix applies any transformation it needs.
+- Validate the reply format: `<3-digit> <space> <text>`.
 
-**Multi-line Replies:**
-- Each line must start with the 3-digit code
-- Use '-' for continuation lines, ' ' for final line
+Multi-line replies:
+- Start each line with the 3-digit code.
+- Put `-` after the code on continuation lines and a space on the final line.
 - Format: `"<code>-<text>\r\n<code>-<text>\r\n<code> <text>"`
-- Ensure each line starts with '4' or '5' (reject/tempfail)
+- Start each line with `4` or `5` (tempfail or reject).
 
-### 4. Protocol Version Negotiation
+### 4. Protocol version negotiation
 
-**Implement Version Detection:**
-- Accept negotiations for versions 2, 3, 4, and 6
-- Gracefully degrade features for older versions
-- Only send events/replies supported by negotiated version
+Detect the version:
+- Accept negotiation for versions 2, 3, 4, and 6.
+- Drop features cleanly for older versions.
+- Send only the events and replies that the negotiated version supports.
 
-**Version-Specific Behavior:**
+Version-specific behavior:
 ```
 if (negotiated_version >= 6) {
     // Can use SMFIR_SKIP, SMFIP_NR_* flags, SMFIF_CHGFROM, etc.
@@ -862,34 +840,33 @@ if (negotiated_version >= 3) {
 }
 ```
 
-### 5. Error Recovery
+### 5. Error recovery
 
-**Robust Error Handling:**
-- Continue processing after non-fatal errors
-- Do not assume connection will be closed on error
-- Implement timeout handling with `SMFIR_PROGRESS`
-- Handle missing or malformed commands gracefully
+- Keep processing after non-fatal errors.
+- Do not assume an error closes the connection.
+- Use `SMFIR_PROGRESS` to avoid timeouts.
+- Handle missing or malformed commands without crashing.
 
-### 6. Testing Strategy
+### 6. Testing strategy
 
-**Test with Both MTAs:**
-- Verify connection lifecycle with Sendmail (persistent connections)
-- Verify connection lifecycle with Postfix (connection-per-session)
-- Test hostname handling with unknown/bracketed formats
-- Test protocol version negotiation (v2, v3, v4, v6)
-- Test reply code handling with '%' characters
-- Test cleanup behavior after errors
+Test with both MTAs:
+- the connection lifecycle under Sendmail (persistent connections)
+- the connection lifecycle under Postfix (one connection per session)
+- hostname handling with the unknown and bracketed forms
+- protocol version negotiation (v2, v3, v4, v6)
+- reply codes that contain `%`
+- cleanup after errors
 
-## Security Considerations
+## Security considerations
 
-1. **Do not run milters as root** - libmilter does not need root privileges
-2. **Socket permissions** - Ensure proper permissions on Unix domain sockets
-3. **Network security** - If using TCP/IP, consider firewall rules and localhost binding
-4. **Input validation** - Always validate data received from the MTA
-5. **Timeout handling** - Use `SMFIR_PROGRESS` for long operations to prevent timeouts
-6. **MTA-agnostic design** - Do not rely on MTA-specific behaviors for security decisions
+1. Do not run milters as root. libmilter does not need root privileges.
+2. Set restrictive permissions on Unix domain sockets.
+3. With TCP/IP, use firewall rules and consider binding to localhost.
+4. Validate all data received from the MTA.
+5. Send `SMFIR_PROGRESS` during long operations so the MTA does not time out.
+6. Do not base security decisions on behavior specific to one MTA.
 
-## Example: Simple Milter Implementation
+## Example: simple milter implementation
 
 ```c
 #include <libmilter/mfapi.h>
@@ -957,9 +934,9 @@ int main(void)
 }
 ```
 
-## Protocol Constants Summary
+## Protocol constants summary
 
-### Command Codes
+### Command codes
 
 | Command | Code | Hex |
 |---------|------|-----|
@@ -979,7 +956,7 @@ int main(void)
 | SMFIC_DATA | 'T' | 0x54 |
 | SMFIC_UNKNOWN | 'U' | 0x55 |
 
-### Reply Codes
+### Reply codes
 
 | Reply | Code | Hex |
 |-------|------|-----|
@@ -1004,7 +981,7 @@ int main(void)
 | SMFIR_TEMPFAIL | 't' | 0x74 |
 | SMFIR_REPLYCODE | 'y' | 0x79 |
 
-### Version Constants
+### Version constants
 
 | Constant | Value | Description |
 |----------|-------|-------------|
@@ -1015,46 +992,46 @@ int main(void)
 
 ## References
 
-### Primary Sources
-- **Sendmail libmilter** source code (version 8.18.2)
-  - `sendmail-8.18.2/include/libmilter/mfdef.h` - Protocol definitions
-  - `sendmail-8.18.2/include/libmilter/mfapi.h` - API definitions
-  - `sendmail-8.18.2/libmilter/` - Implementation
-- **Postfix milter8** source code (latest)
-  - `postfix/src/milter/milter.h` - Postfix milter interface
-  - `postfix/src/milter/milter8.c` - Sendmail 8 protocol implementation
-  - `postfix/src/smtpd/smtpd_milter.c` - SMTP integration
+### Primary sources
+- Sendmail libmilter source code, version 8.18.2
+  - `sendmail-8.18.2/include/libmilter/mfdef.h`: protocol definitions
+  - `sendmail-8.18.2/include/libmilter/mfapi.h`: API definitions
+  - `sendmail-8.18.2/libmilter/`: implementation
+- Postfix milter8 source code (latest)
+  - `postfix/src/milter/milter.h`: Postfix milter interface
+  - `postfix/src/milter/milter8.c`: Sendmail 8 protocol implementation
+  - `postfix/src/smtpd/smtpd_milter.c`: SMTP integration
 
 ### Documentation
-- [Postfix MILTER_README](http://www.postfix.org/MILTER_README.html) - Official Postfix Milter documentation
-- [Sendmail libmilter Documentation](https://www.sendmail.org/releases/8.18.1.html) - Official Sendmail documentation
-- RFC 5321 - Simple Mail Transfer Protocol (SMTP)
-- RFC 5322 - Internet Message Format
+- [Postfix MILTER_README](http://www.postfix.org/MILTER_README.html): the official Postfix milter documentation
+- [Sendmail libmilter documentation](https://www.sendmail.org/releases/8.18.1.html): the official Sendmail documentation
+- RFC 5321: Simple Mail Transfer Protocol (SMTP)
+- RFC 5322: Internet Message Format
 
 ## Notes
 
-### General Protocol Rules
-1. All multi-byte integers use network byte order (big-endian)
-2. Strings are null-terminated
-3. The protocol is case-sensitive
-4. Commands and replies are single ASCII characters (≥ 0x20)
-5. The milter must be thread-safe for multiple simultaneous connections
-6. Macros are sent **before** the command they are associated with
-7. Message modifications can **only** be done in `xxfi_eom`
-8. Body replacement must split data into chunks ≤ `MILTER_CHUNK_SIZE`
-9. After `SMFIS_ACCEPT/REJECT/DISCARD/TEMPFAIL`, the filter receives no more callbacks for that message
-10. `SMFIS_NOREPLY` requires the corresponding `SMFIP_NR_*` flag to be negotiated
+### General protocol rules
+1. All multi-byte integers use network byte order (big endian).
+2. Strings are null-terminated.
+3. The protocol is case-sensitive.
+4. Commands and replies are single ASCII characters (≥ 0x20).
+5. The milter must be thread-safe, because it serves several connections at once.
+6. The MTA sends macros before the command they belong to.
+7. Message modifications are allowed only in `xxfi_eom`.
+8. A body replacement must be split into chunks of at most `MILTER_CHUNK_SIZE`.
+9. After `SMFIS_ACCEPT`, `SMFIS_REJECT`, `SMFIS_DISCARD`, or `SMFIS_TEMPFAIL`, the filter receives no more callbacks for that message.
+10. `SMFIS_NOREPLY` requires the matching `SMFIP_NR_*` flag to have been negotiated.
 
-### MTA-Specific Considerations
-11. **Connection Reuse**: Sendmail reuses connections with `SMFIC_QUIT_NC`, Postfix opens new connections per SMTP session
-12. **Hostname Format**: Postfix transforms unknown hostnames to `[<ip>]` format; Sendmail sends as-is
-13. **Reply Escaping**: Only Sendmail doubles '%' in `SMFIR_REPLYCODE`; Postfix uses plain text
-14. **Protocol Version**: Postfix requires explicit configuration (`milter_protocol`); Sendmail negotiates automatically
-15. **Error Recovery**: Postfix maintains connections after local errors; Sendmail may close immediately
-16. **Auto-Disconnect**: Postfix automatically closes milter connections when SMTP clients disconnect
+### MTA-specific considerations
+11. Connection reuse: Sendmail reuses connections with `SMFIC_QUIT_NC`; Postfix opens a new connection per SMTP session.
+12. Hostname format: Postfix turns unknown hostnames into `[<ip>]`; Sendmail sends them unchanged.
+13. Reply escaping: only Sendmail doubles `%` in `SMFIR_REPLYCODE`; Postfix uses plain text.
+14. Protocol version: Postfix needs `milter_protocol` configured; Sendmail negotiates the version itself.
+15. Error recovery: Postfix keeps connections open after local errors; Sendmail may close them at once.
+16. Auto-disconnect: Postfix closes the milter connection when the SMTP client disconnects.
 
-### Protocol Version Features
-17. Version 2 is the baseline; versions 3, 4, and 6 add incremental features
-18. Always implement version detection and feature degradation for compatibility
-19. Version 6 is recommended for production use (full feature set)
-20. Test with multiple protocol versions to ensure backward compatibility
+### Protocol version features
+17. Version 2 is the baseline. Versions 3, 4, and 6 each add features.
+18. Implement version detection, and drop features the negotiated version lacks.
+19. Use version 6 in production; it has the full feature set.
+20. Test with several protocol versions to confirm backward compatibility.

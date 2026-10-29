@@ -1,87 +1,96 @@
 ---
 name: design-master
-description: Procedural guidance for architecting software systems using Domain-Driven Design (DDD) and Clean Architecture. Focuses on Ubiquitous Language enforcement, Bounded Context isolation, and strategic design workflow.
+description: Strategic design with Domain-Driven Design (DDD) and Clean Architecture, with strict Ubiquitous Language naming and Bounded Context isolation. Use when designing a new system or context, or when checking a design's boundaries and dependencies.
 ---
 
-# Design Master: Strategic Design & Architecture Workflow
+# Design Master
 
-This skill provides procedural guidance for applying Domain-Driven Design and Clean Architecture patterns, with emphasis on enforcing domain language consistency and structural boundaries.
+Apply DDD and Clean Architecture with two priorities: names follow the domain language, and boundaries stay intact.
 
-## Ubiquitous Language Enforcement (Critical Rule)
+## Ubiquitous Language
 
-**Strict Naming Convention Policy:**
-- Establish a common language shared by domain experts and developers
-- **RULE**: This language must strictly dictate ALL naming in your codebase
-- Class names, variables, and methods must **exactly match** the Ubiquitous Language
-- **NO technical jargon padding** (e.g., use `Connection`, not `ConnectionHandler` if domain says "Connection")
-- **NO abbreviations** unless the domain uses them
-- Code should read like domain documentation
+Domain experts and developers share one vocabulary, and that vocabulary decides every name in the code.
 
-**Example:**
-- Domain says "Mail Filter" → Use `MailFilter`, NOT `MailFilterProcessor` or `MFHandler`
-- Domain says "SMTP Command" → Use `Command`, NOT `SmtpCommandMessage`
+- Type, variable, and method names must match the Ubiquitous Language exactly.
+- Do not pad names with technical words. If the domain says "Connection", write `Connection` and leave out `ConnectionHandler`.
+- Do not abbreviate unless the domain does.
+- Code should read like domain documentation.
 
-## Strategic Design Workflow
+Examples:
 
-Follow this sequence when designing new systems or bounded contexts:
+- Domain term "Mail Filter": use `MailFilter`. Avoid `MailFilterProcessor` and `MFHandler`.
+- Domain term "SMTP Command": use `Command`. Avoid `SmtpCommandMessage`.
 
-### Phase 1: Define Domain Boundaries
-1. **Identify Core Domain**: What is the primary business problem being solved?
-2. **Define Domain Boundary**: Clearly mark what is *inside* (your responsibility) vs. *outside* (external dependencies)
-3. **Focus**: Concentrate effort on the core domain; treat everything else as supporting infrastructure
+## Strategic design workflow
 
-### Phase 2: Identify Bounded Contexts
-1. **Define Boundaries**: Identify explicit boundaries where a particular domain model applies
-2. **Context Consistency**: Within a Bounded Context, the Ubiquitous Language is strictly consistent
-3. **Model Isolation**: A model is ONLY valid within its Bounded Context
-4. **No Model Sharing**: Never share domain models across contexts; use DTOs or Anti-Corruption Layers instead
+Work through these phases in order when you design a new system or Bounded Context.
 
-**Key Rule**: If two teams or subsystems use the same word to mean different things, they are in different Bounded Contexts.
+### 1. Define the domain boundary
 
-### Phase 3: Context Mapping
-Define relationships between Bounded Contexts:
-- **Anti-Corruption Layer**: Protect your domain from external model changes
-- **Open Host Service**: Expose a well-defined protocol/API for others to use
-- **Shared Kernel**: Carefully shared subset of the domain model (use sparingly)
-- **Customer/Supplier**: Upstream/downstream dependencies
+1. Name the core domain: the main business problem the system solves.
+2. Mark what lies inside your responsibility and what is an external dependency.
+3. Spend most of the effort on the core domain and treat the rest as supporting infrastructure.
 
-### Phase 4: Tactical Patterns (Implementation)
-Within each Bounded Context, identify:
-- **Aggregate Roots**: Main entry points to clusters of domain objects
-- **Repositories**: Abstractions for aggregate persistence
-- **Domain Services**: Operations that don't naturally fit in entities
-- **Domain Events**: Capture significant domain occurrences
+### 2. Identify Bounded Contexts
 
-**Note**: Use standard DDD patterns (Entities, Value Objects, Aggregates). Focus here is on applying them systematically, not defining them.
+1. Find the explicit boundaries where a given domain model applies.
+2. Inside a Bounded Context, the Ubiquitous Language has one meaning per term.
+3. A model is valid only inside its own Bounded Context.
+4. Never share domain models across contexts. Translate with DTOs or an Anti-Corruption Layer.
 
-## Clean Architecture: The Dependency Rule
+If two teams or subsystems use the same word for different things, they belong to different Bounded Contexts.
 
-**Core Principle**: Source code dependencies must ONLY point inward, toward higher-level policies.
+### 3. Map the contexts
 
-**Layer Structure** (innermost to outermost):
-1. **Domain Layer**: Pure domain logic (entities, value objects, domain services) - NO dependencies
-2. **Application Layer**: Use cases and orchestration - depends ONLY on Domain
-3. **Interface Adapters**: Controllers, presenters, gateways - depends ONLY on Application
-4. **Infrastructure**: Frameworks, databases, external APIs - depends on Interface Adapters
+Define how Bounded Contexts relate:
 
-**Critical Rules**:
-- Domain NEVER imports from Application, Adapters, or Infrastructure
-- Use Dependency Inversion (interfaces in inner layers, implementations in outer layers)
-- Keep Infrastructure layer thin (wiring only)
+- Anti-Corruption Layer: shields your domain from changes in an external model.
+- Open Host Service: a published protocol or API that other contexts call.
+- Shared Kernel: a small part of the model that two contexts share. Use it sparingly.
+- Customer/Supplier: an upstream context that a downstream context depends on.
 
-## Design Checklist
+### 4. Apply tactical patterns
 
-Before implementation, verify:
-- [ ] Ubiquitous Language documented and enforced in naming
-- [ ] Bounded Context boundaries clearly defined
-- [ ] No domain models shared across contexts
-- [ ] Context mapping documented (Anti-Corruption Layers identified)
-- [ ] Aggregate Roots identified for each context
-- [ ] Dependencies flow inward only (Domain → Application → Adapters → Infrastructure)
+Inside each Bounded Context, identify:
 
-## Related Skills
+- Aggregate Roots, the entry points to clusters of domain objects
+- Repositories, which abstract aggregate persistence
+- Domain Services, for operations that do not fit in an entity
+- Domain Events, which record significant domain occurrences
 
-- **docs-first**: Visualize designs with Mermaid diagrams before coding
-- **canon-tdd**: Implement designs iteratively using TDD
-- **rust-master**: Apply these patterns idiomatically in Rust
-- **external-integration**: Handle boundaries with external systems
+Use the standard DDD building blocks (Entities, Value Objects, Aggregates). This phase is about applying them consistently; their definitions are out of scope here.
+
+## Clean Architecture: the Dependency Rule
+
+Source code dependencies point inward only, toward higher-level policy.
+
+Layers from innermost to outermost:
+
+1. Domain: entities, value objects, and domain services. No dependencies.
+2. Application: use cases and orchestration. Depends only on Domain.
+3. Interface Adapters: controllers, presenters, and gateways. Depends only on Application.
+4. Infrastructure: frameworks, databases, and external APIs. Depends on Interface Adapters.
+
+Rules:
+
+- Domain never imports from Application, Interface Adapters, or Infrastructure.
+- Use dependency inversion: define interfaces in inner layers and implement them in outer layers.
+- Keep the Infrastructure layer thin. It only wires things together.
+
+## Design checklist
+
+Before implementation, confirm:
+
+- [ ] The Ubiquitous Language is documented and the names follow it.
+- [ ] Bounded Context boundaries are defined.
+- [ ] No domain model is shared across contexts.
+- [ ] The context map is documented, including any Anti-Corruption Layers.
+- [ ] Each context has its Aggregate Roots identified.
+- [ ] Dependencies point inward only: Infrastructure depends on Interface Adapters, Interface Adapters on Application, and Application on Domain.
+
+## Related skills
+
+- docs-first: draw the design as Mermaid diagrams before coding.
+- canon-tdd: implement the design test by test.
+- rust-master: apply these patterns in idiomatic Rust.
+- external-integration: handle boundaries with external systems.

@@ -1,92 +1,94 @@
 ---
 name: rust-master
-description: Project-specific Rust conventions for naming, module organization, error handling, and enforcing Bounded Contexts through Rust's privacy and module system.
+description: Project Rust conventions for naming, module layout, error handling, async code, and enforcing Bounded Contexts with Rust's privacy and module system. Use when writing or reviewing Rust code in this repository.
 ---
 
-# Rust Master: Project Conventions & Standards
+# Rust conventions
 
-This skill defines project-specific conventions for Rust development, focusing on naming standards, module architecture, and enforcing domain boundaries.
+## Naming and the Ubiquitous Language
 
-## Naming Conventions (Ubiquitous Language)
+### Standard Rust naming
 
-### Standard Rust Naming
-- **Types/Traits**: UpperCamelCase
-- **Variables/Functions/Modules**: snake_case
-- **Constants/Statics**: SCREAMING_SNAKE_CASE
+- Types and traits: `UpperCamelCase`
+- Variables, functions, and modules: `snake_case`
+- Constants and statics: `SCREAMING_SNAKE_CASE`
 
-### Domain Language Enforcement Rules
-- **NO Stuttering**: Never repeat module names in type names
-- **Match Domain Exactly**: Type names must match domain terminology without technical padding or suffixes
-- **No Abbreviations**: Use full domain terms unless abbreviation is standard in the domain
-- **Protocol Constants**: Preserve naming from specifications (e.g., Milter protocol constants as defined in spec)
+### Domain language
 
-## Error Handling Standards
+- Do not repeat the module name in a type name.
+- Type names must match the domain term exactly, with no technical padding or suffix.
+- Write domain terms in full. Abbreviate only where the domain itself does.
+- Keep protocol constant names as the specification spells them, for example the Milter constants.
 
-### Project Convention
-- Expose typed error enums (`thiserror` 2.x) in the library's public API; do not expose `Box<dyn Error>` aliases from a library crate (reserve `anyhow`-style boxed errors for binaries, examples, and tests)
-- Create custom error enums for domain-specific errors
-- Never use unwrap/expect in production without safety comments
-- Propagate errors with the question mark operator
+## Error handling
 
-## Modern Rust Baseline
+- The library's public API exposes typed error enums built with `thiserror` 2.x. A library crate must not expose `Box<dyn Error>` aliases; keep `anyhow`-style boxed errors for binaries, examples, and tests.
+- Give each domain its own error enum.
+- Do not call `unwrap` or `expect` in production code without a comment that explains why it cannot fail.
+- Propagate errors with `?`.
 
-- **Edition**: Use edition 2024 (Rust 1.85+) for new crates; declare the MSRV with `rust-version` in `Cargo.toml`
-- **Async traits**: Use native `async fn` in traits (Rust 1.75+); do not add the `async-trait` crate. For public traits whose futures must be `Send` (e.g. spawned on a multi-threaded Tokio runtime), declare `fn method(&self) -> impl Future<Output = T> + Send` instead of `async fn` (rustc's `async_fn_in_trait` lint warns otherwise)
-- **Pinning**: Use `std::pin::pin!` (Rust 1.68+) rather than `tokio::pin!` / `futures::pin_mut!`
-- **Lazy statics**: Use `std::sync::LazyLock` / `OnceLock` (Rust 1.80 / 1.70) instead of `lazy_static` or `once_cell`
-- **Lint suppression**: Use `#[expect(lint, reason = "...")]` (Rust 1.81+) instead of `#[allow]` so stale suppressions are reported
+## Modern Rust baseline
 
-## Async Development Rules
+- Use edition 2024 (Rust 1.85 or later) for new crates, and declare the MSRV with `rust-version` in `Cargo.toml`.
+- Write `async fn` in traits directly (Rust 1.75 or later) and do not add the `async-trait` crate. In a public trait whose futures must be `Send`, for example because callers spawn them on a multi-threaded Tokio runtime, declare `fn method(&self) -> impl Future<Output = T> + Send`. rustc's `async_fn_in_trait` lint warns about `async fn` in public traits.
+- Pin with `std::pin::pin!` (Rust 1.68 or later) in place of `tokio::pin!` or `futures::pin_mut!`.
+- Use `std::sync::LazyLock` (Rust 1.80) and `OnceLock` (Rust 1.70) in place of `lazy_static` and `once_cell`.
+- Suppress lints with `#[expect(lint, reason = "...")]` (Rust 1.81 or later) in place of `#[allow]`. The compiler then reports a suppression that is no longer needed.
 
-### Cancellation & Shutdown
-- Always use tokio::select with tokio_util::sync::CancellationToken for graceful shutdown
-- Ensure all connection loops respect cancellation signals
-- Handle partial operations during cancellation gracefully
+## Async code
 
-### Executor Safety
-- Never block the executor with synchronous I/O or CPU-heavy operations
-- Use spawn_blocking for any blocking operations
-- Never hold std::sync mutex guards across await points (makes future !Send)
+### Cancellation and shutdown
 
-### Testing Standards
-- Use tokio::test for async unit tests
-- Consider loom for testing concurrent primitives
+- Implement graceful shutdown with `tokio::select!` and `tokio_util::sync::CancellationToken`.
+- Every connection loop must stop when the token is cancelled.
+- Leave partial operations in a consistent state when cancellation interrupts them.
 
-## Enforcing Bounded Contexts via Modules
+### Executor safety
 
-### Privacy Strategy
-- **Privacy by Default**: Keep all types and fields private unless explicitly needed externally
-- Use pub(crate) for internal crate visibility
-- Use pub(super) for parent module visibility
-- Only expose Aggregate Roots as public APIs
+- Do not run synchronous I/O or CPU-heavy work on the executor. Move it to `spawn_blocking`.
+- Do not hold a `std::sync` mutex guard across an `.await`. The guard makes the future `!Send`.
 
-### Module Isolation Rules
-- Group related domain objects within modules
-- External modules interact ONLY with Aggregate Roots
-- Internal implementation details remain private within modules
+### Async tests
 
-### Workspace Organization
-- For strict Bounded Context boundaries, separate into distinct workspace crates
-- Each crate represents a complete Bounded Context
-- Minimize dependencies between context crates
+- Use `#[tokio::test]` for async unit tests.
+- Consider `loom` for testing concurrency primitives.
 
-## Tooling & Quality Requirements
+## Bounded Contexts in modules
 
-### Mandatory Pre-Commit Checks
-- Run cargo fmt to enforce consistent formatting
-- Run cargo clippy and address ALL warnings
-- Ensure all tests pass
-- Document public APIs with rustdoc comments including examples
+### Privacy
 
-### Documentation Standards
-- All public APIs must have rustdoc comments
-- Include example usage blocks that serve as doctests
-- Document safety requirements for unsafe code
-- Explain non-obvious design decisions in module-level docs
+- Keep types and fields private unless code outside the module needs them.
+- Use `pub(crate)` for crate-wide visibility and `pub(super)` for the parent module.
+- Make only Aggregate Roots part of the public API.
 
-## Related Skills
+### Module isolation
 
-- **canon-tdd**: Apply TDD methodology to Rust development
-- **design-master**: Understand Bounded Context architectural strategy
-- **logging-principles**: Logging and observability standards for the project
-- **external-integration**: Patterns for resilient external API integration
+- Group related domain objects in one module.
+- Code outside the module talks only to the Aggregate Root.
+- Implementation details stay private to the module.
+
+### Workspace layout
+
+- For strict Bounded Context boundaries, split the contexts into separate crates in the Cargo workspace, one complete context per crate.
+- Keep dependencies between context crates to a minimum.
+
+## Tooling and quality
+
+### Before every commit
+
+- Run `cargo fmt`.
+- Run `cargo clippy` and fix every warning.
+- Make sure all tests pass.
+
+### Documentation
+
+- Give every public API a rustdoc comment with an example that runs as a doctest.
+- Document the safety requirements of `unsafe` code.
+- Explain design decisions that are not obvious in the module-level docs.
+
+## Related skills
+
+- canon-tdd: TDD for Rust development.
+- design-master: the Bounded Context strategy behind the module rules.
+- logging-principles: logging and observability.
+- external-integration: resilient calls to external APIs.

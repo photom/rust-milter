@@ -1,92 +1,75 @@
 ---
 name: canon-tdd
-description: Procedural guidance for applying Kent Beck's Canon Test-Driven Development (TDD) workflow. Use when implementing features, fixing bugs, or ensuring high test coverage and code quality through an iterative Red-Green-Refactor cycle.
+description: Kent Beck's Canon TDD workflow (test list, then red-green-refactor). Use when implementing a feature, fixing a bug, or adding tests.
 ---
 
-# Canon TDD: Kent Beck's Test-Driven Development
+# Canon TDD
 
-This skill provides procedural guidance for implementing software features and fixes using Kent Beck's canonical Test-Driven Development methodology.
+Follow Kent Beck's Canon Test-Driven Development for every feature and fix.
 
-## Phase 0: The Test List (Test Plans)
+## Start with a test list
 
-**The most important part of Kent Beck's TDD process is writing the Test List first.** Before writing any code, you must brainstorm and document a list of all the tests you can think of that will fully specify the required behavior.
+Write the test list before any code. Kent Beck treats this as the most important step.
 
-1. **Write the Test List**: Brainstorm all variations of the feature, edge cases, and expected failures. Write these down as a simple checklist.
-2. **Select the Easiest Test**: Pick a test from the list that will be the easiest to implement or that will teach you the most about the problem. 
-3. **Keep the List Updated**: As you discover new scenarios or edge cases during implementation, immediately add them to your Test List. Do not get sidetracked—put them on the list for later.
+1. List every behavior the change needs: variations, edge cases, and expected failures. A plain checklist is enough.
+2. Pick the test that is easiest to implement or that will teach you the most about the problem.
+3. When you discover a new case during implementation, add it to the list and keep working on the current test.
 
-## Phase 1: The TDD Cycle (Red-Green-Refactor)
+## Red, green, refactor
 
-Once you have your Test List and have selected your first test, you must strictly adhere to this iterative cycle for all implementation tasks:
+Repeat this cycle for each test on the list.
 
-1. **Red (Write a failing test)**:
-   - Identify the smallest possible next behavior required (based on your selected test from the Test List).
-   - Write exactly one test for that behavior.
-   - Run the test and verify that it fails (compilation failure or assertion failure). Do not proceed until you see a clear, expected failure.
+1. Red. Write one test for the smallest next behavior. Run it and confirm it fails with the failure you expect, either a compile error or an assertion. Do not continue until you see that failure.
+2. Green. Write the simplest code that makes the test pass. Hardcoded values and constants are fine at this stage. Do not design ahead of the tests.
+3. Refactor. With all tests passing, improve the structure without changing behavior: remove duplication, rename things to match the Ubiquitous Language, and extract functions or types where SOLID calls for it. Run the tests again afterwards.
+4. Cross the test off the list and pick the next one.
 
-2. **Green (Make it pass)**:
-   - Write the simplest, most direct code possible to make the test pass.
-   - Hardcoding or returning constant values is acceptable and encouraged at this stage if it satisfies the test.
-   - Your only goal is to turn the test from Red to Green. Do not over-engineer.
+## Principles
 
-3. **Refactor (Clean up)**:
-   - With the tests passing (Green state), improve the code structure without changing its behavior.
-   - Remove duplication (DRY).
-   - Improve names to reflect the Ubiquitous Language.
-   - Extract methods or classes to adhere to SOLID principles.
-   - Ensure all tests still pass after refactoring.
+- Tests check what the code does. They should survive a rewrite of how it does it, so avoid mocking internal details.
+- Keep steps small. If a test takes more than a few minutes to write or to pass, split it.
+- A test that is hard to write or set up points to a design problem, usually high coupling or low cohesion.
+- Write production code only to make a failing test pass.
 
-4. **Cross it off**: Cross the completed test off your Test List and repeat the cycle with the next test.
+## Test strategy
 
-## Core TDD Principles
+### Method
 
-- **Test Behavior, Not Implementation**: Tests should verify *what* the code does, not *how* it does it. Avoid over-mocking internal details.
-- **Small Steps**: Keep the feedback loop extremely short. If a test takes more than a few minutes to write or pass, the step is too large. Break it down.
-- **Listen to the Tests**: If a test is difficult to write or setup, it is a design smell indicating high coupling or low cohesion.
-- **Never Write Production Code Without a Failing Test**: Production code is only written to satisfy a failing test.
+- Write the assertion first, then work backward to the setup and the implementation.
+- Prefer unit tests for pure functions.
+- Use in-memory implementations to test repositories quickly and in isolation.
+- Design for testability: inject dependencies and leave hooks where tests need them.
 
-## 🧪 Testing Strategy & Execution
+### Coverage
 
-### 1. Development Methodology
-- **Assert-First**: Design tests by starting with the expected outcome and working backward to the implementation.
-- **Prioritization**:
-  - Prioritize unit tests for pure functions.
-  - Use in-memory implementations for repository testing to ensure speed and isolation.
-- **Design for Testability**: Integrate hooks and dependency injection into the architecture.
+- Write unit tests for every public function, and run them after each task.
+- Run a linter continuously.
+- End-to-end tests must cover more than the happy path. Include error handling, boundary values, path traversal and URL encoding (`%xx`), unsupported or unauthorized methods, special characters, and invalid payloads.
 
-### 2. Comprehensive Test Suite
-- **Unit Testing**: Provide unit tests for all public functions. Verify execution after every task completion.
-- **Linting**: Use Linter tools for continuous static code analysis.
-- **E2E Testing**: Beyond happy paths, comprehensively cover edge cases and attack vectors:
-  - Error handling (Abnormal cases) and Boundary values.
-  - Path Traversal and URL Encoding (`%xx` format).
-  - Non-existent or unauthorized methods.
-  - Special characters and invalid input payloads.
+### CI/CD
 
-### 3. Automation & CI/CD Integration
-- **Metrics**: Integrate measurement of test coverage and code complexity into the CI pipeline.
-- **Security Scanning**: Automate SAST/DAST and dependency vulnerability scans.
-- **Maintenance**: Enable automated package updates and vulnerability alerts within CI/CD.
-- **Reporting**: Automatically generate and visualize test results and coverage reports as documentation.
+- Measure test coverage and code complexity in the CI pipeline.
+- Automate SAST, DAST, and dependency vulnerability scans.
+- Enable automated dependency updates and vulnerability alerts.
+- Have CI generate test result and coverage reports and publish them as documentation.
 
-## 🛠️ Failure Protocol (When Tests Fail)
+## When tests fail
 
-### Scenario A: Adding New Features
-1. Verify if the global test suite passes.
-2. Specifically test the modified script or module after the update.
+### After adding a feature
 
-### Scenario B: Fixing Regressions/Bugs
-1. **Identify**: Run the specific module test. Reference the implementation against the failing test case.
-2. **Analyze**: Execute tests one by one. Analyze the failure step-by-step rather than applying "blind" fixes.
-3. **Fix & Verify**: 
-   - Apply the fix. Use print/log debugging to trace execution if necessary.
-   - Confirm the module test passes.
-   - **Crucial**: Remove all temporary debug prints once the fix is verified.
-4. **Global Sync**: Run the entire test suite. Do not proceed to the next module until all regressions are resolved.
+1. Run the whole test suite.
+2. Run the tests for the module you changed.
 
-## Related Skills
+### When fixing a regression or bug
 
-- TDD operates within the structural boundaries established by the **design-master** skill (DDD, Clean Architecture).
-- TDD follows the high-level architecture documented by the **docs-first** skill.
-- For specific implementation patterns and unit testing in Rust, refer to **rust-master**.
-- For testing external APIs and handling mocked network responses, use **external-integration**.
+1. Run the failing module's tests and compare the implementation with the failing case.
+2. Run the tests one at a time and trace the failure step by step. Do not guess at fixes.
+3. Apply the fix. Add print or log statements to trace execution if you need them. Once the module's tests pass, remove every temporary debug statement.
+4. Run the whole suite. Do not move to the next module while any regression remains.
+
+## Related skills
+
+- design-master sets the structural boundaries (DDD, Clean Architecture) that TDD works within.
+- docs-first documents the architecture that the tests implement.
+- rust-master covers Rust implementation patterns and unit testing.
+- external-integration covers tests for external APIs and mocked network responses.

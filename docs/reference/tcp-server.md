@@ -1,78 +1,78 @@
-# TCP Server Specification
+# TCP server specification
 
-## Table of Contents
+## Table of contents
 
 - [Overview](#overview)
-- [Requirements Summary](#requirements-summary)
+- [Requirements summary](#requirements-summary)
 - [Architecture](#architecture)
-  - [Component Overview](#component-overview)
-  - [Async Runtime](#async-runtime)
+  - [Component overview](#component-overview)
+  - [Async runtime](#async-runtime)
 - [Configuration](#configuration)
-  - [Server Configuration](#server-configuration)
-  - [Timeout Configuration](#timeout-configuration)
-  - [Socket Options](#socket-options)
-  - [Keepalive Configuration](#keepalive-configuration)
-  - [Shutdown Configuration](#shutdown-configuration)
-  - [Resource Limits Configuration](#resource-limits-configuration)
-  - [Default Values](#default-values)
-- [Socket Address Types](#socket-address-types)
-  - [Unix Domain Sockets](#unix-domain-sockets)
-  - [IPv4 Sockets](#ipv4-sockets)
-  - [IPv6 Sockets](#ipv6-sockets)
-  - [Address Parsing Errors](#address-parsing-errors)
-- [Connection Lifecycle](#connection-lifecycle)
-  - [State Machine](#state-machine)
-  - [State Transition Rules](#state-transition-rules)
-  - [Connection States](#connection-states)
-- [Graceful Shutdown](#graceful-shutdown)
-  - [Signal Handling Requirements](#signal-handling-requirements)
-  - [Shutdown Sequence](#shutdown-sequence)
-  - [Shutdown Exit Codes](#shutdown-exit-codes)
-  - [Shutdown Coordination](#shutdown-coordination)
-  - [Shutdown Timeline](#shutdown-timeline)
-- [Connection Handling](#connection-handling)
-  - [Connection Handler](#connection-handler)
-  - [Connection Properties](#connection-properties)
-  - [Connection Operations](#connection-operations)
-  - [Connection Identifier](#connection-identifier)
-- [Concurrency Model](#concurrency-model)
-  - [10K Connections Support](#10k-connections-support)
-  - [Resource Limits](#resource-limits)
+  - [Server configuration](#server-configuration)
+  - [Timeout configuration](#timeout-configuration)
+  - [Socket options](#socket-options)
+  - [Keepalive configuration](#keepalive-configuration)
+  - [Shutdown configuration](#shutdown-configuration)
+  - [Resource limits configuration](#resource-limits-configuration)
+  - [Default values](#default-values)
+- [Socket address types](#socket-address-types)
+  - [Unix domain sockets](#unix-domain-sockets)
+  - [IPv4 sockets](#ipv4-sockets)
+  - [IPv6 sockets](#ipv6-sockets)
+  - [Address parsing errors](#address-parsing-errors)
+- [Connection lifecycle](#connection-lifecycle)
+  - [State machine](#state-machine)
+  - [State transition rules](#state-transition-rules)
+  - [Connection states](#connection-states)
+- [Graceful shutdown](#graceful-shutdown)
+  - [Signal handling requirements](#signal-handling-requirements)
+  - [Shutdown sequence](#shutdown-sequence)
+  - [Shutdown exit codes](#shutdown-exit-codes)
+  - [Shutdown coordination](#shutdown-coordination)
+  - [Shutdown timeline](#shutdown-timeline)
+- [Connection handling](#connection-handling)
+  - [Connection handler](#connection-handler)
+  - [Connection properties](#connection-properties)
+  - [Connection operations](#connection-operations)
+  - [Connection identifier](#connection-identifier)
+- [Concurrency model](#concurrency-model)
+  - [10K connections support](#10k-connections-support)
+  - [Resource limits](#resource-limits)
   - [Backpressure](#backpressure)
-- [Error Handling](#error-handling)
-  - [Server Errors](#server-errors)
-  - [Connection Errors](#connection-errors)
-  - [Error Recovery](#error-recovery)
-  - [Partial Bind Failure](#partial-bind-failure)
-- [Logging Specification](#logging-specification)
-  - [Log Levels](#log-levels)
-  - [Connection Lifecycle Logs](#connection-lifecycle-logs)
-  - [Server Lifecycle Logs](#server-lifecycle-logs)
-  - [Error Logs](#error-logs)
-  - [Log Fields](#log-fields)
-- [Monitoring and Observability](#monitoring-and-observability)
+- [Error handling](#error-handling)
+  - [Server errors](#server-errors)
+  - [Connection errors](#connection-errors)
+  - [Error recovery](#error-recovery)
+  - [Partial bind failure](#partial-bind-failure)
+- [Logging specification](#logging-specification)
+  - [Log levels](#log-levels)
+  - [Connection lifecycle logs](#connection-lifecycle-logs)
+  - [Server lifecycle logs](#server-lifecycle-logs)
+  - [Error logs](#error-logs)
+  - [Log fields](#log-fields)
+- [Monitoring and observability](#monitoring-and-observability)
   - [Metrics](#metrics)
-  - [Health Check](#health-check)
-- [API Design](#api-design)
-  - [Server Builder](#server-builder)
-  - [Server Handle](#server-handle)
-- [Testing Requirements](#testing-requirements)
-  - [Test Coverage](#test-coverage)
-  - [Unit Tests](#unit-tests)
-  - [Integration Tests](#integration-tests)
-  - [Load Tests](#load-tests)
-  - [Chaos Tests](#chaos-tests)
-- [Security Considerations](#security-considerations)
-- [Implementation Notes](#implementation-notes)
+  - [Health check](#health-check)
+- [API design](#api-design)
+  - [Server builder](#server-builder)
+  - [Server handle](#server-handle)
+- [Testing requirements](#testing-requirements)
+  - [Test coverage](#test-coverage)
+  - [Unit tests](#unit-tests)
+  - [Integration tests](#integration-tests)
+  - [Load tests](#load-tests)
+  - [Chaos tests](#chaos-tests)
+- [Security considerations](#security-considerations)
+- [Implementation notes](#implementation-notes)
 - [Dependencies](#dependencies)
-- [Future Considerations](#future-considerations)
+- [Future considerations](#future-considerations)
 - [References](#references)
 
 ## Overview
 
-This document specifies the design and requirements for a high-performance, async TCP server for the rust-milter implementation. The server must handle the milter protocol over TCP/IP and Unix domain sockets, supporting high concurrency with graceful shutdown capabilities.
+Design and requirements for the async TCP server in rust-milter. The server speaks the milter protocol over TCP/IP and Unix domain sockets, handles many concurrent connections, and shuts down gracefully.
 
-## Requirements Summary
+## Requirements summary
 
 | Requirement | Target |
 |-------------|--------|
@@ -85,7 +85,7 @@ This document specifies the design and requirements for a high-performance, asyn
 
 ## Architecture
 
-### Component Overview
+### Component overview
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -120,9 +120,9 @@ This document specifies the design and requirements for a high-performance, asyn
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Async Runtime
+### Async runtime
 
-The server MUST use **Tokio** as the async runtime with the following configuration:
+The server MUST use Tokio as its async runtime, configured as follows:
 
 | Setting | Description | Default |
 |---------|-------------|---------|
@@ -133,7 +133,7 @@ The server MUST use **Tokio** as the async runtime with the following configurat
 
 ## Configuration
 
-### Server Configuration
+### Server configuration
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -146,7 +146,7 @@ The server MUST use **Tokio** as the async runtime with the following configurat
 | `shutdown` | ShutdownConfig | Shutdown settings |
 | `resource_limits` | ResourceLimitsConfig | Resource limit settings |
 
-### Timeout Configuration
+### Timeout configuration
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -155,7 +155,7 @@ The server MUST use **Tokio** as the async runtime with the following configurat
 | `idle_timeout` | Duration | Connection idle timeout (no data exchanged) |
 | `connect_timeout` | Duration | Initial connection timeout (time to complete handshake) |
 
-### Socket Options
+### Socket options
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -167,7 +167,7 @@ The server MUST use **Tokio** as the async runtime with the following configurat
 | `send_buffer_size` | Option\<usize\> | Send buffer size (SO_SNDBUF), None = OS default |
 | `ipv6_only` | bool | Enable IPV6_V6ONLY (disable dual-stack) |
 
-### Keepalive Configuration
+### Keepalive configuration
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -175,14 +175,14 @@ The server MUST use **Tokio** as the async runtime with the following configurat
 | `interval` | Duration | Interval between keepalive probes |
 | `retries` | u32 | Number of failed probes before connection is dropped |
 
-### Shutdown Configuration
+### Shutdown configuration
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `grace_period` | Duration | Time to wait before starting drain (allows in-flight requests to arrive) |
 | `drain_timeout` | Duration | Maximum time to wait for existing connections to complete after grace period |
 
-### Resource Limits Configuration
+### Resource limits configuration
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -190,7 +190,7 @@ The server MUST use **Tokio** as the async runtime with the following configurat
 | `max_memory` | Option\<usize\> | Memory limit for buffers in bytes (None = unlimited) |
 | `per_connection_buffer` | usize | Per-connection buffer limit in bytes |
 
-### Default Values
+### Default values
 
 | Parameter | Default Value | Range |
 |-----------|---------------|-------|
@@ -216,11 +216,11 @@ The server MUST use **Tokio** as the async runtime with the following configurat
 | `max_memory` | Unlimited | - |
 | `per_connection_buffer` | 64 KB | 1KB - 16MB |
 
-## Socket Address Types
+## Socket address types
 
-The server MUST support the following socket types as defined in the milter protocol:
+The server MUST support these socket types, as the milter protocol defines them.
 
-### Unix Domain Sockets
+### Unix domain sockets
 
 | Format | Example |
 |--------|---------|
@@ -233,20 +233,20 @@ The server MUST support the following socket types as defined in the milter prot
 | `remove_existing` | true | Remove existing socket file before binding |
 | `max_path_length` | 108 bytes | Maximum socket path length (OS limit) |
 
-**Unix socket considerations:**
-- Remove existing socket file before binding (configurable)
-- Set appropriate file permissions (default: 0o660)
-- Handle `EADDRINUSE` errors gracefully
-- Path length MUST NOT exceed 108 bytes (sun_path limit)
+Unix socket handling:
+- Remove an existing socket file before binding (configurable).
+- Set the file permissions (default: 0o660).
+- Handle `EADDRINUSE` without crashing.
+- The path MUST NOT exceed 108 bytes (the `sun_path` limit).
 
-### IPv4 Sockets
+### IPv4 sockets
 
 | Format | Example |
 |--------|---------|
 | `inet:port@host` | `inet:8891@localhost` |
 | `host:port` | `127.0.0.1:8891` |
 
-### IPv6 Sockets
+### IPv6 sockets
 
 | Format | Example |
 |--------|---------|
@@ -257,11 +257,11 @@ The server MUST support the following socket types as defined in the milter prot
 |---------|---------|-------------|
 | `ipv6_only` | false | When false, accept IPv4 connections on IPv6 socket (dual-stack) |
 
-**IPv6 considerations:**
-- Support dual-stack sockets (IPv4-mapped IPv6) when `ipv6_only` is false
-- When `ipv6_only` is true, only accept IPv6 connections
+IPv6 handling:
+- When `ipv6_only` is false, support dual-stack sockets (IPv4-mapped IPv6 addresses).
+- When `ipv6_only` is true, accept IPv6 connections only.
 
-### Address Parsing Errors
+### Address parsing errors
 
 | Error | Description |
 |-------|-------------|
@@ -270,9 +270,9 @@ The server MUST support the following socket types as defined in the milter prot
 | `InvalidPort` | Port number out of range (1-65535) |
 | `PathTooLong` | Unix socket path exceeds 108 bytes |
 
-## Connection Lifecycle
+## Connection lifecycle
 
-### State Machine
+### State machine
 
 ```
                               ┌─────────────────────────────────────┐
@@ -305,7 +305,7 @@ The server MUST support the following socket types as defined in the milter prot
                       └───────────────┘
 ```
 
-### State Transition Rules
+### State transition rules
 
 | From | To | Trigger |
 |------|----|---------|
@@ -325,7 +325,7 @@ The server MUST support the following socket types as defined in the milter prot
 | ERROR | CLOSED | Error logged, cleanup complete |
 | DRAINING | CLOSED | Current work complete or drain timeout |
 
-### Connection States
+### Connection states
 
 | State | Description |
 |-------|-------------|
@@ -337,28 +337,28 @@ The server MUST support the following socket types as defined in the milter prot
 | `ERROR` | Error occurred, connection will be closed |
 | `CLOSED` | Connection terminated |
 
-## Graceful Shutdown
+## Graceful shutdown
 
-### Signal Handling Requirements
+### Signal handling requirements
 
-The TCP server **MUST** handle the following signals for graceful shutdown:
+The TCP server MUST handle these signals for graceful shutdown:
 
 | Signal | Required | Behavior |
 |--------|----------|----------|
-| `SIGTERM` | **REQUIRED** | Initiate graceful shutdown |
-| `SIGINT` | **REQUIRED** | Initiate graceful shutdown (Ctrl+C) |
+| `SIGTERM` | REQUIRED | Initiate graceful shutdown |
+| `SIGINT` | REQUIRED | Initiate graceful shutdown (Ctrl+C) |
 | `SIGQUIT` | Optional | Graceful shutdown with core dump (if enabled) |
 | `SIGHUP` | Optional | Reserved for future configuration reload |
 
-**Signal handling implementation requirements:**
+Signal handling rules:
 
-1. Signal handlers MUST be registered before the server starts accepting connections
-2. Signal handlers MUST be async-safe (use `tokio::signal`)
-3. Multiple signals of the same type MUST be deduplicated (only first triggers shutdown)
-4. Receiving a second SIGTERM or SIGINT during shutdown SHOULD force immediate termination
-5. Signal handlers MUST NOT block the async runtime
+1. Signal handlers MUST be registered before the server starts accepting connections.
+2. Signal handlers MUST be async-safe (use `tokio::signal`).
+3. Repeated signals of the same type MUST be deduplicated, so only the first one triggers shutdown.
+4. A second SIGTERM or SIGINT during shutdown SHOULD force immediate termination.
+5. Signal handlers MUST NOT block the async runtime.
 
-**Double signal behavior:**
+A second signal during shutdown:
 
 | First Signal | Second Signal | Behavior |
 |--------------|---------------|----------|
@@ -367,20 +367,20 @@ The TCP server **MUST** handle the following signals for graceful shutdown:
 | SIGTERM | SIGINT | Force immediate shutdown (skip drain) |
 | SIGINT | SIGTERM | Force immediate shutdown (skip drain) |
 
-### Shutdown Sequence
+### Shutdown sequence
 
-1. **Signal Reception**: Server receives shutdown signal (SIGTERM or SIGINT)
-2. **Log Signal**: Log the received signal at INFO level
-3. **Stop Accepting**: Immediately stop accepting new connections on all listeners
-4. **Grace Period**: Wait `grace_period` for in-flight requests to arrive
-5. **Notify Connections**: Propagate shutdown notification to all active connections via cancellation token
-6. **Drain Period**: Allow existing connections to complete within `drain_timeout`
-7. **Force Close**: After drain timeout, forcefully close remaining connections
-8. **Cleanup**: Release resources, remove Unix socket files
-9. **Log Completion**: Log shutdown completion at INFO level
-10. **Exit**: Server process terminates with exit code 0
+1. The server receives a shutdown signal (SIGTERM or SIGINT).
+2. It logs the signal at INFO level.
+3. It stops accepting new connections on every listener at once.
+4. It waits `grace_period` so in-flight requests can arrive.
+5. It notifies every active connection through the cancellation token.
+6. It lets existing connections finish within `drain_timeout`.
+7. When the drain timeout expires, it force-closes the remaining connections.
+8. It releases resources and removes Unix socket files.
+9. It logs shutdown completion at INFO level.
+10. The process exits with code 0.
 
-### Shutdown Exit Codes
+### Shutdown exit codes
 
 | Condition | Exit Code |
 |-----------|-----------|
@@ -389,9 +389,9 @@ The TCP server **MUST** handle the following signals for graceful shutdown:
 | Shutdown due to fatal error | 1 |
 | Configuration error | 2 |
 
-### Shutdown Coordination
+### Shutdown coordination
 
-The shutdown coordinator manages the following:
+The shutdown coordinator manages these parts:
 
 | Component | Description |
 |-----------|-------------|
@@ -400,12 +400,12 @@ The shutdown coordinator manages the following:
 | Active connection counter | Track connections for drain completion |
 | Completion notifier | Signal when all connections are closed |
 
-**Shutdown reasons:**
-- Signal (with signal number)
-- Manual (programmatic shutdown)
-- Error (with error description)
+Shutdown reasons:
+- signal, with the signal number
+- manual, from a programmatic shutdown
+- error, with the error description
 
-### Shutdown Timeline
+### Shutdown timeline
 
 ```
 Signal     Grace Period          Drain Timeout              Force Close
@@ -420,11 +420,11 @@ Signal     Grace Period          Drain Timeout              Force Close
   │ connections │                      │                         │
 ```
 
-## Connection Handling
+## Connection handling
 
-### Connection Handler
+### Connection handler
 
-The connection handler trait defines the following methods:
+The connection handler trait defines these methods:
 
 | Method | Parameters | Return | Required | Description |
 |--------|------------|--------|----------|-------------|
@@ -432,7 +432,7 @@ The connection handler trait defines the following methods:
 | `on_connect` | &Connection | Result\<(), ConnectionError\> | No | Called when connection is established |
 | `on_disconnect` | &Connection, DisconnectReason | () | No | Called when connection is closing |
 
-### Connection Properties
+### Connection properties
 
 | Property | Type | Description |
 |----------|------|-------------|
@@ -444,7 +444,7 @@ The connection handler trait defines the following methods:
 | `bytes_read` | u64 | Total bytes read on this connection |
 | `bytes_written` | u64 | Total bytes written on this connection |
 
-### Connection Operations
+### Connection operations
 
 | Operation | Parameters | Return | Description |
 |-----------|------------|--------|-------------|
@@ -454,14 +454,16 @@ The connection handler trait defines the following methods:
 | `read_or_shutdown` | &mut [u8] | Result\<ReadResult, ConnectionError\> | Wait for data or shutdown |
 | `shutdown_write` | - | Result\<(), ConnectionError\> | Half-close the write side |
 
-**Read results:**
+Read results:
+
 | Variant | Description |
 |---------|-------------|
 | `Data(usize)` | Data received with byte count |
 | `Shutdown` | Shutdown signal received |
 | `Timeout` | Read timeout occurred |
 
-**Disconnect reasons:**
+Disconnect reasons:
+
 | Reason | Description |
 |--------|-------------|
 | `ClientClosed` | Client initiated close |
@@ -470,7 +472,7 @@ The connection handler trait defines the following methods:
 | `Error` | Error occurred |
 | `Reset` | Connection reset by peer |
 
-### Connection Identifier
+### Connection identifier
 
 | Property | Description |
 |----------|-------------|
@@ -479,20 +481,20 @@ The connection handler trait defines the following methods:
 | Uniqueness | Unique within server lifetime (until wrap) |
 | Format | Opaque, no guaranteed structure |
 
-The connection ID is generated atomically when a connection is accepted and is used for logging and tracking purposes.
+The server generates the connection ID atomically when it accepts a connection, and uses it for logging and tracking.
 
-## Concurrency Model
+## Concurrency model
 
-### 10K Connections Support
+### 10K connections support
 
-To support 10,000+ concurrent connections:
+To support 10,000 or more concurrent connections:
 
-1. **Non-blocking I/O**: All socket operations MUST be non-blocking
-2. **Efficient polling**: Use epoll/kqueue via Tokio
-3. **Task spawning**: Each connection runs in its own Tokio task
-4. **Resource limits**: Implement connection limits to prevent resource exhaustion
+1. All socket operations MUST be non-blocking.
+2. Polling uses epoll or kqueue through Tokio.
+3. Each connection runs in its own Tokio task.
+4. Connection limits prevent resource exhaustion.
 
-### Resource Limits
+### Resource limits
 
 | Limit | Description |
 |-------|-------------|
@@ -502,15 +504,15 @@ To support 10,000+ concurrent connections:
 
 ### Backpressure
 
-When approaching resource limits:
+As the server approaches its resource limits:
 
-1. **Connection limit reached**: Reject new connections with `ECONNREFUSED`
-2. **Memory pressure**: Apply backpressure to slow clients
-3. **CPU saturation**: Limit concurrent request processing
+1. When the connection limit is reached, it rejects new connections with `ECONNREFUSED`.
+2. Under memory pressure, it applies backpressure to slow clients.
+3. When the CPU is saturated, it limits concurrent request processing.
 
-## Error Handling
+## Error handling
 
-### Server Errors
+### Server errors
 
 | Error | Description |
 |-------|-------------|
@@ -521,7 +523,7 @@ When approaching resource limits:
 | `ResourceLimit` | Resource limit exceeded |
 | `PartialBind` | Some addresses failed to bind (see below) |
 
-### Connection Errors
+### Connection errors
 
 | Error | Description |
 |-------|-------------|
@@ -537,7 +539,7 @@ When approaching resource limits:
 | `Protocol` | Protocol error |
 | `Shutdown` | Shutdown requested |
 
-### Error Recovery
+### Error recovery
 
 | Error | Recovery Action |
 |-------|-----------------|
@@ -552,24 +554,24 @@ When approaching resource limits:
 | `ECONNREFUSED` | Log, close connection |
 | Temporary errors | Retry with exponential backoff (max 5 retries) |
 
-### Partial Bind Failure
+### Partial bind failure
 
-When binding to multiple addresses, the server behavior is configurable:
+When the server binds to several addresses, the failure behavior is configurable:
 
 | Mode | Behavior |
 |------|----------|
 | `FailFast` (default) | Fail if any address fails to bind |
 | `BestEffort` | Continue with successfully bound addresses, fail only if all fail |
 
-When `BestEffort` is used:
-- Log WARNING for each failed bind with error details
-- Log INFO for each successful bind
-- Return `PartialBind` error with list of failed addresses (can be ignored)
-- Server operates on successfully bound addresses
+In `BestEffort` mode the server:
+- logs a WARNING with error details for each failed bind
+- logs INFO for each successful bind
+- returns a `PartialBind` error listing the failed addresses, which the caller can ignore
+- serves on the addresses that bound successfully
 
-## Logging Specification
+## Logging specification
 
-### Log Levels
+### Log levels
 
 | Level | Usage |
 |-------|-------|
@@ -579,7 +581,7 @@ When `BestEffort` is used:
 | DEBUG | Connection events, detailed flow |
 | TRACE | Packet-level details, verbose debugging |
 
-### Connection Lifecycle Logs
+### Connection lifecycle logs
 
 | Event | Level | Required Fields |
 |-------|-------|-----------------|
@@ -592,7 +594,7 @@ When `BestEffort` is used:
 | Connection closed (error) | WARN | `conn_id`, `remote_addr`, `duration_ms`, `bytes_read`, `bytes_written`, `error`, `reason` |
 | Connection timeout | DEBUG | `conn_id`, `timeout_type`, `timeout_value` |
 
-**Connection accepted log fields:**
+Fields of the "connection accepted" log:
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -601,7 +603,7 @@ When `BestEffort` is used:
 | `local_addr` | String | Local address |
 | `listener` | String | Listener address that accepted |
 
-**Connection closed log fields:**
+Fields of the "connection closed" log:
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -614,7 +616,7 @@ When `BestEffort` is used:
 | `error` | String | Error message (if applicable) |
 | `requests` | u64 | Number of requests processed (if applicable) |
 
-### Server Lifecycle Logs
+### Server lifecycle logs
 
 | Event | Level | Required Fields |
 |-------|-------|-----------------|
@@ -630,7 +632,7 @@ When `BestEffort` is used:
 | Configuration loaded | INFO | `config_summary` |
 | Configuration error | ERROR | `error`, `field` |
 
-### Error Logs
+### Error logs
 
 | Event | Level | Required Fields |
 |-------|-------|-----------------|
@@ -640,9 +642,9 @@ When `BestEffort` is used:
 | I/O error | DEBUG | `conn_id`, `operation`, `error` |
 | Protocol error | WARN | `conn_id`, `error`, `details` |
 
-### Log Fields
+### Log fields
 
-All log entries SHOULD include:
+Every log entry SHOULD include:
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -651,11 +653,11 @@ All log entries SHOULD include:
 | `target` | String | Module path |
 | `message` | String | Human-readable message |
 
-## Monitoring and Observability
+## Monitoring and observability
 
 ### Metrics
 
-The server SHOULD expose the following metrics:
+The server SHOULD expose these metrics:
 
 | Metric | Type | Description |
 |--------|------|-------------|
@@ -669,9 +671,9 @@ The server SHOULD expose the following metrics:
 | `bytes_sent_total` | Counter | Total bytes sent |
 | `backlog_size` | Gauge | Current backlog size (approximate) |
 
-### Health Check
+### Health check
 
-Health status includes:
+The health status contains:
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -682,7 +684,7 @@ Health status includes:
 | `shutting_down` | bool | Shutdown in progress |
 | `listeners` | Vec\<ListenerStatus\> | Status of each listener |
 
-**Listener status:**
+Listener status:
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -690,11 +692,11 @@ Health status includes:
 | `bound` | bool | Successfully bound |
 | `accepting` | bool | Currently accepting connections |
 
-## API Design
+## API design
 
-### Server Builder
+### Server builder
 
-The server uses a builder pattern with the following methods:
+The server uses the builder pattern with these methods:
 
 | Method | Description |
 |--------|-------------|
@@ -713,7 +715,7 @@ The server uses a builder pattern with the following methods:
 | `handler(handler)` | Set connection handler |
 | `build()` | Build the server |
 
-### Server Handle
+### Server handle
 
 The server handle provides:
 
@@ -726,9 +728,9 @@ The server handle provides:
 | `metrics()` | Get server metrics |
 | `is_running()` | Check if server is running |
 
-## Testing Requirements
+## Testing requirements
 
-### Test Coverage
+### Test coverage
 
 | Category | Minimum Coverage |
 |----------|------------------|
@@ -737,73 +739,73 @@ The server handle provides:
 | Error paths | All error variants |
 | Edge cases | Timeouts, limits, shutdown |
 
-### Unit Tests
+### Unit tests
 
-- Configuration validation
-- Socket address parsing
-- Error handling
-- Timeout behavior
-- State machine transitions
-- Connection ID generation
+- configuration validation
+- socket address parsing
+- error handling
+- timeout behavior
+- state machine transitions
+- connection ID generation
 
-### Integration Tests
+### Integration tests
 
-- Accept connections on all socket types (Unix, IPv4, IPv6)
-- Handle concurrent connections (100+)
-- Graceful shutdown with active connections
-- Timeout enforcement (read, write, idle)
-- Reconnection after server restart
-- Partial bind failure handling
-- Resource limit enforcement
+- accepting connections on every socket type (Unix, IPv4, IPv6)
+- handling 100 or more concurrent connections
+- graceful shutdown with active connections
+- timeout enforcement (read, write, idle)
+- reconnection after a server restart
+- partial bind failure
+- resource limit enforcement
 
-### Load Tests
+### Load tests
 
-- Sustain 10,000 concurrent connections for 1 hour
-- Handle connection churn (1000 connect/disconnect per second)
-- Memory stability under load (no leaks)
-- Latency percentiles under various loads (p50, p95, p99)
+- hold 10,000 concurrent connections for 1 hour
+- handle connection churn of 1000 connects and disconnects per second
+- stable memory under load, with no leaks
+- latency percentiles (p50, p95, p99) under different loads
 
-### Chaos Tests
+### Chaos tests
 
-- Connection drops (random)
-- Network partitions (for TCP)
-- Resource exhaustion (fd, memory)
-- Signal handling during high load
-- Slow clients (slowloris-style)
+- random connection drops
+- network partitions (TCP)
+- resource exhaustion (FDs, memory)
+- signals during high load
+- slow clients (slowloris style)
 
-## Security Considerations
+## Security considerations
 
-1. **Input validation**: Validate all configuration parameters
-2. **Resource limits**: Enforce limits to prevent DoS
-3. **Socket permissions**: Restrict Unix socket access (0o660 default)
-4. **No root required**: Server should not require root privileges
-5. **Timeout enforcement**: Prevent slowloris-style attacks
-6. **Connection limits per source**: Optional rate limiting
-7. **Path traversal**: Validate Unix socket paths
+1. Validate every configuration parameter.
+2. Enforce resource limits to prevent denial of service.
+3. Restrict access to the Unix socket (0o660 by default).
+4. The server should not require root privileges.
+5. Enforce timeouts to stop slowloris-style attacks.
+6. Optionally rate-limit connections per source.
+7. Validate Unix socket paths against path traversal.
 
-## Implementation Notes
+## Implementation notes
 
-### Tokio Best Practices
+### Tokio practices
 
-1. Use `tokio::select!` for cancellation-safe operations
-2. Prefer `tokio::io::copy` for efficient data transfer
-3. Use `BufReader`/`BufWriter` for buffered I/O
-4. Avoid blocking operations in async context
-5. Use `tokio::task::spawn_blocking` for CPU-intensive work
+1. Use `tokio::select!` for cancellation-safe operations.
+2. Prefer `tokio::io::copy` for data transfer.
+3. Use `BufReader` and `BufWriter` for buffered I/O.
+4. Avoid blocking operations in async code.
+5. Use `tokio::task::spawn_blocking` for CPU-intensive work.
 
-### Memory Efficiency
+### Memory
 
-1. Reuse buffers where possible
-2. Limit per-connection buffer sizes
-3. Use `bytes::Bytes` for zero-copy operations
-4. Consider memory pools for frequent allocations
+1. Reuse buffers where possible.
+2. Limit per-connection buffer sizes.
+3. Use `bytes::Bytes` for zero-copy operations.
+4. Consider memory pools for frequent allocations.
 
-### File Descriptor Management
+### File descriptors
 
-1. Set appropriate `ulimit` for production (at least 10000 + headroom)
-2. Monitor fd usage
-3. Clean up fds on connection close
-4. Handle fd exhaustion gracefully with backoff
+1. Set `ulimit` for production to at least 10000 plus headroom.
+2. Monitor FD usage.
+3. Release FDs when a connection closes.
+4. When FDs run out, back off and keep running.
 
 ## Dependencies
 
@@ -816,17 +818,17 @@ The server handle provides:
 | `thiserror` | Error types | 1.x |
 | `bytes` | Efficient byte handling | 1.x |
 
-## Future Considerations
+## Future considerations
 
-- **TLS support**: Optional TLS termination
-- **Connection pooling**: For milter client connections
-- **Hot reload**: Configuration reload without restart (SIGHUP)
-- **Clustering**: Multiple server instances coordination
-- **Metrics export**: Prometheus/OpenTelemetry integration
+- TLS support: optional TLS termination
+- connection pooling for milter client connections
+- hot reload: reload the configuration without a restart (SIGHUP)
+- clustering: coordination between several server instances
+- metrics export: Prometheus or OpenTelemetry integration
 
 ## References
 
-- [Tokio Tutorial](https://tokio.rs/tokio/tutorial)
-- [C10K Problem](http://www.kegel.com/c10k.html)
-- [Linux Socket Programming](https://man7.org/linux/man-pages/man7/socket.7.html)
-- [Graceful Shutdown Patterns](https://tokio.rs/tokio/topics/shutdown)
+- [Tokio tutorial](https://tokio.rs/tokio/tutorial)
+- [The C10K problem](http://www.kegel.com/c10k.html)
+- [Linux socket programming](https://man7.org/linux/man-pages/man7/socket.7.html)
+- [Graceful shutdown patterns](https://tokio.rs/tokio/topics/shutdown)

@@ -1,54 +1,59 @@
 ---
 name: diataxis
-description: Procedural guidance for writing technical documentation using the Diátaxis framework. Use when structuring, writing, or reviewing user-facing documentation, manuals, or readmes.
+description: Write technical documentation with the Diátaxis framework (tutorials, how-to guides, reference, explanation). Use when structuring, writing, or reviewing user-facing documentation, manuals, or READMEs.
 ---
 
-# Diátaxis: A Systematic Framework for Technical Documentation
+# Diátaxis
 
-This skill provides procedural guidance for organizing and writing technical documentation according to the Diátaxis framework. Diátaxis identifies four distinct types of documentation, each serving a specific user need at a specific time.
+Diátaxis sorts documentation into four types. Each type answers a different reader need at a different moment.
 
-## The Four Documentation Types
+## The four types
 
-Every piece of documentation must fit into exactly one of these four categories. Do not mix them.
+Every document belongs to exactly one type. Do not mix them.
 
-### 1. Tutorials (Learning-Oriented)
-- **Goal**: Allow a newcomer to achieve basic competence. Provide a guided, successful learning experience.
-- **Focus**: The user's journey.
-- **Rules**:
-  - Must be strictly a step-by-step sequence of actions.
-  - Must produce a meaningful result.
-  - Omit explanations, alternatives, or deep dives. Keep it straightforward and safe.
+### Tutorials (learning)
 
-### 2. How-To Guides (Problem-Oriented)
-- **Goal**: Show a user who already has some basic competence how to solve a specific problem or complete a specific task.
-- **Focus**: The task.
-- **Rules**:
-  - Must be practical and step-by-step.
-  - Assume the user knows what they want to achieve.
-  - Do not explain *why* it works; just explain *how* to do it.
+- Goal: take a newcomer to basic competence through a guided lesson that succeeds.
+- Focus: the learner's path.
+- Rules:
+  - Write a strict sequence of steps.
+  - End with a meaningful result.
+  - Leave out explanations, alternatives, and deep detail. Keep the path short and safe.
 
-### 3. Reference (Information-Oriented)
-- **Goal**: Provide accurate and complete technical information.
-- **Focus**: The machinery/code.
-- **Rules**:
-  - Must be structured systematically (e.g., alphabetical, by component).
-  - Must be austere and to the point. No tutorials, no explanations.
-  - Describes the "what": APIs, commands, configurations, schemas.
+### How-to guides (tasks)
 
-### 4. Explanation (Understanding-Oriented)
-- **Goal**: Clarify, illuminate, and explain the background, context, or inner workings of the system.
-- **Focus**: Concepts.
-- **Rules**:
-  - Broad, discursive, and analytical.
-  - Discusses the "why" and "how it works under the hood".
-  - May discuss design decisions, architecture, and historical context.
+- Goal: show a reader who already has basic competence how to solve a specific problem.
+- Focus: the task.
+- Rules:
+  - Write practical, ordered steps.
+  - Assume the reader knows what they want to achieve.
+  - Say how to do it. Leave the reasons to an explanation page.
+
+### Reference (information)
+
+- Goal: give accurate and complete technical information.
+- Focus: the machinery, such as code, APIs, and configuration.
+- Rules:
+  - Organize it systematically, for example alphabetically or by component.
+  - Keep it terse. No tutorials and no explanations.
+  - Describe what things are: APIs, commands, configuration, schemas.
+
+### Explanation (understanding)
+
+- Goal: give background and context, and show how the system works inside.
+- Focus: concepts.
+- Rules:
+  - Write discursively and analytically.
+  - Cover why the system is the way it is and how it works under the hood.
+  - Discuss design decisions, architecture, and history where they help.
 
 ## Workflow
 
-1. **Identify the Need**: Determine what the user is trying to accomplish (Learning, Solving, Finding info, or Understanding).
-2. **Select the Type**: Choose the appropriate Diátaxis category.
-3. **Write with Discipline**: Stick strictly to the rules of that category. Do not blend tutorials into reference material or explanations into how-to guides.
+1. Work out what the reader is trying to do: learn, solve a problem, look something up, or understand.
+2. Pick the matching type.
+3. Follow that type's rules. Keep tutorial steps out of reference pages, and keep explanation out of how-to guides.
 
-## Related Skills
+## Related skills
 
-- For the initial architectural design and internal component documentation before implementation, trigger the **docs-first** skill.
+- docs-first covers architecture design and internal component documentation before implementation.
+- humanizer and stop-slop apply to all prose you write here.

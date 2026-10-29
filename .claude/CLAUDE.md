@@ -1,80 +1,80 @@
----
-name: core-principles
-description: Foundational rules and best practices for development workflows. Use to enforce instructions, transparency, autonomous problem solving, respect for existing codebase, and failure protocols (like the 2-Strike Rule) during any task.
----
+# Working rules
 
-# Core Instruction Principles & Best Practices
+These rules apply to every task in this repository.
 
-This skill outlines the foundational rules and principles to govern behavior, problem-solving strategies, and coding practices throughout the development lifecycle.
+## 1. Instructions and reporting
 
-## 1. Following Instructions & Transparency
+- Follow the requirements and instructions you are given for the whole task.
+- Report progress as you go. When you hit a problem or a blocker, tell the user at once and do not push on without them.
 
-- **Execution**: Strictly adhere to requirements and provided instructions throughout the development process.
-- **Reporting**: Proactively report progress. If issues or blockers arise, notify the user immediately rather than proceeding blindly.
+## 2. Problem solving
 
-## 2. Autonomous Problem Solving
+- When an error occurs, find the root cause yourself and propose a fix.
+- When several approaches are possible, present them and say which one you recommend.
+- If the problem lies outside the source code, for example in the environment, the configuration, or the requirements, say so.
 
-- **Analysis**: When errors occur, autonomously analyze the root cause and propose a solution.
-- **Decision Making**: If multiple approaches exist, present the options and clearly state the recommended path.
-- **Scope**: Identify if a problem lies outside the source code (e.g., environment, configuration, or logic flaws) and report it accordingly.
+## 3. Existing code
 
-## 3. Respect for Existing Codebase
+- Follow the existing code style, naming conventions, and architecture.
+- Before a major architectural change, explain why and get approval.
 
-- **Consistency**: Follow the existing code style, naming conventions, and architectural patterns.
-- **Refactoring**: Do not perform major architectural changes without explaining the rationale and seeking approval first.
+## 4. Two-strike rule
 
-## 4. Failure Protocol (2-Strike Rule)
+- If a fix or a test fails twice in a row, stop and summarize where things stand.
+- Do not retry the same logic a third time. Re-examine the approach and propose a new hypothesis or solution.
 
-- **Stagnation Prevention**: If a fix or test fails twice consecutively, stop and summarize the current situation.
-- **Pivot**: Instead of repeating failed logic, re-evaluate the strategy and propose a new hypothesis or solution.
+## Practices
 
-## Best Practices
+- Start small and grow the change step by step.
+- Avoid over-abstraction. Readable, maintainable code comes first.
+- Prefer strong type definitions to complex runtime checks.
+- Match the sophistication of the approach to the size of the task.
+- Check the output or logs to confirm each command did what you expected.
+- Follow test-driven development (see the canon-tdd skill).
+- Apply the humanizer and stop-slop skills whenever you write or revise prose: skills, documentation, README files, commit messages, and PR descriptions. Keep code, identifiers, commands, and technical meaning unchanged.
 
-- **Iterative Development**: Start small and expand incrementally.
-- **Pragmatism**: Avoid over-abstraction; prioritize readability and maintainability.
-- **Type Safety**: Prioritize robust type definitions over complex runtime logic.
-- **Adaptive Complexity**: Scale the sophistication of the approach based on the complexity of the task.
-- **Verification**: Always confirm that commands were executed as expected (check logs/output).
-- **TDD**: Follow Test-Driven Development cycles to ensure reliability (see the **canon-tdd** skill).
+## Security and confidentiality
 
-## Security & Confidentiality
+### Restricted files and data
 
-### 1. Restricted Files & Data
-**Strict Prohibition**: Do not read, modify, or expose the following sensitive files/data. If changes are required, immediately contact the user.
+Do not read, modify, or expose the following. If a task requires changing one of them, contact the user first.
+
 - `.env` files
-- Files within `src/env`
-- Secrets configurations (e.g., `*/config/secrets.*`)
-- Private keys and certificates (e.g., `*/.pem`, `*/.key`)
-- Any files containing API keys, tokens, or authentication credentials.
+- files under `src/env`
+- secrets configuration, such as `*/config/secrets.*`
+- private keys and certificates, such as `*/.pem` and `*/.key`
+- any file that contains API keys, tokens, or credentials
 
-### 2. Security Guidelines
-- **No Hardcoding**: Never hardcode sensitive information (API keys, passwords, etc.). Use environment variables managed via secure secret managers.
-- **Zero-Commit Policy**: Ensure sensitive files are never committed to version control. Maintain a robust `.gitignore`.
-- **Input Validation**: Always validate and sanitize user input to prevent injection attacks (SQLi, XSS, etc.).
-- **Output Sanitization**: Ensure credentials and secrets are never leaked in logs, console outputs, or error messages.
+### Security rules
 
-### 3. Vulnerability Detection & Automation
-- **Static Analysis (SAST)**: Utilize standard security scanning tools for the specific programming language (e.g., SonarQube, Snyk, Bandit, ESLint-plugin-security).
-- **Dependency Scanning**: Implement automated scanning for third-party libraries to detect and alert on known vulnerabilities (CVEs).
-- **Modern Principles**: Apply Zero Trust architectures and Cloud Security Best Practices (Least Privilege) in all design decisions.
-- **CI/CD Integration**: Incorporate security automation (SAST/DAST and audit logging) directly into the deployment pipeline.
+- Do not hardcode secrets such as API keys or passwords. Read them from environment variables managed by a secret manager.
+- Never commit sensitive files. Keep `.gitignore` up to date.
+- Validate and sanitize all user input to prevent injection attacks such as SQL injection and XSS.
+- Keep credentials and secrets out of logs, console output, and error messages.
 
-## Architectural Alignment
+### Vulnerability detection
 
-- **Zero Trust**: Never trust any entity (internal or external) by default; verify everything.
-- **Least Privilege**: Grant the minimum level of access required for a function to perform its task.
+- Run the standard static analysis (SAST) tools for the language, for example SonarQube, Snyk, Bandit, or ESLint-plugin-security.
+- Scan third-party dependencies automatically and alert on known vulnerabilities (CVEs).
+- Design with Zero Trust and least privilege, following cloud security best practices.
+- Run the security automation (SAST, DAST, and audit logging) in the CI/CD pipeline.
 
-## Available Skills (Invoke On-Demand)
+## Architecture
 
-The following skills provide specialized guidance for specific tasks. Invoke them when relevant:
+- Zero Trust: trust no entity, internal or external, by default. Verify everything.
+- Least privilege: grant each function only the access it needs.
 
-- **`/canon-tdd`** - Kent Beck's TDD workflow (Red-Green-Refactor cycle)
-- **`/rust-master`** - Advanced Rust patterns, async, Tokio, concurrency
-- **`/milter-protocol`** - Sendmail/Postfix Milter protocol, SMTP stages, RFCs
-- **`/design-master`** - DDD, Clean Architecture, SOLID, system design
-- **`/docs-first`** - Documentation-first design with Mermaid diagrams
-- **`/diataxis`** - Technical documentation using Diátaxis framework
-- **`/external-integration`** - Reliability patterns for external APIs/SaaS
-- **`/logging-principles`** - Structured logging, telemetry, data privacy
+## Skills
 
-**Usage**: Skills are not auto-loaded. Invoke explicitly when their domain knowledge is needed.
+Skills do not load automatically. Invoke one when its domain knowledge is needed:
+
+- `/canon-tdd`: Kent Beck's TDD workflow (red, green, refactor)
+- `/rust-master`: Rust conventions, async, Tokio, concurrency
+- `/milter-protocol`: the Sendmail/Postfix Milter protocol, SMTP stages, RFCs
+- `/design-master`: DDD, Clean Architecture, SOLID, system design
+- `/docs-first`: documentation-first design with Mermaid diagrams
+- `/diataxis`: technical documentation with the Diátaxis framework
+- `/external-integration`: reliability patterns for external APIs and SaaS
+- `/logging-principles`: structured logging, telemetry, data privacy
+- `/humanizer`: remove AI writing patterns from prose
+- `/stop-slop`: quick checks against AI writing patterns

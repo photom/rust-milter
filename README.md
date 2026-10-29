@@ -1,19 +1,19 @@
 # rust-milter
 
-A high-performance, asynchronous Milter protocol library for Rust.
+An asynchronous Milter protocol library for Rust, built for high throughput.
 
 ## Overview
 
-**rust-milter** is a pure Rust implementation of the Milter (Mail Filter) protocol used by Sendmail and Postfix MTAs. It provides a type-safe, async-first API for building high-performance mail filters without dependencies on libmilter's C library.
+rust-milter implements the Milter (mail filter) protocol that Sendmail and Postfix use, in pure Rust. Its async, type-safe API lets you build mail filters without depending on libmilter's C library.
 
 ## Features
 
-- **Async-First Design**: Built on Tokio for high-performance concurrent operations
-- **Type-Safe Protocol**: Strongly-typed frame parsing and command/reply handling
-- **MTA Compatibility**: Supports both Sendmail and Postfix with protocol version 2-6
-- **High Performance**: Designed to handle 10,000+ concurrent connections (C10K)
-- **Graceful Shutdown**: Built-in support for clean connection termination
-- **Pure Rust**: No C dependencies or FFI overhead
+- Async first: runs on Tokio and handles connections concurrently.
+- Typed protocol: frames, commands, and replies are parsed into Rust types.
+- MTA compatibility: works with Sendmail and Postfix, protocol versions 2 to 6.
+- Scale: designed for 10,000+ concurrent connections (C10K).
+- Graceful shutdown: closes connections cleanly on shutdown.
+- Pure Rust: no C dependencies and no FFI overhead.
 
 ## Usage
 
@@ -27,46 +27,36 @@ tokio = { version = "1", features = ["full"] }
 
 ## Documentation
 
-This project follows the [Diátaxis](https://diataxis.fr/) documentation framework, organizing content into four distinct types:
+The documentation follows the [Diátaxis](https://diataxis.fr/) framework, which splits it into four types.
 
-### 📖 [Tutorials](docs/tutorials/) - *Learning-Oriented*
+### [Tutorials](docs/tutorials/) (learning)
 
-Step-by-step lessons to help you learn the fundamentals.
+Step-by-step lessons that teach the basics through guided practice. Start here if you are new to rust-milter or to the Milter protocol.
 
-- **Goal**: Achieve basic competence through guided practice
-- **When to use**: When you're new to rust-milter or the Milter protocol
+Status: coming soon
 
-**Status**: Coming soon
+### [How-to guides](docs/how-to/) (tasks)
 
-### 🔧 [How-To Guides](docs/how-to/) - *Problem-Oriented*
+Practical steps for solving a specific problem. Use them when you have a particular task to finish.
 
-Practical guides to solve specific problems.
+Status: coming soon
 
-- **Goal**: Show how to solve a specific problem
-- **When to use**: When you have a specific task to accomplish
+### [Reference](docs/reference/) (information)
 
-**Status**: Coming soon
+Accurate and complete technical specifications. Use them to look up specific details.
 
-### 📋 [Reference](docs/reference/) - *Information-Oriented*
+Available:
+- [Milter protocol specification](docs/reference/milter-protocol.md)
+- [TCP server specification](docs/reference/tcp-server.md)
+- [Library architecture](docs/reference/architecture.md)
+- [API specification](docs/reference/api-specification.md)
+- API reference: run `cargo doc --open`
 
-Complete technical specifications and API documentation.
+### [Explanation](docs/explanation/) (understanding)
 
-- **Goal**: Provide accurate, complete technical information
-- **When to use**: When you need to look up specific technical details
+Background on the concepts, design decisions, and architecture.
 
-**Available:**
-- [Milter Protocol Specification](docs/reference/milter-protocol.md)
-- [TCP Server Specification](docs/reference/tcp-server.md)
-- API Reference - Run `cargo doc --open`
-
-### 💡 [Explanation](docs/explanation/) - *Understanding-Oriented*
-
-In-depth explanations of concepts, design decisions, and architecture.
-
-- **Goal**: Clarify and illuminate concepts
-- **When to use**: When you want to understand the bigger picture
-
-**Status**: Coming soon
+Status: coming soon
 
 ## License
 
