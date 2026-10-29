@@ -242,12 +242,7 @@ A failed reload never stops the server and never changes its exit code.
 
 Logs carry the names of changed settings, never their values. A configuration can contain secrets, and the application configuration is opaque to the library.
 
-| Metric | Type | Description |
-|--------|------|-------------|
-| `config_generation` | Gauge | Current generation |
-| `config_reloads_total` | Counter | Reloads, labeled `result` (`applied`, `failed`) and `source` |
-| `config_last_reload_timestamp_seconds` | Gauge | Time of the last applied reload |
-| `config_pending_restart` | Gauge | 1 while a changed setting waits for a restart |
+The reload metrics are defined under "Configuration reload metrics" in [telemetry.md](telemetry.md).
 
 The health check gains two fields: `config_generation` and `pending_restart`.
 
