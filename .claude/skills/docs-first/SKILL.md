@@ -20,7 +20,7 @@ For any significant feature or system design, produce the following:
 ### 1. High-Level Architecture (C4 Model Context/Container Level)
 Use Mermaid to create system context or container diagrams showing how the new system/feature fits into the broader landscape, its primary users, and external dependencies.
 
-**Example Tool**: Mermaid `graph TD` or C4 PlantUML equivalents in Mermaid.
+**Mermaid Syntax**: `flowchart TD` (the legacy `graph` keyword is only an alias), or Mermaid's native C4 diagrams (`C4Context`, `C4Container`; still marked experimental, so keep them simple) instead of C4-PlantUML.
 
 ### 2. Component Interactions (Sequence Diagrams)
 Document the expected flow of control and data between major components for key use cases.

@@ -23,15 +23,23 @@ This skill defines project-specific conventions for Rust development, focusing o
 ## Error Handling Standards
 
 ### Project Convention
-- Use type aliases for boxed dynamic errors at crate level
+- Expose typed error enums (`thiserror` 2.x) in the library's public API; do not expose `Box<dyn Error>` aliases from a library crate (reserve `anyhow`-style boxed errors for binaries, examples, and tests)
 - Create custom error enums for domain-specific errors
 - Never use unwrap/expect in production without safety comments
 - Propagate errors with the question mark operator
 
+## Modern Rust Baseline
+
+- **Edition**: Use edition 2024 (Rust 1.85+) for new crates; declare the MSRV with `rust-version` in `Cargo.toml`
+- **Async traits**: Use native `async fn` in traits (Rust 1.75+); do not add the `async-trait` crate. For public traits whose futures must be `Send` (e.g. spawned on a multi-threaded Tokio runtime), declare `fn method(&self) -> impl Future<Output = T> + Send` instead of `async fn` (rustc's `async_fn_in_trait` lint warns otherwise)
+- **Pinning**: Use `std::pin::pin!` (Rust 1.68+) rather than `tokio::pin!` / `futures::pin_mut!`
+- **Lazy statics**: Use `std::sync::LazyLock` / `OnceLock` (Rust 1.80 / 1.70) instead of `lazy_static` or `once_cell`
+- **Lint suppression**: Use `#[expect(lint, reason = "...")]` (Rust 1.81+) instead of `#[allow]` so stale suppressions are reported
+
 ## Async Development Rules
 
 ### Cancellation & Shutdown
-- Always use tokio::select with CancellationToken for graceful shutdown
+- Always use tokio::select with tokio_util::sync::CancellationToken for graceful shutdown
 - Ensure all connection loops respect cancellation signals
 - Handle partial operations during cancellation gracefully
 
