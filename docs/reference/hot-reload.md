@@ -27,7 +27,7 @@ An operator changes a timeout, a connection limit, or a listen address, and send
 rust-milter is a library. It does not know where the application keeps its configuration, so it never reads a file itself. The application registers a loader. On `SIGHUP` the server calls the loader, validates the result, and applies it.
 
 In scope:
-- reloading `ServerConfig` (see `docs/reference/tcp-server.md`)
+- reloading `ServerConfig` (see `docs/reference/configuration.md`)
 - reloading the application's own configuration for its handlers, such as spam thresholds or allow lists
 - adding and removing listeners
 
@@ -131,18 +131,7 @@ A request that arrives while a reload is running is not lost. The coordinator re
 
 Every connection keeps the configuration snapshot it was accepted with until it closes. One milter connection lives for one SMTP session with Sendmail and Postfix, so every open connection picks up the new values within one SMTP session.
 
-| Setting | Effect of a change |
-|---------|--------------------|
-| `bind_addresses` | Listeners are added and removed at once (see [Listener changes](#listener-changes)) |
-| `backlog` | Applies to listeners created by this reload. An unchanged address keeps its old backlog; the change is reported as needing a restart |
-| `max_connections` | Applies at once to new accepts. Lowering it does not close open connections; new connections are closed at once until the count drops below the limit |
-| `worker_threads` | Needs a restart; reported, not applied |
-| `timeouts.*` | New connections |
-| `socket_options.tcp_nodelay`, `keepalive`, `recv_buffer_size`, `send_buffer_size` | New connections |
-| `socket_options.reuse_addr`, `reuse_port`, `ipv6_only` | Listeners created by this reload |
-| `shutdown.grace_period`, `shutdown.drain_timeout` | At once; read when a shutdown starts |
-| `resource_limits.max_fds`, `max_memory` | At once, checked at accept and allocation time |
-| `resource_limits.per_connection_buffer` | New connections |
+Which settings apply at once, which apply to new connections or new listeners, and which need a restart is specified per setting in [configuration.md](configuration.md#reload-classes).
 
 A change to a setting that needs a restart does not fail the reload. The server applies everything else, keeps the running value for that setting, and lists it as `pending_restart` in the log and in the reload report.
 
@@ -156,7 +145,7 @@ The coordinator compares the old and new `bind_addresses` as sets:
 | Address only in the old set | Stop accepting on it after publishing. Open connections accepted on it keep running |
 | Address in both sets | Keep the listener as it is |
 
-A bind failure follows the configured bind mode from `docs/reference/tcp-server.md`:
+A bind failure follows `bind_mode` from the new configuration (see `docs/reference/configuration.md`):
 - `FailFast`: close every listener this reload bound, keep the running configuration, and report the error.
 - `BestEffort`: publish the new configuration with the listeners that did bind, and report the failed addresses as a warning.
 
@@ -164,19 +153,7 @@ A reload never leaves the server with no listener. If the new set would bind not
 
 ## Application configuration
 
-Handlers often need their own settings. The server carries them next to `ServerConfig`, as a type chosen by the application:
-
-```rust
-let server = Server::builder()
-    .config(server_config)
-    .app_config(MyConfig::load(&path)?)
-    .reload_with(move || async move {
-        let file = read_config_file(&path).await?;
-        Ok(Reloaded { server: file.server, app: file.app })
-    })
-    .handler(MyHandler::new)
-    .build()?;
-```
+Handlers often need their own settings. The server carries them next to `ServerConfig`, as a type chosen by the application: the application passes the first value to `ServerBuilder::app_config` and returns later values from its reload loader. The [reload tutorial](../tutorials/reloading-configuration.md) shows a complete loader.
 
 Handlers read the application configuration through a `ConfigWatch<A>`, a thin wrapper around `tokio::sync::watch::Receiver<Arc<A>>`. `ConfigWatch::current()` returns the current `Arc<A>` and does not block.
 
@@ -195,39 +172,11 @@ The application configuration follows the same isolation rule as the rest of rus
 
 ## API
 
-| Item | Description |
-|------|-------------|
-| `ServerBuilder::reload_with(loader)` | Register the loader called on `SIGHUP`. `loader` is an async function returning `Result<Reloaded<A>, E>` |
-| `ServerBuilder::app_config(a)` | Initial application configuration |
-| `ServerHandle::reload()` | Run the registered loader, as `SIGHUP` does |
-| `ServerHandle::reload_with_config(Reloaded<A>)` | Apply a configuration the caller already built |
-| `ServerHandle::config_watch()` | Return a `ConfigWatch<A>` for handlers |
-| `ServerHandle::config_generation()` | Current generation number |
-
-`reload()` and `reload_with_config()` return a `ReloadReport`:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `generation` | u64 | Generation after the reload; unchanged on failure |
-| `changed` | Vec\<&'static str\> | Names of the settings that changed |
-| `pending_restart` | Vec\<&'static str\> | Changed settings that need a restart |
-| `listeners_added` | Vec\<SocketAddr\> | Listeners bound by this reload |
-| `listeners_removed` | Vec\<SocketAddr\> | Listeners stopped by this reload |
-| `bind_failures` | Vec\<(SocketAddr, String)\> | Failed binds (`BestEffort` only) |
-
-In `docs/reference/tcp-server.md`, `SIGHUP` changes from "reserved" to "reload the configuration through the registered loader".
+The reload API (`ServerBuilder::reload_with`, `ServerHandle::reload`, `reload_with_config`, `config_watch`, `config_generation`) and the `ReloadReport` and `ReloadError` types are specified in [api-specification.md](api-specification.md#configuration-and-reload-api).
 
 ## Errors
 
-| Error | Cause | Effect |
-|-------|-------|--------|
-| `Load` | the loader returned an error | generation unchanged |
-| `Validation` | the new configuration failed validation | generation unchanged |
-| `Bind` | a new listener failed to bind in `FailFast` mode | listeners bound by this reload closed; generation unchanged |
-| `NoListener` | the new configuration would leave no listener | generation unchanged |
-| `ShuttingDown` | shutdown has started | nothing done |
-
-A failed reload never stops the server and never changes its exit code.
+The reload errors are the variants of `ReloadError` in [api-specification.md](api-specification.md#reloaderror). Every one of them leaves the server running with the previous generation, and none changes the exit code.
 
 ## Logging and metrics
 

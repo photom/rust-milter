@@ -33,6 +33,12 @@ These rules apply to every task in this repository.
 - Follow test-driven development (see the canon-tdd skill).
 - Apply the humanizer and stop-slop skills whenever you write or revise prose: skills, documentation, README files, commit messages, and PR descriptions. Keep code, identifiers, commands, and technical meaning unchanged.
 
+## Documentation
+
+- Write diagrams in Mermaid. Do not draw ASCII diagrams.
+- Do not write code in documentation, except example code.
+- Put example code only in tutorials (`docs/tutorials/`) and how-to guides (`docs/how-to/`). Reference documents and the README link to them instead.
+
 ## Security and confidentiality
 
 ### Restricted files and data

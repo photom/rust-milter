@@ -17,13 +17,7 @@ rust-milter implements the Milter (mail filter) protocol that Sendmail and Postf
 
 ## Usage
 
-Add rust-milter to your `Cargo.toml`:
-
-```toml
-[dependencies]
-rust-milter = "0.1"
-tokio = { version = "1", features = ["full"] }
-```
+The [getting started tutorial](docs/tutorials/getting-started.md) adds rust-milter to a project and builds a first milter.
 
 ## Documentation
 
@@ -31,9 +25,13 @@ The documentation follows the [Diátaxis](https://diataxis.fr/) framework, which
 
 ### [Tutorials](docs/tutorials/) (learning)
 
-Step-by-step lessons that teach the basics through guided practice. Start here if you are new to rust-milter or to the Milter protocol.
+Step-by-step lessons that teach the basics through guided practice. Start here if you are new to rust-milter or to the Milter protocol. Example code lives only in the tutorials and the how-to guides.
 
-Status: coming soon
+Available (written against the designed API; the library is not implemented yet):
+- [Getting started: build your first milter](docs/tutorials/getting-started.md)
+- [Reload the configuration without a restart](docs/tutorials/reloading-configuration.md)
+- [Export metrics with OpenTelemetry](docs/tutorials/exporting-telemetry.md)
+- [Call a milter from Rust with the milter client](docs/tutorials/using-the-milter-client.md)
 
 ### [How-to guides](docs/how-to/) (tasks)
 
@@ -50,6 +48,7 @@ Available:
 - [TCP server specification](docs/reference/tcp-server.md)
 - [Library architecture](docs/reference/architecture.md)
 - [API specification](docs/reference/api-specification.md)
+- [Configuration specification](docs/reference/configuration.md)
 - [Milter client and connection pool](docs/reference/milter-client.md) (design)
 - [Configuration hot reload](docs/reference/hot-reload.md) (design)
 - [Telemetry (OpenTelemetry)](docs/reference/telemetry.md) (design)
