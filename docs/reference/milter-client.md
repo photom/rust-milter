@@ -338,25 +338,27 @@ The timeout defaults follow Postfix (`milter_connect_timeout`, `milter_command_t
 
 ## API
 
-```rust
-let client = MilterClient::builder()
-    .endpoint("127.0.0.1:8891".parse()?)
-    .max_size(32)
-    .build()?;
+`MilterClient::builder()` takes the settings in [Configuration](#configuration), and `build()` returns the client. A step-by-step example is in the [milter client tutorial](../tutorials/using-the-milter-client.md).
 
-let mut session = client.session().await?;
-match session.connect(&connect_info).await? {
-    Decision::Continue => {}
-    other => return finish(session, other).await,
-}
-session.helo("mail.example.org").await?;
-session.mail(&["<sender@example.org>"]).await?;
-session.rcpt(&["<rcpt@example.net>"]).await?;
-// headers and body ...
-let eom = session.end_of_message().await?;
-apply(eom.modifications);
-session.end().await?; // QUIT_NC and return to the pool, or QUIT and close
-```
+| Method | Async | Returns | Description |
+|--------|-------|---------|-------------|
+| `MilterClient::session()` | yes | `Session` | Check out a connection and start one SMTP session |
+| `MilterClient::shutdown()` | yes | nothing | See [Shutdown](#shutdown) |
+| `Session::set_macros(stage, pairs)` | no | nothing | Macro names and values to send before the next command of that stage, in this session only |
+| `Session::connect(&ConnectInfo)` | yes | `Decision` | Send `SMFIC_CONNECT` |
+| `Session::helo(name)` | yes | `Decision` | Send `SMFIC_HELO` |
+| `Session::mail(args)` | yes | `Decision` | Send `SMFIC_MAIL`: the sender, then ESMTP arguments |
+| `Session::rcpt(args)` | yes | `Decision` | Send `SMFIC_RCPT`: the recipient, then ESMTP arguments |
+| `Session::data()` | yes | `Decision` | Send `SMFIC_DATA` |
+| `Session::header(name, value)` | yes | `Decision` | Send `SMFIC_HEADER` |
+| `Session::end_of_headers()` | yes | `Decision` | Send `SMFIC_EOH` |
+| `Session::body(bytes)` | yes | `Decision` | Send `SMFIC_BODY`, split into chunks of at most 65,535 bytes |
+| `Session::end_of_message()` | yes | `EndOfMessage` | Send `SMFIC_BODYEOB` and collect modifications until the final reply |
+| `Session::unknown(command)` | yes | `Decision` | Send `SMFIC_UNKNOWN` |
+| `Session::abort()` | yes | nothing | Send `SMFIC_ABORT` |
+| `Session::end()` | yes | nothing | End the session: `SMFIC_QUIT_NC` and return the connection to the pool, or `SMFIC_QUIT` and close it |
+
+`ConnectInfo` holds the SMTP client's `hostname` and its `address` (`Option<SocketAddr>`). With no address, the client sends family `SMFIA_UNKNOWN`.
 
 Rules:
 - Session methods take `&mut self` and must be called in protocol order. A call out of order returns `Error::OutOfOrder` before anything is sent.

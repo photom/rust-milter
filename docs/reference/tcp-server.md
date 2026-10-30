@@ -8,13 +8,6 @@
   - [Component overview](#component-overview)
   - [Async runtime](#async-runtime)
 - [Configuration](#configuration)
-  - [Server configuration](#server-configuration)
-  - [Timeout configuration](#timeout-configuration)
-  - [Socket options](#socket-options)
-  - [Keepalive configuration](#keepalive-configuration)
-  - [Shutdown configuration](#shutdown-configuration)
-  - [Resource limits configuration](#resource-limits-configuration)
-  - [Default values](#default-values)
 - [Socket address types](#socket-address-types)
   - [IPv4 sockets](#ipv4-sockets)
   - [IPv6 sockets](#ipv6-sockets)
@@ -30,17 +23,12 @@
   - [Shutdown coordination](#shutdown-coordination)
   - [Shutdown timeline](#shutdown-timeline)
 - [Connection handling](#connection-handling)
-  - [Connection handler](#connection-handler)
-  - [Connection properties](#connection-properties)
-  - [Connection operations](#connection-operations)
   - [Connection identifier](#connection-identifier)
 - [Concurrency model](#concurrency-model)
   - [10K connections support](#10k-connections-support)
   - [Resource limits](#resource-limits)
   - [Backpressure](#backpressure)
 - [Error handling](#error-handling)
-  - [Server errors](#server-errors)
-  - [Connection errors](#connection-errors)
   - [Error recovery](#error-recovery)
   - [Partial bind failure](#partial-bind-failure)
 - [Logging specification](#logging-specification)
@@ -53,8 +41,6 @@
   - [Metrics](#metrics)
   - [Health check](#health-check)
 - [API design](#api-design)
-  - [Server builder](#server-builder)
-  - [Server handle](#server-handle)
 - [Testing requirements](#testing-requirements)
   - [Test coverage](#test-coverage)
   - [Unit tests](#unit-tests)
@@ -133,92 +119,7 @@ The server MUST use Tokio as its async runtime, configured as follows:
 
 ## Configuration
 
-### Server configuration
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `bind_addresses` | Vec\<SocketAddr\> | Socket addresses to bind (supports multiple listeners) |
-| `backlog` | u32 | Listen backlog size |
-| `max_connections` | usize | Maximum concurrent connections (0 = unlimited) |
-| `worker_threads` | Option\<usize\> | Number of worker threads (None = CPU cores) |
-| `timeouts` | TimeoutConfig | Connection timeout settings |
-| `socket_options` | SocketOptions | Socket options |
-| `shutdown` | ShutdownConfig | Shutdown settings |
-| `resource_limits` | ResourceLimitsConfig | Resource limit settings |
-
-### Timeout configuration
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `connect_timeout` | Duration | Time allowed from `accept()` until the MTA's first command (`SMFIC_OPTNEG`) arrives |
-| `read_timeout` | Duration | Read timeout for socket operations |
-| `write_timeout` | Duration | Write timeout for socket operations |
-| `idle_timeout` | Duration | Connection idle timeout (no data exchanged) |
-
-The server cannot observe the TCP handshake: the kernel completes it before `accept()` returns. `connect_timeout` therefore covers the time between accepting the socket and receiving the first command.
-
-### Socket options
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `tcp_nodelay` | bool | Enable TCP_NODELAY (disable Nagle's algorithm) |
-| `reuse_addr` | bool | Enable SO_REUSEADDR |
-| `reuse_port` | bool | Enable SO_REUSEPORT (Linux 3.9+, BSD) |
-| `keepalive` | Option\<KeepaliveConfig\> | TCP keepalive settings |
-| `recv_buffer_size` | Option\<usize\> | Receive buffer size (SO_RCVBUF), None = OS default |
-| `send_buffer_size` | Option\<usize\> | Send buffer size (SO_SNDBUF), None = OS default |
-| `ipv6_only` | bool | Enable IPV6_V6ONLY (disable dual-stack) |
-
-### Keepalive configuration
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `time` | Duration | Time before first keepalive probe |
-| `interval` | Duration | Interval between keepalive probes |
-| `retries` | u32 | Number of failed probes before connection is dropped |
-
-### Shutdown configuration
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `grace_period` | Duration | Time to wait before starting drain (allows in-flight requests to arrive) |
-| `drain_timeout` | Duration | Maximum time to wait for existing connections to complete after grace period |
-
-### Resource limits configuration
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `max_fds` | Option\<usize\> | Maximum file descriptors (None = system limit) |
-| `max_memory` | Option\<usize\> | Memory limit for buffers in bytes (None = unlimited) |
-| `per_connection_buffer` | usize | Per-connection buffer limit in bytes; must hold one complete milter packet |
-
-### Default values
-
-| Parameter | Default value | Range |
-|-----------|---------------|-------|
-| `backlog` | 1024 | 1 - 65535 |
-| `max_connections` | 10000 | 0 (unlimited) - 1000000 |
-| `worker_threads` | CPU cores | 1 - 1024 |
-| `connect_timeout` | 10 seconds | 1ms - 5 minutes |
-| `read_timeout` | 30 seconds | 1ms - 1 hour |
-| `write_timeout` | 30 seconds | 1ms - 1 hour |
-| `idle_timeout` | 300 seconds | 1s - 24 hours |
-| `tcp_nodelay` | true | - |
-| `reuse_addr` | true | - |
-| `reuse_port` | false | - |
-| `ipv6_only` | false | - |
-| `keepalive.time` | 60 seconds | 1s - 24 hours |
-| `keepalive.interval` | 10 seconds | 1s - 1 hour |
-| `keepalive.retries` | 6 | 1 - 30 |
-| `recv_buffer_size` | OS default | 1KB - 64MB |
-| `send_buffer_size` | OS default | 1KB - 64MB |
-| `grace_period` | 5 seconds | 0s - 1 minute |
-| `drain_timeout` | 30 seconds | 1s - 5 minutes |
-| `max_fds` | System limit | - |
-| `max_memory` | Unlimited | - |
-| `per_connection_buffer` | 128 KB | 65,540 bytes - 16MB |
-
-The lower bound of `per_connection_buffer` is one full default-size milter packet: 4 length bytes, 1 command byte, and 65,535 data bytes. A body chunk from either MTA can reach that size, so a smaller buffer would reject valid traffic.
+Every server setting, with its type, default, valid range, and reload behavior, is specified in [configuration.md](configuration.md). This document refers to settings by their names there, such as `timeouts.connect` or `resource_limits.per_connection_buffer`.
 
 ## Socket address types
 
@@ -394,56 +295,7 @@ gantt
 
 ## Connection handling
 
-### Connection handler
-
-The connection handler trait defines these methods:
-
-| Method | Parameters | Return | Required | Description |
-|--------|------------|--------|----------|-------------|
-| `handle` | Connection | Result\<(), ConnectionError\> | Yes | Handle a new connection |
-| `on_connect` | &Connection | Result\<(), ConnectionError\> | No | Called when connection is established |
-| `on_disconnect` | &Connection, DisconnectReason | () | No | Called when connection is closing |
-
-### Connection properties
-
-| Property | Type | Description |
-|----------|------|-------------|
-| `id` | ConnectionId | Unique connection identifier (see below) |
-| `remote_addr` | SocketAddr | Remote address of the MTA |
-| `local_addr` | SocketAddr | Local address |
-| `connected_at` | Instant | Time `accept()` returned |
-| `state` | ConnectionState | Current connection state |
-| `bytes_read` | u64 | Total bytes read on this connection |
-| `bytes_written` | u64 | Total bytes written on this connection |
-
-### Connection operations
-
-| Operation | Parameters | Return | Description |
-|-----------|------------|--------|-------------|
-| `read_with_timeout` | &mut [u8], Duration | Result\<usize, ConnectionError\> | Read data with timeout |
-| `write_with_timeout` | &[u8], Duration | Result\<(), ConnectionError\> | Write data with timeout |
-| `is_shutdown_requested` | - | bool | Check if shutdown was requested |
-| `read_or_shutdown` | &mut [u8] | Result\<ReadResult, ConnectionError\> | Wait for data or shutdown |
-| `shutdown_write` | - | Result\<(), ConnectionError\> | Half-close the write side |
-
-Read results:
-
-| Variant | Description |
-|---------|-------------|
-| `Data(usize)` | Data received with byte count |
-| `Shutdown` | Shutdown signal received |
-| `Timeout` | Read timeout occurred |
-
-Disconnect reasons:
-
-| Reason | Description |
-|--------|-------------|
-| `ClientClosed` | Client initiated close |
-| `ServerShutdown` | Server shutdown in progress |
-| `Timeout` | Connect, idle, or read/write timeout |
-| `Error` | Error occurred |
-| `Reset` | Connection reset by peer |
-| `LimitReached` | Closed at once because `max_connections` was reached |
+The public connection API (the `Handler` trait, `Connection`, `ConnectionInfo`, and `DisconnectReason`) is specified in [api-specification.md](api-specification.md). The byte-level reads and writes, buffers, and transport states in this document are internal to the Connection component.
 
 ### Connection identifier
 
@@ -485,32 +337,7 @@ As the server approaches its resource limits:
 
 ## Error handling
 
-### Server errors
-
-| Error | Description |
-|-------|-------------|
-| `Bind` | Failed to bind to address |
-| `Accept` | Failed to accept connection |
-| `Config` | Configuration error |
-| `Shutdown` | Shutdown error |
-| `ResourceLimit` | Resource limit exceeded |
-| `PartialBind` | Some addresses failed to bind (see below) |
-
-### Connection errors
-
-| Error | Description |
-|-------|-------------|
-| `Io` | I/O error |
-| `ConnectTimeout` | No first command within `connect_timeout` |
-| `ReadTimeout` | Read timeout exceeded |
-| `WriteTimeout` | Write timeout exceeded |
-| `IdleTimeout` | Idle timeout exceeded |
-| `Reset` | Connection reset by peer (ECONNRESET) |
-| `Closed` | Connection closed (EOF) |
-| `BrokenPipe` | Broken pipe (EPIPE) |
-| `NotConnected` | Socket not connected (ENOTCONN) |
-| `Protocol` | Protocol error |
-| `Shutdown` | Shutdown requested |
+The error types and their variants are specified in [api-specification.md](api-specification.md#errors). This section covers how the server reacts to operating system errors.
 
 ### Error recovery
 
@@ -658,40 +485,7 @@ Listener status:
 
 ## API design
 
-### Server builder
-
-The server uses the builder pattern with these methods:
-
-| Method | Description |
-|--------|-------------|
-| `bind(addr)` | Add a bind address (can be called multiple times) |
-| `backlog(size)` | Set listen backlog |
-| `max_connections(count)` | Set maximum concurrent connections |
-| `worker_threads(count)` | Set number of worker threads |
-| `connect_timeout(duration)` | Set the time allowed until the first command |
-| `read_timeout(duration)` | Set read timeout |
-| `write_timeout(duration)` | Set write timeout |
-| `idle_timeout(duration)` | Set idle timeout |
-| `tcp_nodelay(enabled)` | Enable/disable TCP_NODELAY |
-| `keepalive(config)` | Set keepalive configuration |
-| `grace_period(duration)` | Set shutdown grace period |
-| `drain_timeout(duration)` | Set shutdown drain timeout |
-| `bind_mode(mode)` | Set bind failure mode (FailFast/BestEffort) |
-| `handler(handler)` | Set connection handler |
-| `build()` | Build the server |
-
-### Server handle
-
-The server handle provides:
-
-| Method | Description |
-|--------|-------------|
-| `shutdown()` | Trigger graceful shutdown |
-| `force_shutdown()` | Force immediate shutdown |
-| `wait()` | Wait for server to stop |
-| `status()` | Get current server status |
-| `status()` | Get an in-process snapshot of the status counters (see [telemetry.md](telemetry.md)) |
-| `is_running()` | Check if server is running |
+The server builder, the server handle, and the rest of the public API are specified in [api-specification.md](api-specification.md#server-builder-and-handle).
 
 ## Testing requirements
 

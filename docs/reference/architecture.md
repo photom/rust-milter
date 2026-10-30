@@ -1,51 +1,58 @@
 # Library architecture specification
 
-The high-level architecture of the rust-milter library: its components, their responsibilities and interactions, and the module boundaries.
+The high-level architecture of the rust-milter library: its components, their responsibilities and interactions, and the module boundaries. The public API is in [api-specification.md](api-specification.md) and every setting is in [configuration.md](configuration.md).
 
 ## Architecture principles
 
-1. Separation of concerns: protocol handling, I/O, and business logic live in separate components.
+1. Separation of concerns: protocol handling, I/O, configuration, and business logic live in separate components.
 2. Async first: all I/O is asynchronous and runs on Tokio.
 3. Type safety: protocol messages are strongly typed.
 4. Zero copy: `bytes::Bytes` keeps data copying to a minimum.
 5. Trait-based extension: users extend the library by implementing the `Handler` trait.
+6. Immutable configuration: each configuration is published once as a numbered snapshot; a reload publishes a new snapshot and never edits the old one.
+7. Session isolation: no data from one SMTP session reaches the next, in memory, in logs, or in telemetry.
 
 ## Component architecture
 
 ```mermaid
-graph TB
-    Server[Server]
-    Connection[Connection]
-    Frame[Frame]
-    Handler[Handler Trait]
-    Message[Message<br/>Command/Reply]
-    Error[Error Handling]
+flowchart TB
+    subgraph control["Control plane"]
+        signals["Signal handling<br/>(SIGTERM, SIGINT, SIGQUIT, SIGHUP)"]
+        reload["Reload coordinator"]
+        shutdown["Shutdown coordinator"]
+        config["Configuration<br/>(published snapshots, ConfigWatch)"]
+    end
+    subgraph data["Data plane"]
+        server["Server<br/>(listeners, accept loop)"]
+        connection["Connection"]
+        frame["Frame"]
+        message["Message<br/>(Command, Reply)"]
+        handler["Handler<br/>(user code)"]
+    end
+    telemetry["Telemetry<br/>(status counters, tracing, OpenTelemetry)"]
+    error["Error types"]
 
-    Server -->|manages| Connection
-    Connection -->|reads/writes| Frame
-    Frame -->|parsed to| Message
-    Server -->|calls| Handler
-    Connection -->|uses| Message
-    Message -->|converts| Frame
-
-    Server -.->|uses| Error
-    Connection -.->|uses| Error
-    Frame -.->|uses| Error
-    Message -.->|uses| Error
-
-    Tokio[Tokio Runtime]
-    Bytes[bytes Crate]
-    Tracing[tracing Crate]
-
-    Server -.->|depends on| Tokio
-    Connection -.->|depends on| Bytes
-    Server -.->|depends on| Tracing
-
-    style Handler fill:#f9f,stroke:#333,stroke-width:2px
-    style Server fill:#bbf,stroke:#333,stroke-width:2px
-    style Connection fill:#bfb,stroke:#333,stroke-width:2px
-    style Frame fill:#ffb,stroke:#333,stroke-width:2px
+    signals -->|"SIGHUP"| reload
+    signals -->|"SIGTERM, SIGINT, SIGQUIT"| shutdown
+    reload -->|"publishes generation N+1"| config
+    reload -->|"binds and stops listeners"| server
+    shutdown -->|"stop accepting, cancel"| server
+    shutdown -->|"CancellationToken"| handler
+    config -->|"snapshot at accept"| server
+    config -->|"ConfigWatch"| handler
+    server -->|"spawns task per connection"| connection
+    server -->|"calls"| handler
+    handler -->|"read_frame, write_frame"| connection
+    connection -->|"reads, writes"| frame
+    frame <-->|"decode, encode"| message
+    server -.-> telemetry
+    connection -.-> telemetry
+    reload -.-> telemetry
+    data -.-> error
+    control -.-> error
 ```
+
+The control plane decides what the server does: which listeners exist, which configuration applies, and when to stop. The data plane moves milter traffic. The two meet in two places only: a connection takes a configuration snapshot when it is accepted, and the handler receives the shutdown token and a `ConfigWatch`.
 
 ## Component specifications
 
@@ -53,141 +60,164 @@ graph TB
 
 Responsibilities:
 - bind and listen on TCP sockets (IPv4, IPv6); Unix domain sockets are not supported
-- accept incoming connections and spawn a handler task for each
-- track active connections and manage their lifecycle
-- coordinate the graceful shutdown sequence
-- enforce resource limits, including the maximum connection count
-- handle signals (SIGTERM, SIGINT, SIGQUIT)
-- provide metrics and a health check
+- run the accept loop and spawn one task per accepted connection
+- give each new connection the current configuration snapshot
+- enforce `max_connections`: past the limit, accept and close at once
+- track active connections for the shutdown coordinator and the status counters
 
 Dependencies:
-- Tokio `TcpListener`
-- the `Handler` trait, implemented by the user
-- the Connection component
+- Tokio `TcpListener`, `socket2` for socket options set before `bind()`
+- the Configuration, Connection, and Handler components
 
-Concurrency:
-- one task per listening socket
-- one task per connection
-- shutdown coordination shared through `CancellationToken`
+Concurrency: one accept task per listener, one task per connection.
+
+The transport-level behavior (address formats, accept errors, backpressure, transport states) is specified in [tcp-server.md](tcp-server.md).
 
 ### 2. Connection
 
 Responsibilities:
-- manage I/O for one connection
-- read frames from and write frames to the socket
-- manage the read and write buffers
-- track the connection state
-- handle connection errors
-- enforce the read, write, and idle timeouts
+- own the socket of one MTA connection
+- read and write frames, with buffering
+- enforce the `connect`, `read`, `write`, and `idle` timeouts and the `per_connection_buffer` limit from its snapshot
+- track the transport state (`CONNECTED`, `IDLE`, `ACTIVE`, `DRAINING`, `ERROR`, `CLOSED`)
+- report its close reason to telemetry and to `Handler::on_disconnect`
 
-Dependencies:
-- Tokio `TcpStream`
-- the Frame component
-- `bytes::BytesMut` for buffering
+Dependencies: Tokio `TcpStream`, the Frame component, `bytes::BytesMut`.
 
-Concurrency:
-- one connection per task
-- exclusive ownership of the socket
-- `BufWriter` for write buffering
+Concurrency: one connection per task, with exclusive ownership of the socket.
 
 ### 3. Frame
 
 Responsibilities:
 - parse Milter protocol frames: a 4-byte length, a 1-byte command, then the data
-- validate the frame structure
-- convert bytes to structured data and structured data back to bytes
-- handle incomplete frames
+- reject a packet longer than `per_connection_buffer` before allocating memory for it
+- handle incomplete frames by waiting for more data
+- serialize frames
 
-Dependencies:
-- `bytes::Bytes` and `bytes::BytesMut`
-- no async operations; parsing is pure
-
-Data format:
-- length: 4 bytes, network byte order
-- command: 1 byte, ASCII
-- data: variable length
+Dependencies: `bytes` only. Parsing is synchronous and pure.
 
 ### 4. Message
 
 Responsibilities:
-- define every protocol command type (`SMFIC_*`) and reply type (`SMFIR_*`) as Rust types
+- define every protocol command (`SMFIC_*`) and reply (`SMFIR_*`) as Rust types
 - convert a `Frame` into a `Command`, and a `Reply` into a `Frame`
-- validate protocol state transitions
+- validate replies before encoding: reply code format and `%` escaping, header names, body chunk size
 
-Dependencies:
-- the Frame component
-- the protocol constants
+Dependencies: the Frame component and the protocol constants.
 
-Types:
-- `Command` enum, with every `SMFIC_*` variant
-- `Reply` enum, with every `SMFIR_*` variant
-- data structures for the complex messages
+### 5. Handler
 
-### 5. Handler trait
-
-The `Handler` trait is where user business logic plugs in. The library calls it once per connection.
+The `Handler` trait is where user business logic plugs in. The server calls it once per connection, in that connection's task.
 
 The implementation:
-- processes the incoming connection
-- implements the milter filtering logic and the protocol exchange
-- returns the right replies
-- handles errors cleanly
-- respects shutdown signals
+- runs the protocol exchange from `SMFIC_OPTNEG` on, following [milter-protocol.md](milter-protocol.md)
+- implements the filtering logic and returns replies
+- stops when the shutdown token is cancelled
+- drops all per-session state on `SMFIC_QUIT_NC`
+- reads its own settings from `ConfigWatch` at session or message boundaries
 
-Interface contract:
-- receives a `Connection` and a `CancellationToken`
-- runs as an async method
-- must be `Send + Sync + Clone`
-- returns a `Result`
+The trait itself is defined in [api-specification.md](api-specification.md).
 
-### 6. Error handling
+### 6. Configuration
 
 Responsibilities:
-- define the error types and their hierarchy
-- define how errors propagate and how the library recovers from them
-- separate protocol errors from I/O errors, and recoverable errors from fatal ones
-- attach context and integrate with `tracing`
+- validate a `ServerConfig` and the application configuration, at startup and on reload
+- publish each valid configuration as an immutable `Arc` with an increasing generation number, through a `tokio::sync::watch` channel
+- give readers the current snapshot without blocking
 
-Error categories:
-- protocol errors: malformed frames, invalid state
-- I/O errors: connection failures, timeouts
-- configuration errors: invalid parameters
-- resource errors: limits exceeded
+Who reads what:
+
+| Reader | Reads | When |
+|--------|-------|------|
+| Accept loop | `ServerConfig` | at every accept; the snapshot goes to the new connection |
+| Connection | its own snapshot | for its whole life |
+| Reload coordinator | old and new `ServerConfig` | to compute listener changes and the report |
+| Shutdown coordinator | `shutdown.*` | when a shutdown starts |
+| Handler | application configuration via `ConfigWatch` | once per session or per message |
+
+What a changed setting does on reload, and which settings need a restart, is specified in [configuration.md](configuration.md#reload-classes). In short: the listener set, `max_connections`, the shutdown timings, and the resource limits apply at once; timeouts, socket options, and buffer size apply to new connections; `worker_threads`, socket options on an address that stays bound, and everything set only on the builder need a restart.
+
+### 7. Reload coordinator
+
+Responsibilities:
+- receive reload requests from `SIGHUP` and `ServerHandle::reload()`
+- run one reload at a time, and fold requests that arrive meanwhile into one more reload
+- call the application's loader, validate, bind added listeners, publish, then stop removed listeners
+- roll back added listeners when a bind fails in `FailFast` mode
+- report changed settings and settings pending a restart
+
+It is the only component that changes the listener set after startup. The procedure is specified in [hot-reload.md](hot-reload.md).
+
+### 8. Shutdown coordinator
+
+Responsibilities:
+- handle `SIGTERM`, `SIGINT`, and `SIGQUIT`, and a second signal that forces shutdown
+- stop the accept loops, wait `grace_period`, cancel the shared `CancellationToken`, and wait up to `drain_timeout`
+- force-close remaining connections and end `Server::run()`
+- stop the reload coordinator, so no reload starts during shutdown
+
+### 9. Telemetry
+
+Responsibilities:
+- keep the status counters (atomics) behind `ServerHandle::status()` and the health check
+- emit `tracing` spans for connections, sessions, and messages
+- with the `otel` feature, expose the counters and record histograms through OpenTelemetry instruments
+
+Telemetry never records SMTP session data. The metric names, span structure, and forbidden data are in [telemetry.md](telemetry.md).
+
+### 10. Error types
+
+Responsibilities:
+- define typed error enums: `Error`, `ConfigError`, `ReloadError`, `ProtocolError`, `AddressError`
+- keep the cause of each error in `source()`
+
+The variants are listed in [api-specification.md](api-specification.md#errors).
+
+### Milter client (design)
+
+The MTA-side client and its connection pool are a separate component group that shares Frame, Message, and the error types with the server. They are specified in [milter-client.md](milter-client.md) and are not implemented yet.
 
 ## Module structure
 
 ```mermaid
-graph LR
-    root[rust-milter]
+flowchart LR
+    root["rust-milter"]
 
     root --> server
     root --> connection
     root --> frame
     root --> message
     root --> handler
+    root --> config
+    root --> reload
+    root --> telemetry
     root --> error
+    root --> client["client (design)"]
 
-    server --> config[config]
-    server --> listener[listener]
-    server --> shutdown[shutdown]
+    server --> listener
+    server --> acceptor
+    server --> shutdown
 
-    connection --> state[state]
-    connection --> timeout[timeout]
+    connection --> transport_state["state"]
+    connection --> timeout
 
-    frame --> parser[parser]
-    frame --> writer[writer]
+    frame --> parser
+    frame --> writer
 
-    message --> command[command]
-    message --> reply[reply]
+    message --> command
+    message --> reply
 
-    style root fill:#bbf,stroke:#333,stroke-width:3px
-    style server fill:#bfb,stroke:#333,stroke-width:2px
-    style connection fill:#bfb,stroke:#333,stroke-width:2px
-    style frame fill:#bfb,stroke:#333,stroke-width:2px
-    style message fill:#bfb,stroke:#333,stroke-width:2px
-    style handler fill:#f9f,stroke:#333,stroke-width:2px
-    style error fill:#fbb,stroke:#333,stroke-width:2px
+    config --> validate
+    config --> watch
+
+    telemetry --> status
+    telemetry --> otel["otel (feature)"]
+
+    client --> pool
+    client --> session
 ```
+
+Module boundaries follow the components. `config` knows nothing about sockets; `frame` and `message` know nothing about Tokio; `telemetry::otel` compiles only with the `otel` feature.
 
 ## Data flow
 
@@ -202,17 +232,17 @@ sequenceDiagram
     participant Handler
 
     Socket->>Connection: bytes
-    Connection->>Frame: parse
+    Connection->>Frame: parse (length checked against per_connection_buffer)
     Frame->>Message: decode to Command
-    Message->>Handler: process command
-    Handler-->>Message: return Reply
+    Message->>Handler: Command
+    Handler-->>Message: Reply
 ```
 
 1. Connection reads bytes from the socket.
-2. The frame parser validates and extracts a frame.
+2. The frame parser checks the length against `per_connection_buffer` and extracts a frame.
 3. The message decoder converts it into a `Command`.
 4. The handler processes the command.
-5. The handler returns a `Reply`.
+5. The handler returns a `Reply`, or none for commands that get no reply.
 
 ### Outbound: milter to MTA
 
@@ -224,211 +254,191 @@ sequenceDiagram
     participant Connection
     participant Socket
 
-    Handler->>Message: Reply enum
-    Message->>Frame: encode to frame
-    Frame->>Connection: serialize bytes
-    Connection->>Socket: write buffer
-    Socket-->>Socket: flush to network
+    Handler->>Message: Reply
+    Message->>Message: validate (reply code, header names, body size)
+    Message->>Frame: encode
+    Frame->>Connection: bytes
+    Connection->>Socket: write and flush
 ```
 
-1. The handler returns a `Reply`.
-2. The message encoder converts it into a frame.
-3. The frame serializer writes the bytes.
-4. Connection writes them to the socket buffer.
-5. Tokio flushes the buffer to the network.
+### Configuration reload
+
+```mermaid
+sequenceDiagram
+    participant Op as Operator
+    participant Reload as Reload coordinator
+    participant Config as Configuration
+    participant Server as Server (accept loop)
+    participant Old as Open connections
+    participant New as New connections
+
+    Op->>Reload: SIGHUP
+    Reload->>Reload: load and validate
+    Reload->>Server: bind added listeners
+    Reload->>Config: publish generation N+1
+    Reload->>Server: stop removed listeners
+    Note over Old: keep the generation N snapshot until they close
+    Server->>New: accept with the generation N+1 snapshot
+    Reload-->>Op: report (changed, pending_restart)
+```
+
+A failed load, validation, or bind leaves generation N in place; see [hot-reload.md](hot-reload.md).
 
 ### Shutdown
 
 ```mermaid
 sequenceDiagram
     participant Signal
-    participant Server
-    participant Connections
+    participant Shutdown as Shutdown coordinator
+    participant Server as Server (accept loop)
     participant Handlers
+    participant Connections
 
-    Signal->>Server: SIGTERM/SIGINT
-    Server->>Server: stop accepting
-    Server->>Server: grace period wait
-    Server->>Handlers: send cancellation
-    Handlers->>Connections: drain (with timeout)
-    Connections->>Server: close complete
-    Server->>Server: exit process
+    Signal->>Shutdown: SIGTERM or SIGINT
+    Shutdown->>Server: stop accepting
+    Shutdown->>Shutdown: wait grace_period
+    Shutdown->>Handlers: cancel the CancellationToken
+    Handlers->>Connections: finish the current command, close
+    Shutdown->>Shutdown: wait up to drain_timeout
+    Shutdown->>Connections: force-close the rest
+    Shutdown-->>Signal: Server::run() returns
 ```
-
-1. The server receives SIGTERM or SIGINT.
-2. The server stops accepting new connections.
-3. The server waits for the grace period so in-flight requests can finish.
-4. The server sends cancellation to every handler.
-5. The server waits, up to a timeout, for the connections to drain.
-6. The server force-closes any remaining connections.
-7. The process exits.
 
 ## Concurrency model
 
-### Threads
+### Tasks
 
 The library runs on the Tokio multi-threaded runtime:
-- one worker thread per CPU core by default
-- work-stealing scheduler
+- one worker thread per CPU core by default (`worker_threads`, fixed at startup)
+- one accept task per listener
 - one task per connection
-- one shared shutdown coordinator
+- one reload coordinator task and one shutdown coordinator task
 
 ### Shared state
 
 Shared between tasks:
-- the active connection counter (atomic)
-- shutdown coordination (`CancellationToken`)
-- metrics aggregation (atomics or channels)
+- the configuration channel (`tokio::sync::watch`), written only by the reload coordinator
+- the status counters (atomics)
+- the shutdown `CancellationToken`
 
 Isolated per connection:
-- Each connection owns its socket exclusively.
-- Connections share no mutable state.
-- Coordination uses message passing over channels.
+- the socket, the buffers, and the configuration snapshot
+- all protocol and SMTP session state, held by the handler for that connection
 
 ### Async and sync operations
 
-Async:
-- socket I/O (read, write)
-- handler execution
-- timeout enforcement
-- shutdown coordination
+Async: socket I/O, handler execution, timeouts, reload, and shutdown coordination.
 
-Sync:
-- frame parsing
-- message encoding and decoding
-- configuration validation
+Sync: frame parsing, message encoding and decoding, configuration validation.
 
-## Protocol state management
+## State management
 
-### Connection states
+Two separate state machines track each connection:
 
-```mermaid
-stateDiagram-v2
-    [*] --> INIT
-    INIT --> OPTNEG: accept connection
-    OPTNEG --> CONNECTED: negotiation complete
-    CONNECTED --> PROCESSING: receive command
-    PROCESSING --> CONNECTED: command complete
-    PROCESSING --> CLOSING: shutdown signal
-    CONNECTED --> CLOSING: shutdown signal
-    CLOSING --> CLOSED: drain complete
-    CLOSED --> [*]
+| State machine | Tracks | Specified in |
+|---------------|--------|--------------|
+| Transport | `CONNECTED`, `IDLE`, `ACTIVE`, `DRAINING`, `ERROR`, `CLOSED`, driven by socket events, timeouts, and shutdown | [tcp-server.md](tcp-server.md#connection-lifecycle) |
+| Protocol | `ST_INIT` to `ST_QUIT`, driven by Milter commands, as libmilter defines them | [milter-protocol.md](milter-protocol.md#protocol-states) |
 
-    note right of INIT: Connection accepted
-    note right of OPTNEG: Option negotiation
-    note right of CONNECTED: Ready for commands
-    note right of PROCESSING: Handling message
-    note right of CLOSING: Shutdown initiated
-    note right of CLOSED: Terminated
-```
-
-The connection tracks its current state and validates each command against it. An invalid transition produces a protocol error.
+The Connection component owns the transport state. The handler owns the protocol state and validates each command against it; an invalid transition is a protocol error.
 
 ## Resource management
 
 ### Memory
 
-Buffers:
-- per-connection read buffer: 4KB default
-- per-connection write buffer: 4KB default
-- frame data: zero copy with `bytes::Bytes`
-- buffer sizes are configurable
-
-Limits:
-- max connections: 10,000 default
-- max frame size: 65,535 bytes (protocol limit)
-- per-connection buffer limit: 64KB default
-- total memory limit: configurable
+- each connection has one read buffer and one write buffer that grow up to `per_connection_buffer` (default 128 KB, minimum 65,540 bytes, the largest default-size milter packet)
+- frame data is shared without copying through `bytes::Bytes`
+- `max_memory` caps the total of all connection buffers
 
 ### File descriptors
 
-- one FD per active connection
-- one FD per listening socket
-- the OS limit is enforced
-- the server handles FD exhaustion gracefully
+- one FD per open connection and one per listener
+- `max_fds` must leave room for `max_connections` plus the listeners plus 10
+- on `EMFILE` or `ENFILE` the accept loop backs off and retries
+
+All limits and defaults are in [configuration.md](configuration.md).
 
 ## Error handling strategy
 
 ### Error classes
 
-Fatal errors close the connection:
-- protocol violations
-- malformed frames
+Fatal for the connection, which is closed:
+- protocol violations and malformed frames
+- frames longer than `per_connection_buffer`
 - expired timeouts
 - I/O errors
 
-Recoverable errors let the connection continue:
+Recoverable within the connection:
 - incomplete frames, which need more data
 - transient I/O errors, which are retried
 
-Configuration errors stop startup:
-- invalid bind addresses
-- port already in use
-- invalid configuration parameters
+Fatal for startup (exit code 2):
+- invalid configuration
+- a bind failure in `FailFast` mode
+
+Not fatal on reload:
+- a failed load, invalid configuration, or bind failure leaves the running configuration in place and is reported as a `ReloadError`
 
 ### Propagation
 
-- Use `Result<T, Error>` throughout.
-- Convert errors at component boundaries.
-- Add context with `tracing`.
-- Preserve the error chain.
+- Use `Result<T, Error>` throughout, with typed error enums.
+- Convert errors at component boundaries and keep the cause in `source()`.
+- Record errors in `tracing` with the masking rules from `logging-principles`.
 
 ## Security architecture
 
 ### Trust boundaries
 
-- network I/O: untrusted
+- network input from the MTA: untrusted
 - handler implementation: trusted
-- configuration: trusted
+- configuration: trusted, but validated before use
 
 Input validation:
-- frame length
-- command code
-- data format
+- frame length, before any allocation
+- command code and data format
+- reply contents before encoding
 - resource limits
 
 ### Attack mitigation
 
-Denial of service:
-- connection limits
-- timeouts
-- buffer size limits
-- optional rate limiting
+Denial of service: connection limits, timeouts from accept on, buffer limits, and optional rate limiting.
 
-Resource exhaustion:
-- maximum connection count
-- memory limits
-- FD limits
-- graceful degradation
+Network exposure: the milter protocol has no authentication or encryption. Bind to loopback unless the MTA is on another host, and restrict access with firewall rules when it is.
+
+Data exposure:
+- session isolation: per-session state is dropped at the end of each SMTP session, including on `SMFIC_QUIT_NC`
+- telemetry and logs carry no envelope, header, body, or macro data (see [telemetry.md](telemetry.md))
+- configuration values are never logged; reloads log the names of changed settings only
 
 ## Component dependencies
 
 ```mermaid
-graph TD
+flowchart TD
     Server --> Connection
-    Server --> Handler[Handler Trait]
-    Server --> Error
-
+    Server --> Handler
+    Server --> Config
+    Reload --> Config
+    Reload --> Server
+    Shutdown --> Server
+    Handler --> Connection
+    Handler --> Config
     Connection --> Frame
     Connection --> Message
-    Connection --> Error
-
-    Frame --> Error
-
     Message --> Frame
+    Server --> Telemetry
+    Connection --> Telemetry
+    Reload --> Telemetry
+    Server --> Error
+    Connection --> Error
+    Frame --> Error
     Message --> Error
-
-    Handler --> Connection
-    Handler --> Error
-
-    style Handler fill:#f9f,stroke:#333,stroke-width:2px
-    style Error fill:#fbb,stroke:#333,stroke-width:2px
-    style Server fill:#bbf,stroke:#333,stroke-width:2px
+    Config --> Error
+    Reload --> Error
 ```
 
 Rules:
 - no circular dependencies
-- lower layers do not depend on higher layers
+- lower layers (Frame, Message, Config, Error) do not depend on higher layers
 - traits define the boundaries
 - the error types are shared
 
@@ -436,45 +446,51 @@ Rules:
 
 The `Handler` trait is the main extension point. The user implements the filtering logic in it, and an application can have several implementations.
 
+The reload loader is the second one: the application decides where configuration comes from.
+
 Possible future extension traits:
-- metrics collector
 - health check provider
 - authentication provider
+- a metrics collector trait; this may be dropped in favor of OpenTelemetry (see the open questions in [telemetry.md](telemetry.md))
 
 ## Testing architecture
 
 ### Unit tests
 
 All synchronous:
-- frame parsing
-- message encoding and decoding
-- configuration validation
+- frame parsing, including the length limit
+- message encoding and decoding, including reply validation
+- configuration validation and the reload class of every setting
 - error type conversions
 
 ### Integration tests
 
 Connection:
-- socket communication
-- frame I/O
-- protocol flows
-- timeout behavior
+- socket communication and frame I/O
+- protocol flows, including `SMFIC_QUIT_NC` with session isolation
+- timeout behavior, from accept on
 
 Server:
-- handling many connections
+- many concurrent connections
 - graceful shutdown
 - resource limits
+- reload during traffic: open connections keep their snapshot, new connections get the new one
 - error recovery
 
 ### Load tests
 
 Performance targets:
 - 10,000 concurrent connections
-- p99 latency under 1 millisecond
+- p99 latency per frame under 1 millisecond
 - no memory leaks under load
 - graceful degradation
 
 ## References
 
+- [API specification](api-specification.md)
+- [Configuration specification](configuration.md)
 - [TCP server specification](tcp-server.md)
 - [Milter protocol specification](milter-protocol.md)
-- [API specification](api-specification.md)
+- [Configuration hot reload](hot-reload.md)
+- [Telemetry](telemetry.md)
+- [Milter client and connection pool](milter-client.md)

@@ -225,25 +225,11 @@ rust-milter logs through `tracing`, with the fields from `docs/reference/tcp-ser
 |------|-------------|
 | Cargo feature `otel` | Enables the OpenTelemetry instruments. Off by default |
 | `ServerBuilder::meter_provider(provider)` | Use this `MeterProvider`. Without it, rust-milter uses `opentelemetry::global::meter_provider()` |
-| `ServerBuilder::trace_commands(level)` | `none`, `envelope` (default), or `all` |
+| `telemetry.trace_commands` in `ServerConfig` | `None`, `Envelope` (default), or `All`; reloadable (see [configuration.md](configuration.md)) |
 | `MilterClientBuilder::meter_provider(provider)` | The same, for the client |
 | `ServerHandle::status()` | In-process snapshot of the status counters, available without the `otel` feature |
 
-The application sets up the SDK, for example:
-
-```rust
-let exporter = opentelemetry_otlp::MetricExporter::builder().with_tonic().build()?;
-let meter_provider = SdkMeterProvider::builder()
-    .with_periodic_exporter(exporter)
-    .with_resource(Resource::builder().with_service_name("my-milter").build())
-    .build();
-
-let server = Server::builder()
-    .config(config)
-    .meter_provider(meter_provider.clone())
-    .handler(MyHandler::new)
-    .build()?;
-```
+The application installs the SDK: it builds a `MeterProvider` with an exporter, such as OTLP, and passes it to `ServerBuilder::meter_provider`. The [telemetry tutorial](../tutorials/exporting-telemetry.md) walks through it.
 
 Standard `OTEL_*` environment variables, such as `OTEL_EXPORTER_OTLP_ENDPOINT`, are read by the SDK in the application, not by rust-milter.
 
