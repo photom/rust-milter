@@ -1,0 +1,13 @@
+# Architecture decision records
+
+Decisions that shape rust-milter, with their context and consequences. These records sit outside the Diátaxis structure of the rest of `docs/`: each one is a dated record of a decision, kept as it was made.
+
+| ADR | Title | Status |
+|-----|-------|--------|
+| [0001](0001-close-connection-on-smfic-quit-nc-in-wrong-state.md) | Close the connection on SMFIC_QUIT_NC in a wrong state | Accepted |
+
+Conventions:
+- One file per decision, named `NNNN-short-title.md`, numbered in order.
+- Sections: status and date, context, options considered, decision, consequences, references.
+- Status is `Proposed`, `Accepted`, `Superseded by ADR NNNN`, or `Deprecated`.
+- An accepted record is not rewritten. A changed decision gets a new ADR, and the old one is marked superseded.

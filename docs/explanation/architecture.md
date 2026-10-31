@@ -1,6 +1,6 @@
-# Library architecture specification
+# Library architecture
 
-The high-level architecture of the rust-milter library: its components, their responsibilities and interactions, and the module boundaries. The public API is in [api-specification.md](api-specification.md) and every setting is in [configuration.md](configuration.md).
+How the rust-milter library is put together and why: its components, their responsibilities and interactions, and the module boundaries. The public API is in [api-specification.md](../reference/api-specification.md) and every setting is in [configuration.md](../reference/configuration.md).
 
 ## Architecture principles
 
@@ -11,6 +11,9 @@ The high-level architecture of the rust-milter library: its components, their re
 5. Trait-based extension: users extend the library by implementing the `Handler` trait.
 6. Immutable configuration: each configuration is published once as a numbered snapshot; a reload publishes a new snapshot and never edits the old one.
 7. Session isolation: no data from one SMTP session reaches the next, in memory, in logs, or in telemetry.
+8. Zero-cost abstractions: the type safety and validation add no runtime overhead on the hot path.
+9. Ergonomics: the API is easy to use correctly and hard to use incorrectly; for example, the library enforces the `SMFIC_QUIT_NC` rule so that handlers cannot get it wrong.
+10. Composability: traits and generics let applications combine the server, their own configuration, and their handlers freely.
 
 ## Component architecture
 
@@ -71,7 +74,7 @@ Dependencies:
 
 Concurrency: one accept task per listener, one task per connection.
 
-The transport-level behavior (address formats, accept errors, backpressure, transport states) is specified in [tcp-server.md](tcp-server.md).
+The transport-level behavior (address formats, accept errors, backpressure, transport states) is specified in [tcp-server.md](../reference/tcp-server.md).
 
 ### 2. Connection
 
@@ -80,6 +83,7 @@ Responsibilities:
 - read and write frames, with buffering
 - enforce the `connect`, `read`, `write`, and `idle` timeouts and the `per_connection_buffer` limit from its snapshot
 - track the transport state (`CONNECTED`, `IDLE`, `ACTIVE`, `DRAINING`, `ERROR`, `CLOSED`)
+- track the protocol state from the commands and replies that pass through it, and close the connection on `SMFIC_QUIT_NC` outside `ST_ENDM` and `ST_UNKN`
 - report its close reason to telemetry and to `Handler::on_disconnect`
 
 Dependencies: Tokio `TcpStream`, the Frame component, `bytes::BytesMut`.
@@ -110,13 +114,13 @@ Dependencies: the Frame component and the protocol constants.
 The `Handler` trait is where user business logic plugs in. The server calls it once per connection, in that connection's task.
 
 The implementation:
-- runs the protocol exchange from `SMFIC_OPTNEG` on, following [milter-protocol.md](milter-protocol.md)
+- runs the protocol exchange from `SMFIC_OPTNEG` on, following [milter-protocol.md](../reference/milter-protocol.md)
 - implements the filtering logic and returns replies
 - stops when the shutdown token is cancelled
 - drops all per-session state on `SMFIC_QUIT_NC`
 - reads its own settings from `ConfigWatch` at session or message boundaries
 
-The trait itself is defined in [api-specification.md](api-specification.md).
+The trait itself is defined in [api-specification.md](../reference/api-specification.md).
 
 ### 6. Configuration
 
@@ -135,7 +139,7 @@ Who reads what:
 | Shutdown coordinator | `shutdown.*` | when a shutdown starts |
 | Handler | application configuration via `ConfigWatch` | once per session or per message |
 
-What a changed setting does on reload, and which settings need a restart, is specified in [configuration.md](configuration.md#reload-classes). In short: the listener set, `max_connections`, the shutdown timings, and the resource limits apply at once; timeouts, socket options, and buffer size apply to new connections; `worker_threads`, socket options on an address that stays bound, and everything set only on the builder need a restart.
+What a changed setting does on reload, and which settings need a restart, is specified in [configuration.md](../reference/configuration.md#reload-classes). In short: the listener set, `max_connections`, the shutdown timings, and the resource limits apply at once; timeouts, socket options, and buffer size apply to new connections; `worker_threads`, socket options on an address that stays bound, and everything set only on the builder need a restart.
 
 ### 7. Reload coordinator
 
@@ -146,7 +150,7 @@ Responsibilities:
 - roll back added listeners when a bind fails in `FailFast` mode
 - report changed settings and settings pending a restart
 
-It is the only component that changes the listener set after startup. The procedure is specified in [hot-reload.md](hot-reload.md).
+It is the only component that changes the listener set after startup. The procedure is specified in [hot-reload.md](../reference/hot-reload.md).
 
 ### 8. Shutdown coordinator
 
@@ -163,7 +167,7 @@ Responsibilities:
 - emit `tracing` spans for connections, sessions, and messages
 - with the `otel` feature, expose the counters and record histograms through OpenTelemetry instruments
 
-Telemetry never records SMTP session data. The metric names, span structure, and forbidden data are in [telemetry.md](telemetry.md).
+Telemetry never records SMTP session data. The metric names, span structure, and forbidden data are in [telemetry.md](../reference/telemetry.md).
 
 ### 10. Error types
 
@@ -171,11 +175,11 @@ Responsibilities:
 - define typed error enums: `Error`, `ConfigError`, `ReloadError`, `ProtocolError`, `AddressError`
 - keep the cause of each error in `source()`
 
-The variants are listed in [api-specification.md](api-specification.md#errors).
+The variants are listed in [api-specification.md](../reference/api-specification.md#errors).
 
 ### Milter client (design)
 
-The MTA-side client and its connection pool are a separate component group that shares Frame, Message, and the error types with the server. They are specified in [milter-client.md](milter-client.md) and are not implemented yet.
+The MTA-side client and its connection pool are a separate component group that shares Frame, Message, and the error types with the server. They are specified in [milter-client.md](../reference/milter-client.md) and are not implemented yet.
 
 ## Module structure
 
@@ -282,7 +286,7 @@ sequenceDiagram
     Reload-->>Op: report (changed, pending_restart)
 ```
 
-A failed load, validation, or bind leaves generation N in place; see [hot-reload.md](hot-reload.md).
+A failed load, validation, or bind leaves generation N in place; see [hot-reload.md](../reference/hot-reload.md).
 
 ### Shutdown
 
@@ -337,10 +341,10 @@ Two separate state machines track each connection:
 
 | State machine | Tracks | Specified in |
 |---------------|--------|--------------|
-| Transport | `CONNECTED`, `IDLE`, `ACTIVE`, `DRAINING`, `ERROR`, `CLOSED`, driven by socket events, timeouts, and shutdown | [tcp-server.md](tcp-server.md#connection-lifecycle) |
-| Protocol | `ST_INIT` to `ST_QUIT`, driven by Milter commands, as libmilter defines them | [milter-protocol.md](milter-protocol.md#protocol-states) |
+| Transport | `CONNECTED`, `IDLE`, `ACTIVE`, `DRAINING`, `ERROR`, `CLOSED`, driven by socket events, timeouts, and shutdown | [tcp-server.md](../reference/tcp-server.md#connection-lifecycle) |
+| Protocol | `ST_INIT` to `ST_QUIT`, driven by Milter commands, as libmilter defines them | [milter-protocol.md](../reference/milter-protocol.md#protocol-states) |
 
-The Connection component owns the transport state. The handler owns the protocol state and validates each command against it; an invalid transition is a protocol error.
+The Connection component owns the transport state. It also tracks the protocol state from the frames it reads and writes, and enforces one rule itself: `SMFIC_QUIT_NC` outside `ST_ENDM` and `ST_UNKN` closes the connection. The handler validates the other commands against the protocol state; an invalid transition is a protocol error.
 
 ## Resource management
 
@@ -356,7 +360,16 @@ The Connection component owns the transport state. The handler owns the protocol
 - `max_fds` must leave room for `max_connections` plus the listeners plus 10
 - on `EMFILE` or `ENFILE` the accept loop backs off and retries
 
-All limits and defaults are in [configuration.md](configuration.md).
+All limits and defaults are in [configuration.md](../reference/configuration.md).
+
+## Implementation approach
+
+Practices the implementation follows inside the data plane:
+- `tokio::select!` with the shutdown token wherever a task waits, so cancellation is prompt and safe.
+- Buffered I/O on each connection, with buffers reused for the life of the connection and bounded by `per_connection_buffer`.
+- `bytes::Bytes` for frame data, so body chunks and header values are shared rather than copied.
+- No blocking calls on runtime threads; CPU-heavy work, if a handler needs it, goes to `tokio::task::spawn_blocking`.
+- File descriptors released as soon as a connection closes; on exhaustion the accept loop backs off instead of failing.
 
 ## Error handling strategy
 
@@ -407,7 +420,7 @@ Network exposure: the milter protocol has no authentication or encryption. Bind 
 
 Data exposure:
 - session isolation: per-session state is dropped at the end of each SMTP session, including on `SMFIC_QUIT_NC`
-- telemetry and logs carry no envelope, header, body, or macro data (see [telemetry.md](telemetry.md))
+- telemetry and logs carry no envelope, header, body, or macro data (see [telemetry.md](../reference/telemetry.md))
 - configuration values are never logged; reloads log the names of changed settings only
 
 ## Component dependencies
@@ -451,7 +464,7 @@ The reload loader is the second one: the application decides where configuration
 Possible future extension traits:
 - health check provider
 - authentication provider
-- a metrics collector trait; this may be dropped in favor of OpenTelemetry (see the open questions in [telemetry.md](telemetry.md))
+- a metrics collector trait; this may be dropped in favor of OpenTelemetry (see the open questions in [telemetry.md](../reference/telemetry.md))
 
 ## Testing architecture
 
@@ -487,10 +500,10 @@ Performance targets:
 
 ## References
 
-- [API specification](api-specification.md)
-- [Configuration specification](configuration.md)
-- [TCP server specification](tcp-server.md)
-- [Milter protocol specification](milter-protocol.md)
-- [Configuration hot reload](hot-reload.md)
-- [Telemetry](telemetry.md)
-- [Milter client and connection pool](milter-client.md)
+- [API specification](../reference/api-specification.md)
+- [Configuration specification](../reference/configuration.md)
+- [TCP server specification](../reference/tcp-server.md)
+- [Milter protocol specification](../reference/milter-protocol.md)
+- [Configuration hot reload](../reference/hot-reload.md)
+- [Telemetry](../reference/telemetry.md)
+- [Milter client and connection pool](../reference/milter-client.md)

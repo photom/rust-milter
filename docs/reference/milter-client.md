@@ -6,8 +6,7 @@ The MTA side of the Milter protocol for rust-milter: a client that talks to milt
 
 ## Contents
 
-- [Purpose and scope](#purpose-and-scope)
-- [Why reuse is limited](#why-reuse-is-limited)
+- [Scope](#scope)
 - [Architecture](#architecture)
 - [Domain model](#domain-model)
 - [Session lifecycle](#session-lifecycle)
@@ -23,14 +22,12 @@ The MTA side of the Milter protocol for rust-milter: a client that talks to milt
 - [Testing requirements](#testing-requirements)
 - [Open questions](#open-questions)
 
-## Purpose and scope
+## Scope
 
 rust-milter today is a milter server: an MTA connects to it. The client described here plays the MTA's role. It serves:
 - MTAs and SMTP servers written in Rust that want to call existing milters
 - milter proxies and chains that forward a session to downstream milters
 - test harnesses that drive a milter without running Sendmail or Postfix
-
-Opening a milter connection costs a TCP handshake and one `SMFIC_OPTNEG` round trip. Sendmail and Postfix pay that cost for every SMTP session. The pool avoids it when the milter allows connection reuse.
 
 In scope:
 - one client per milter endpoint, over TCP (IPv4 and IPv6)
@@ -42,20 +39,6 @@ Out of scope:
 - Unix domain sockets, which rust-milter does not support
 - running several milters in sequence (a milter chain). An application can build one on top of several clients.
 - applying message modifications. The client returns them; the application applies them to its own queue file.
-
-## Why reuse is limited
-
-`SMFIC_QUIT_NC` ends an SMTP session but keeps the milter connection open for the next one. libmilter accepts it only while its internal state is `ST_ENDM` (end of message) or `ST_UNKN` (after an unknown command). In any other state, libmilter treats it as an invalid transition and ignores it without a reply.
-
-libmilter's state resets to `ST_HELO` in two common cases:
-- the milter replies `SMFIS_ACCEPT` to any command
-- the milter replies `SMFIS_REJECT`, `SMFIS_DISCARD`, or `SMFIS_TEMPFAIL` (including a reply code) to any command except `SMFIC_RCPT` and `SMFIC_UNKNOWN`
-
-From `ST_HELO`, libmilter ignores both `SMFIC_QUIT_NC` and the `SMFIC_CONNECT` that follows it. The client would then wait for a reply that never comes.
-
-The client cannot tell whether a milter uses libmilter, so it follows libmilter's rules for every milter. In practice a connection is reusable when the last message ended with `SMFIR_CONTINUE` at end of message. A milter that ends with `SMFIR_ACCEPT` costs a new connection per session, which is what Sendmail and Postfix do anyway.
-
-This design proposes that the rust-milter server accept `SMFIC_QUIT_NC` in any state after option negotiation (see [Open questions](#open-questions)). A pool that talks only to such servers can then turn on the `any_state` reuse policy and reuse every cleanly finished session (see [Reuse rules](#reuse-rules)).
 
 ## Architecture
 
@@ -236,14 +219,14 @@ stateDiagram-v2
 
 ## Reuse rules
 
-When a session ends, the client returns the connection to the pool only if all of these hold:
+When a session ends, the client returns the connection to the pool only if all of these hold. Why the rules are this narrow is explained in [Connection reuse and session isolation](../explanation/connection-reuse.md).
 
 1. The negotiated protocol version is 6. `SMFIC_QUIT_NC` belongs to version 6.
 2. No reply is pending, and the session saw no I/O error, protocol error, or timeout.
 3. The session was not cancelled in the middle of a command.
 4. The mirrored milter state allows `SMFIC_QUIT_NC` under the configured reuse policy:
    - `libmilter_compatible` (default): the state is `ST_ENDM` or `ST_UNKN`
-   - `any_state`: any state after option negotiation. Use this only when every milter behind the endpoint is a rust-milter server or another implementation known to accept `SMFIC_QUIT_NC` in any state.
+   - `never`: no connection is reused
 5. The write buffer is flushed and the read buffer is empty. A leftover byte means the stream is out of step, so a reply from this session could be read as a reply in the next one.
 6. The connection is younger than `max_lifetime` and has served fewer than `max_sessions_per_connection` sessions.
 7. The pool is not shutting down.
@@ -257,7 +240,7 @@ The mirror is part of the session state. A session on a new connection starts it
 - `SMFIC_ABORT` moves it to `ST_ABRT`. The next command goes through libmilter's recovery from `ST_HELO`.
 - A stage with a negotiated no-reply flag (`SMFIP_NR_*`) changes the state without a reply.
 
-The client never sends an extra `SMFIC_UNKNOWN` or any other command just to reach a reusable state. That would call the milter's callbacks for an SMTP command that never happened.
+The client never sends a command only to reach a reusable state.
 
 ## Session isolation
 
@@ -294,7 +277,7 @@ How the design enforces this:
 5. One trust domain per pool. Connections are reused only within one `MilterClient`: one endpoint and one configuration. An application that serves separate trust domains, such as tenants, must create one `MilterClient` per domain. The pool never moves a connection between clients.
 6. Logging. Each session gets a new `session_id`. Log lines and metrics of one session never carry fields from another; only `conn_id` is shared, on purpose.
 
-The milter must also forget the previous session. On `SMFIC_QUIT_NC`, libmilter calls `xxfi_close` and clears all stored macros. The rust-milter server must do the same: drop the handler's per-session state and every macro value, run its session-close hook, and keep only the negotiated options. A milter that keeps session data in its own global state, keyed by connection, can still leak it across sessions. The client cannot detect this, so for a milter that has not been reviewed for it, set `reuse_policy = never`.
+The milter must also forget the previous session. On `SMFIC_QUIT_NC`, libmilter calls `xxfi_close` and clears all stored macros. The rust-milter server must do the same: drop the handler's per-session state and every macro value, run its session-close hook, and keep only the negotiated options. A milter that keeps session data in its own global state, keyed by connection, can still leak it across sessions. The client cannot detect this. `reuse_policy = never` turns reuse off.
 
 ## Pool behavior
 
@@ -331,14 +314,14 @@ A connection carries one SMTP session at a time. The Milter protocol is strictly
 | `max_idle_time` | Duration | 60s | Idle connections older than this are closed |
 | `max_lifetime` | Duration | 1 hour | Connections older than this are retired after their current session |
 | `max_sessions_per_connection` | u32 | 1000 | Sessions after which a connection is retired |
-| `reuse_policy` | enum | `libmilter_compatible` | `libmilter_compatible`, `any_state`, or `never` |
+| `reuse_policy` | enum | `libmilter_compatible` | `libmilter_compatible` or `never` |
 | `failure_action` | enum | `tempfail` | Decision the client reports when the milter is unavailable: `accept`, `reject`, `tempfail`, or `error` |
 
 The timeout defaults follow Postfix (`milter_connect_timeout`, `milter_command_timeout`, `milter_content_timeout`). `reuse_policy = never` turns the pool into a plain connector that behaves like Sendmail and Postfix.
 
 ## API
 
-`MilterClient::builder()` takes the settings in [Configuration](#configuration), and `build()` returns the client. A step-by-step example is in the [milter client tutorial](../tutorials/using-the-milter-client.md).
+`MilterClient::builder()` takes the settings in [Configuration](#configuration), and `build()` returns the client. The how-to guide [Call a milter with the milter client](../how-to/call-a-milter-with-the-client.md) shows it in use.
 
 | Method | Async | Returns | Description |
 |--------|-------|---------|-------------|
@@ -406,8 +389,6 @@ Each log line carries `endpoint` and `conn_id`; session-level lines also carry `
 
 The client reports the metrics defined under "Milter client metrics" in [telemetry.md](telemetry.md).
 
-`milter.client.connection.not_reusable` with `milter.not_reusable_reason = mirror_state` shows how often the milter's replies prevent reuse. A high value suggests asking the milter's author to end messages with `SMFIR_CONTINUE`, or switching to `any_state` for rust-milter servers.
-
 ## Testing requirements
 
 Unit tests:
@@ -418,7 +399,7 @@ Unit tests:
 
 Integration tests:
 - against a libmilter milter built from the Sendmail source: reuse after an end-of-message `SMFIR_CONTINUE`, no reuse after `SMFIR_ACCEPT`, and no hang in either case
-- against a rust-milter server with `any_state`
+- against a rust-milter server: the same reuse results as against libmilter, and a connection closed by the server when `SMFIC_QUIT_NC` arrives in a wrong state
 - the milter closing an idle connection, and the single retry on a reused connection
 - pool exhaustion and `checkout_timeout`
 - shutdown with idle and in-use connections
@@ -432,6 +413,5 @@ Load tests:
 
 ## Open questions
 
-1. Should the rust-milter server's acceptance of `SMFIC_QUIT_NC` in any state be on by default? It is more permissive than libmilter, and `docs/reference/milter-protocol.md` would need to describe it.
-2. Should milter chains (several milters per session, in order, as Sendmail and Postfix run them) be part of this client or a separate component?
-3. Does the client need Unix domain sockets to reach milters that listen only on them? The server side has dropped them.
+1. Should milter chains (several milters per session, in order, as Sendmail and Postfix run them) be part of this client or a separate component?
+2. Does the client need Unix domain sockets to reach milters that listen only on them? The server side has dropped them.

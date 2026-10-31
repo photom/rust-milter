@@ -6,7 +6,7 @@ Reloading the server configuration while rust-milter keeps running, triggered by
 
 ## Contents
 
-- [Purpose and scope](#purpose-and-scope)
+- [Scope](#scope)
 - [Architecture](#architecture)
 - [Reload sequence](#reload-sequence)
 - [Reload coordinator states](#reload-coordinator-states)
@@ -20,11 +20,9 @@ Reloading the server configuration while rust-milter keeps running, triggered by
 - [Testing requirements](#testing-requirements)
 - [Open questions](#open-questions)
 
-## Purpose and scope
+## Scope
 
-An operator changes a timeout, a connection limit, or a listen address, and sends `SIGHUP`. Restarting the milter would drop every open MTA connection, and each MTA would apply its failure policy to the messages in flight (Sendmail `F=` flags, Postfix `milter_default_action`). A reload avoids that.
-
-rust-milter is a library. It does not know where the application keeps its configuration, so it never reads a file itself. The application registers a loader. On `SIGHUP` the server calls the loader, validates the result, and applies it.
+rust-milter never reads a configuration file itself. The application registers a loader. On `SIGHUP` the server calls the loader, validates the result, and applies it. Why reload works this way is explained in [Configuration snapshots and reload](../explanation/configuration-and-reload.md).
 
 In scope:
 - reloading `ServerConfig` (see `docs/reference/configuration.md`)
@@ -103,7 +101,7 @@ sequenceDiagram
     end
 ```
 
-The order matters. New listeners are bound before the new configuration is published, and removed listeners stop only after it. Moving the server to a new address therefore never leaves a moment without a listener, and a failed bind leaves the running configuration untouched.
+New listeners are bound before the new configuration is published, and removed listeners stop only after it. A failed bind leaves the running configuration untouched.
 
 ## Reload coordinator states
 
@@ -125,7 +123,7 @@ stateDiagram-v2
 
 A request that arrives while a reload is running is not lost. The coordinator records it, and when the current reload ends it runs one more reload. Any number of requests that arrive in the meantime cause one extra reload only, which then picks up the latest configuration.
 
-`Applying` is not interrupted by shutdown. It is short (binding sockets and publishing a value), and stopping halfway would leave listeners in an unknown state.
+`Applying` is not interrupted by shutdown.
 
 ## What each setting does on reload
 
@@ -153,7 +151,7 @@ A reload never leaves the server with no listener. If the new set would bind not
 
 ## Application configuration
 
-Handlers often need their own settings. The server carries them next to `ServerConfig`, as a type chosen by the application: the application passes the first value to `ServerBuilder::app_config` and returns later values from its reload loader. The [reload tutorial](../tutorials/reloading-configuration.md) shows a complete loader.
+Handlers often need their own settings. The server carries them next to `ServerConfig`, as a type chosen by the application: the application passes the first value to `ServerBuilder::app_config` and returns later values from its reload loader. The how-to guide [Reload the configuration without a restart](../how-to/reload-the-configuration.md) shows a complete loader.
 
 Handlers read the application configuration through a `ConfigWatch<A>`, a thin wrapper around `tokio::sync::watch::Receiver<Arc<A>>`. `ConfigWatch::current()` returns the current `Arc<A>` and does not block.
 
@@ -213,6 +211,8 @@ Integration tests:
 
 ## Open questions
 
-1. Should a lowered `max_connections` also close idle connections above the new limit, or only stop new ones as designed?
-2. Should a changed `backlog` on an unchanged address rebind the listener with `SO_REUSEPORT`, so it applies without a restart?
-3. Does the milter client in `docs/reference/milter-client.md` need the same reload support for its pool settings?
+1. Does the milter client in `docs/reference/milter-client.md` need the same reload support for its pool settings?
+
+Decided:
+- A lowered `max_connections` closes no open connection; new connections are closed at once until the count drops below the new limit.
+- A changed `backlog` on an address that stays bound is not applied by rebinding the listener; it is reported as needing a restart.
