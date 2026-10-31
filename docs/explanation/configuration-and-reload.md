@@ -10,6 +10,8 @@ An operator who changes a timeout or a connection limit could restart the milter
 
 rust-milter is a library inside someone else's program. That program may keep its settings in TOML, in YAML, in environment variables, or in a database, and it often has its own settings next to rust-milter's. If the library read a file itself, it would force one location and one format on every application. So the application owns loading: it registers a loader, and rust-milter calls it on `SIGHUP` and validates what comes back.
 
+Containers are the one place where a default helps. Docker and Kubernetes pass configuration as environment variables, and every containerized milter would otherwise write the same mapping code. rust-milter therefore offers helpers that read `ServerConfig` from variables with a chosen prefix, but only when the application calls them. Unknown variables with that prefix are errors, for the same reason unknown file keys are: a misspelled name must not be silently ignored. A process's environment is fixed when it starts, so configuration from environment variables changes by restarting the process. In Kubernetes that is a rollout, which drains each pod before it stops.
+
 ## Why snapshots
 
 Each valid configuration is published once, as an immutable value with a generation number. A reload never edits a published value; it publishes the next one.

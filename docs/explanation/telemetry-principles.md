@@ -36,4 +36,4 @@ The server needs its own counters anyway, for `ServerHandle::status()` and the h
 
 ## Why traces start at the milter
 
-The Milter protocol has no field for trace context, and Sendmail and Postfix could not fill one anyway. Each connection from an MTA therefore starts a new trace. The queue ID on the message span is the bridge back to the MTA. Between a rust-milter client and a rust-milter server, a future extension could carry W3C trace context in a macro, because both sides are under the same project's control.
+The Milter protocol has no field for trace context, and Sendmail and Postfix could not fill one anyway. Each connection from an MTA therefore starts a new trace. The queue ID on the message span is the bridge back to the MTA.
