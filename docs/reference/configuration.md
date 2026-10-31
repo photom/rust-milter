@@ -12,6 +12,7 @@ Every setting of the rust-milter server: its type, default, valid range, and wha
 - [Builder-only settings](#builder-only-settings)
 - [Application configuration](#application-configuration)
 - [Validation rules](#validation-rules)
+- [File format (serde feature)](#file-format-serde-feature)
 - [Example](#example)
 - [Milter client configuration](#milter-client-configuration)
 - [Open questions](#open-questions)
@@ -65,13 +66,15 @@ A `new_listeners` change on an address that stays in `bind_addresses` cannot rea
 
 ## Settings that need a restart
 
-| Setting | Why |
-|---------|-----|
-| `worker_threads` | The Tokio runtime is built once at startup and cannot change its thread count |
-| `backlog` on an address that stays bound | The kernel sets the backlog when the listener starts listening |
-| `socket_options.reuse_addr`, `reuse_port`, `ipv6_only` on an address that stays bound | These options must be set before `bind()` |
-| Builder-only settings (handler, reload loader, meter provider, runtime settings) | They are fixed when the server is built; see [Builder-only settings](#builder-only-settings) |
-| Cargo features (`otel`) | They are fixed at compile time; changing them needs a rebuild |
+| Setting | Fixed when |
+|---------|------------|
+| `worker_threads` | the Tokio runtime starts |
+| `backlog` on an address that stays bound | the listener starts listening |
+| `socket_options.reuse_addr`, `reuse_port`, `ipv6_only` on an address that stays bound | the listener is bound |
+| Builder-only settings (handler, reload loader, meter provider, runtime settings) | the server is built; see [Builder-only settings](#builder-only-settings) |
+| Cargo features (`otel`, `serde`) | the crate is compiled |
+
+The reasons behind the reload classes are explained in [Configuration snapshots and reload](../explanation/configuration-and-reload.md).
 
 ## Settings that do not need a restart
 
@@ -94,7 +97,7 @@ Lowering `max_connections` below the current count closes no open connection. Ne
 
 ## ServerConfig reference
 
-`ServerConfig` and all its parts are plain data types. They implement `Clone`, `Debug`, `PartialEq`, and `Default`, and are `Send + Sync`.
+`ServerConfig` and all its parts are plain data types. They implement `Clone`, `Debug`, `PartialEq`, and `Default`, and are `Send + Sync`. With the `serde` feature they also implement `Serialize` and `Deserialize` (see [File format](#file-format-serde-feature)).
 
 ### Top level
 
@@ -207,9 +210,37 @@ On reload only:
 7. The new configuration must leave at least one listener (see `docs/reference/hot-reload.md`).
 8. Changes to `restart` settings are not errors. They are reported as `pending_restart`.
 
+## File format (serde feature)
+
+With the optional Cargo feature `serde`, `ServerConfig` and all its parts implement `serde::Serialize` and `serde::Deserialize`. A reload loader can then read `ServerConfig` straight from TOML, YAML, JSON, or any other format with a serde implementation. rust-milter still reads no file itself; the application picks the format and the file.
+
+### Mapping
+
+| Rust value | File representation |
+|------------|---------------------|
+| Field names | The names in the reference tables above, such as `max_connections` |
+| Nested parts (`timeouts`, `socket_options`, `shutdown`, `resource_limits`, `telemetry`) | Nested tables or maps under the same names; `socket_options.keepalive` is a table inside `socket_options` |
+| `SocketAddr` in `bind_addresses` | Text: `"127.0.0.1:8891"`, `"[::1]:8891"`, or the libmilter forms `"inet:8891@127.0.0.1"` and `"inet6:8891@::1"` |
+| `Duration` | Text with a unit: `ms`, `s`, `m`, or `h`, for example `"500ms"`, `"30s"`, `"5m"` |
+| Sizes in bytes | Integers, for example `131072` |
+| Enums | Lowercase text with underscores: `bind_mode` is `"fail_fast"` or `"best_effort"`; `trace_commands` is `"none"`, `"envelope"`, or `"all"` |
+| `Option` fields | Leave the key out for `None`. `keepalive` also accepts `false` to turn keepalive off |
+
+### Compatibility rules
+
+These rules apply across rust-milter versions (see [Why the file rules are strict](../explanation/configuration-and-reload.md#why-the-file-rules-are-strict)):
+
+1. Every configuration struct deserializes with `#[serde(default)]`: a missing key takes its default.
+2. Unknown keys are errors (`#[serde(deny_unknown_fields)]`). The error names the key. On reload, the error leaves the running configuration in place.
+3. A renamed field keeps its old name as an alias until the next major version.
+4. Removing a field, or changing its type or meaning, is a major-version change.
+5. The text format of durations and enum values never changes within a major version.
+
+`Serialize` writes every field, including defaults, so a serialized configuration shows exactly what the server runs with.
+
 ## Example
 
-The [getting started tutorial](../tutorials/getting-started.md) builds a `ServerConfig` and a server step by step. The [reload tutorial](../tutorials/reloading-configuration.md) adds an application configuration and a reload loader.
+The [getting started tutorial](../tutorials/getting-started.md) builds a `ServerConfig` and a server step by step. The how-to guide [Reload the configuration without a restart](../how-to/reload-the-configuration.md) adds an application configuration and a reload loader.
 
 ## Milter client configuration
 
@@ -217,5 +248,4 @@ The milter client (`docs/reference/milter-client.md`) has its own `ClientConfig`
 
 ## Open questions
 
-1. Should `ServerConfig` implement `serde::Deserialize` behind an optional `serde` feature, so loaders can read it straight from TOML or YAML?
-2. Should rust-milter offer a helper that maps standard environment variables to `ServerConfig`, or leave that entirely to the application?
+1. Should rust-milter offer a helper that maps standard environment variables to `ServerConfig`, or leave that entirely to the application?

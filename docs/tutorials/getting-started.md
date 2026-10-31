@@ -159,5 +159,5 @@ The milter log shows the connection being accepted and closed.
 
 ## Next steps
 
-- [Reload the configuration without a restart](reloading-configuration.md)
-- [Export metrics with OpenTelemetry](exporting-telemetry.md)
+- [Reload the configuration without a restart](../how-to/reload-the-configuration.md) (how-to guide)
+- [Export metrics with OpenTelemetry](../how-to/export-metrics-with-opentelemetry.md) (how-to guide)

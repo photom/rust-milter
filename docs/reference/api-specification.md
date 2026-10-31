@@ -1,10 +1,9 @@
 # API specification
 
-The public API of the rust-milter server library: its types, traits, errors, and usage contracts. Settings are specified in [configuration.md](configuration.md), telemetry in [telemetry.md](telemetry.md), and the milter client in [milter-client.md](milter-client.md). Usage examples are in the [tutorials](../tutorials/).
+The public API of the rust-milter server library: its types, traits, errors, and usage contracts. Settings are specified in [configuration.md](configuration.md), telemetry in [telemetry.md](telemetry.md), and the milter client in [milter-client.md](milter-client.md). Usage examples are in the [tutorial](../tutorials/) and the [how-to guides](../how-to/). The design principles behind the API are explained in [Library architecture](../explanation/architecture.md).
 
 ## Contents
 
-- [Design principles](#design-principles)
 - [Public API surface](#public-api-surface)
 - [Server, builder, and handle](#server-builder-and-handle)
 - [Handler trait](#handler-trait)
@@ -20,16 +19,6 @@ The public API of the rust-milter server library: its types, traits, errors, and
 - [Performance characteristics](#performance-characteristics)
 - [Usage constraints](#usage-constraints)
 - [Possible future additions](#possible-future-additions)
-
-## Design principles
-
-1. Type safety: the Rust type system enforces protocol correctness.
-2. Async first: every I/O operation is async.
-3. Zero-cost abstractions: safety adds no runtime overhead.
-4. Ergonomics: the API is easy to use correctly and hard to use incorrectly.
-5. Composability: traits and generics give flexibility.
-6. Immutable configuration: a published configuration never changes; a reload publishes a new one.
-7. Session isolation: nothing from one SMTP session is visible in the next, even on the same connection.
 
 ## Public API surface
 
@@ -70,6 +59,7 @@ The public API of the rust-milter server library: its types, traits, errors, and
 | Feature | Default | Adds |
 |---------|---------|------|
 | `otel` | off | OpenTelemetry metric instruments and `ServerBuilder::meter_provider` ([telemetry.md](telemetry.md)) |
+| `serde` | off | `Serialize` and `Deserialize` for `ServerConfig` and its parts ([configuration.md](configuration.md#file-format-serde-feature)) |
 
 ## Server, builder, and handle
 
@@ -159,6 +149,8 @@ The I/O handle for one MTA connection. It owns its socket and lives as long as t
 | `local_addr` | `SocketAddr` | The listener address that accepted the connection |
 | `accepted_at` | `Instant` | Time `accept()` returned |
 | `config_generation` | `u64` | Generation of the configuration snapshot |
+
+`Connection` tracks the protocol state from the command codes it reads and the reply codes it writes, with libmilter's transition rules. When `SMFIC_QUIT_NC` arrives outside `ST_ENDM` and `ST_UNKN`, `read_frame` returns `Error::Protocol` and the connection closes; the handler never sees that command. A handler therefore only has to handle `SMFIC_QUIT_NC` in the states where it is valid.
 
 `read_frame` and `write_frame` enforce the connection's `timeouts.connect`, `timeouts.read`, `timeouts.write`, and `timeouts.idle`, and the `per_connection_buffer` limit, all from the snapshot. The byte-level operations, buffers, and transport states in [tcp-server.md](tcp-server.md) are internal.
 

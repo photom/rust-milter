@@ -48,7 +48,6 @@
   - [Load tests](#load-tests)
   - [Chaos tests](#chaos-tests)
 - [Security considerations](#security-considerations)
-- [Implementation notes](#implementation-notes)
 - [Dependencies](#dependencies)
 - [Future considerations](#future-considerations)
 - [References](#references)
@@ -536,33 +535,12 @@ The server builder, the server handle, and the rest of the public API are specif
 
 1. Validate every configuration parameter.
 2. Enforce resource limits to prevent denial of service.
-3. The milter protocol has no authentication or encryption. Bind to a loopback address unless the MTA runs on another host, and restrict access with firewall rules when it does.
-4. The server should not require root privileges. Use a port above 1023.
+3. The server listens only on the addresses in `bind_addresses`; it never binds a wildcard address on its own.
+4. The server does not require root privileges.
+
+How to deploy the server safely (unprivileged user, loopback binding, firewall rules) is described in [Deploy a milter in production](../how-to/deploy-a-milter-in-production.md).
 5. Enforce timeouts to stop slowloris-style attacks.
 6. Optionally rate-limit connections per source.
-
-## Implementation notes
-
-### Tokio practices
-
-1. Use `tokio::select!` for cancellation-safe operations.
-2. Use `BufReader` and `BufWriter` for buffered I/O.
-3. Avoid blocking operations in async code.
-4. Use `tokio::task::spawn_blocking` for CPU-intensive work.
-
-### Memory
-
-1. Reuse buffers where possible.
-2. Limit per-connection buffer sizes.
-3. Use `bytes::Bytes` for zero-copy operations.
-4. Consider memory pools for frequent allocations.
-
-### File descriptors
-
-1. Set `ulimit` for production to at least 10000 plus headroom.
-2. Monitor FD usage.
-3. Release FDs when a connection closes.
-4. When FDs run out, back off and keep running.
 
 ## Dependencies
 
@@ -575,6 +553,7 @@ The server builder, the server handle, and the rest of the public API are specif
 | `thiserror` | Error types |
 | `bytes` | Efficient byte handling |
 | `opentelemetry` | Metrics instruments; API crate only, behind the optional `otel` feature |
+| `serde` | Configuration file support, behind the optional `serde` feature |
 
 ## Future considerations
 

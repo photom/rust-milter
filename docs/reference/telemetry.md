@@ -6,8 +6,8 @@ How rust-milter reports metrics, traces, and logs through OpenTelemetry. This do
 
 ## Contents
 
-- [Purpose and scope](#purpose-and-scope)
-- [Principles](#principles)
+- [Scope](#scope)
+- [Requirements](#requirements)
 - [Architecture](#architecture)
 - [Data that must never be recorded](#data-that-must-never-be-recorded)
 - [Metrics](#metrics)
@@ -19,9 +19,7 @@ How rust-milter reports metrics, traces, and logs through OpenTelemetry. This do
 - [Testing requirements](#testing-requirements)
 - [Open questions](#open-questions)
 
-## Purpose and scope
-
-Operators need to see connection counts, latency at end of message, error rates, and how a single message moved through the milter. OpenTelemetry gives one vendor-neutral way to export all three signals (metrics, traces, logs) to any backend.
+## Scope
 
 In scope:
 - metrics for the server (`docs/reference/tcp-server.md`), the milter client and pool (`docs/reference/milter-client.md`), and configuration reload (`docs/reference/hot-reload.md`)
@@ -32,9 +30,11 @@ Out of scope:
 - choosing or configuring an exporter, a backend, or sampling. These belong to the application.
 - a Prometheus client inside the library (see [Exporting to Prometheus](#exporting-to-prometheus))
 
-## Principles
+## Requirements
 
-1. API only. rust-milter depends on the `opentelemetry` API crate and never on the SDK or an exporter. The application installs the SDK. Without an installed SDK, every instrument is a no-op. This follows OpenTelemetry's guidance for libraries.
+The reasons behind these requirements are explained in [Telemetry principles](../explanation/telemetry-principles.md).
+
+1. API only. rust-milter depends on the `opentelemetry` API crate and never on the SDK or an exporter. The application installs the SDK. Without an installed SDK, every instrument is a no-op.
 2. Optional. The dependency sits behind the Cargo feature `otel`. Without it, rust-milter has no OpenTelemetry dependency and records nothing beyond its own status counters.
 3. Traces through `tracing`. rust-milter already emits `tracing` spans and events. The application turns them into OpenTelemetry spans with `tracing-opentelemetry`. The library needs no OpenTelemetry trace API.
 4. Semantic conventions first. Where OpenTelemetry defines an attribute, rust-milter uses it: `server.address`, `server.port`, `network.peer.address`, `network.peer.port`, `network.transport`, `network.type`, `network.io.direction`, `error.type`. Names specific to the milter protocol use the `milter.` prefix.
@@ -197,7 +197,7 @@ Span names are fixed strings. Nothing variable goes into a name.
 | `milter.reply` | session, message | the final decision |
 | `error.type` | any | set when the span ends with an error; the span status is then `Error` |
 
-The queue ID is the one macro value recorded. It identifies the message in the MTA's own logs and contains no personal data, and it is the main key for matching a trace with an MTA log line.
+The queue ID is the one macro value recorded.
 
 ### Command events
 
@@ -229,7 +229,7 @@ rust-milter logs through `tracing`, with the fields from `docs/reference/tcp-ser
 | `MilterClientBuilder::meter_provider(provider)` | The same, for the client |
 | `ServerHandle::status()` | In-process snapshot of the status counters, available without the `otel` feature |
 
-The application installs the SDK: it builds a `MeterProvider` with an exporter, such as OTLP, and passes it to `ServerBuilder::meter_provider`. The [telemetry tutorial](../tutorials/exporting-telemetry.md) walks through it.
+The application installs the SDK: it builds a `MeterProvider` with an exporter, such as OTLP, and passes it to `ServerBuilder::meter_provider`. The how-to guide [Export metrics with OpenTelemetry](../how-to/export-metrics-with-opentelemetry.md) shows the steps.
 
 Standard `OTEL_*` environment variables, such as `OTEL_EXPORTER_OTLP_ENDPOINT`, are read by the SDK in the application, not by rust-milter.
 
@@ -260,4 +260,4 @@ When OpenTelemetry metrics are converted to Prometheus, dots become underscores,
 
 1. Should the `{traceparent}` macro between a rust-milter client and server be part of the first version?
 2. Should the SMTP client's address be available as an opt-in span attribute? It is useful for abuse investigations, but it is personal data under many privacy laws and is excluded by default.
-3. `docs/reference/architecture.md` and `docs/reference/api-specification.md` list a future "metrics collector trait". Should it be dropped in favor of this design?
+3. `docs/explanation/architecture.md` and `docs/reference/api-specification.md` list a future "metrics collector trait". Should it be dropped in favor of this design?
