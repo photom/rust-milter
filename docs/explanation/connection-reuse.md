@@ -6,7 +6,7 @@ Why rust-milter reuses milter connections only in narrow cases, why its server c
 
 Sendmail and Postfix open one milter connection per SMTP session and close it when the session ends. Every new SMTP client costs a TCP handshake to the milter and one `SMFIC_OPTNEG` round trip before the first real command. For a busy MTA on the same host this is cheap, but it adds latency to every session, and across a network it adds more.
 
-The protocol has a way around it. `SMFIC_QUIT_NC`, "quit, new connection follows", ends one SMTP session but keeps the milter connection open. The next session starts with `SMFIC_CONNECT` on the same socket and skips the negotiation. libmilter has supported it since protocol version 6, yet neither Sendmail nor Postfix sends it. The rust-milter client is the first component in this project that would.
+The protocol has a way around it. `SMFIC_QUIT_NC`, "quit, new connection follows", ends one SMTP session but keeps the milter connection open. The next session starts with `SMFIC_CONNECT` on the same socket and skips the negotiation. libmilter has supported it since protocol version 6, yet neither Sendmail nor Postfix sends it. The milter client sample in this repository, a reference implementation of the MTA side, would.
 
 ## Why libmilter makes reuse fragile
 
@@ -43,7 +43,7 @@ Accepting it everywhere sounds friendlier, but it pushes the hard part onto ever
 
 Closing the connection keeps the rule small. `SMFIC_QUIT_NC` is valid exactly where libmilter says it is, and anywhere else the connection closes at once, so the MTA reconnects instead of waiting for a timeout. The client's rules then work the same against libmilter and rust-milter servers.
 
-The decision is recorded in [ADR 0001](../adr/0001-close-connection-on-smfic-quit-nc-in-wrong-state.md).
+The decision is recorded in [ADR 0001](../adr/0001-commands-in-wrong-state-recover-like-libmilter-or-close.md).
 
 The library enforces this rule itself. Its protocol engine runs the whole conversation, as libmilter's does, so it knows the protocol state without help from the handler ([ADR 0002](../adr/0002-library-runs-the-protocol-handlers-decide.md)). Handler authors never deal with `SMFIC_QUIT_NC` at all: when a session ends this way, the engine calls `session_end` and drops the session's state.
 

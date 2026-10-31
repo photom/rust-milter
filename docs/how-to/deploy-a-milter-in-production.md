@@ -14,6 +14,7 @@ The milter protocol has no authentication and no encryption: anyone who can reac
 
 1. If the MTA runs on the same host, bind only to loopback, for example `bind_addresses = ["127.0.0.1:8891"]`.
 2. If the MTA runs on another host, bind to the internal interface only, and allow just the MTA's address in the firewall.
+3. In a container, bind to all of the container's interfaces and restrict access outside it; see [Run a milter in Docker or Kubernetes](run-a-milter-in-docker-or-kubernetes.md).
 
 ## Raise the file descriptor limit
 

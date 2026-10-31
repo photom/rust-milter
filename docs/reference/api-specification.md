@@ -49,7 +49,7 @@ The public API of the rust-milter server library: its types, traits, errors, and
 | `SessionEnd` | Handler | Why an SMTP session ended |
 | `ConnectionInfo` | I/O | Read-only facts about an MTA connection: ID, addresses, accept time |
 | `DisconnectReason` | I/O | Why a connection closed |
-| `Frame` | Protocol | Milter protocol frame (used by the milter client and by tests) |
+| `Frame` | Protocol | Milter protocol frame (used by the milter client sample in `examples/` and by tests) |
 | `Command` | Protocol | Commands from MTA to milter (`SMFIC_*`) |
 | `Reply` | Protocol | Replies from milter to MTA (`SMFIR_*`) |
 | `Error` | Error | Library error type |
@@ -241,7 +241,8 @@ The library performs these protocol duties for every handler:
 | Flags | Treats zero action or protocol flags from the MTA as the version 1 defaults; requests only flags the MTA offered |
 | Stage filtering | Requests `SMFIP_NO*` for the stages missing from `events()` |
 | Macros | Stores the macros of every stage byte, including `L`, `B`, and `U` from Postfix; never replies to `SMFIC_MACRO`; clears them when the session ends |
-| State machine | Tracks the protocol state with libmilter's transition rules; closes the connection on `SMFIC_QUIT_NC` outside `ST_ENDM` and `ST_UNKN` ([ADR 0001](../adr/0001-close-connection-on-smfic-quit-nc-in-wrong-state.md)) |
+| State machine | Tracks the protocol state with libmilter's transition rules; closes the connection on `SMFIC_QUIT_NC` outside `ST_ENDM` and `ST_UNKN` ([ADR 0001](../adr/0001-commands-in-wrong-state-recover-like-libmilter-or-close.md)) |
+| Commands in a wrong state | Recovers like libmilter for a command that fits from `ST_HELO` (`SMFIC_HELO`, `SMFIC_MAIL`, `SMFIC_UNKNOWN`, and later stages the handler switched off): calls `abort` if a message is open, then processes the command. Ignores `SMFIC_ABORT` and `SMFIC_QUIT`. Closes the connection with a protocol error on any other command ([ADR 0001](../adr/0001-commands-in-wrong-state-recover-like-libmilter-or-close.md)) |
 | Replies | Encodes each decision as the matching `SMFIR_*` reply; sends no reply to `SMFIC_MACRO`, `SMFIC_ABORT`, `SMFIC_QUIT`, or `SMFIC_QUIT_NC` |
 | Abort | Calls `abort` and drops the message state when a message is open; ignores `SMFIC_ABORT` outside a message |
 | Session end | Calls `session_end` and drops the session state on `SMFIC_QUIT`, on `SMFIC_QUIT_NC`, and on end of file without `SMFIC_QUIT` |
@@ -344,7 +345,7 @@ Type-safe form of the replies the milter sends.
 
 The enum has no variants for `SMFIR_SHUTDOWN`, `SMFIR_CONN_FAIL`, or `SMFIR_SETSYMLIST`: Sendmail rejects the first, neither MTA accepts the second, and the third is never sent as a packet. The macro list travels in `Reply::OptNeg`.
 
-`Reply` is the wire-level type, used by the milter client and by tests; handlers use the decision types and `ReplyCode` instead. `Reply::to_frame()` validates before encoding:
+`Reply` is the wire-level type, used by the milter client sample in `examples/` and by tests; handlers use the decision types and `ReplyCode` instead. `Reply::to_frame()` validates before encoding:
 - `ReplyCode` text: a 4xx or 5xx code, the multi-line rules from [milter-protocol.md](milter-protocol.md), and every literal `%` already written as `%%`
 - header names: no colon, no whitespace, no control characters
 - `ReplaceBody` data: at most 65,535 bytes per frame
@@ -354,6 +355,15 @@ Thread safety: `Send + Sync`.
 ## Configuration and reload API
 
 All settings, defaults, valid ranges, and reload behavior are in [configuration.md](configuration.md). The reload procedure is in [hot-reload.md](hot-reload.md).
+
+Environment variable helpers on `ServerConfig` ([configuration.md](configuration.md#environment-variables)):
+
+| Method | Returns |
+|--------|---------|
+| `ServerConfig::from_env(prefix)` | `Result<ServerConfig, ConfigError>` |
+| `ServerConfig::apply_env(&mut self, prefix)` | `Result<(), ConfigError>` |
+| `ServerConfig::from_vars(prefix, vars)` | `Result<ServerConfig, ConfigError>`; `vars` is any iterator of name and value pairs |
+| `ServerConfig::apply_vars(&mut self, prefix, vars)` | `Result<(), ConfigError>` |
 
 `ConfigWatch<A>`:
 
@@ -413,6 +423,8 @@ Errors are `thiserror` enums. Every error type implements `std::error::Error`, `
 | `Address(AddressError)` | An address string could not be parsed |
 | `Inconsistent { rule, detail }` | A cross-field rule failed, such as `max_fds` too small for `max_connections` |
 | `Unsupported { field, reason }` | The platform does not support a setting, such as `reuse_port` |
+| `UnknownEnvVariable(String)` | An environment variable with the configured prefix names no setting |
+| `InvalidEnvValue { variable, reason }` | An environment variable's value cannot be parsed; the value itself is not included |
 
 `AddressError`: `InvalidFormat` (including `unix:` and `local:` addresses), `InvalidHost`, `InvalidPort`.
 

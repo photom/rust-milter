@@ -13,13 +13,13 @@ Every setting of the rust-milter server: its type, default, valid range, and wha
 - [Application configuration](#application-configuration)
 - [Validation rules](#validation-rules)
 - [File format (serde feature)](#file-format-serde-feature)
+- [Environment variables](#environment-variables)
 - [Example](#example)
-- [Milter client configuration](#milter-client-configuration)
-- [Open questions](#open-questions)
+- [Milter client sample](#milter-client-sample)
 
 ## How configuration reaches the server
 
-rust-milter is a library and reads no configuration file or environment variable itself. The application builds the configuration and hands it over in two places:
+rust-milter is a library and reads no configuration file itself. It reads environment variables only when the application calls one of the helpers in [Environment variables](#environment-variables). The application builds the configuration and hands it over in two places:
 
 - `ServerBuilder` takes the initial `ServerConfig`, the initial application configuration, and the builder-only settings.
 - The reload loader, registered with `ServerBuilder::reload_with`, returns a new `ServerConfig` and application configuration on `SIGHUP` or `ServerHandle::reload()`.
@@ -238,14 +238,60 @@ These rules apply across rust-milter versions (see [Why the file rules are stric
 
 `Serialize` writes every field, including defaults, so a serialized configuration shows exactly what the server runs with.
 
+## Environment variables
+
+`ServerConfig` can be built from, or overridden by, environment variables, for running in Docker or Kubernetes. The helpers need no Cargo feature.
+
+| Method | Effect |
+|--------|--------|
+| `ServerConfig::from_env(prefix)` | Defaults, overridden by every environment variable that starts with `prefix` |
+| `config.apply_env(prefix)` | Overrides an existing configuration, for example one read from a file, with the environment variables that are set |
+| `ServerConfig::from_vars(prefix, vars)` | Like `from_env`, but reads the given name and value pairs instead of the process environment |
+| `config.apply_vars(prefix, vars)` | Like `apply_env`, with the given pairs |
+
+All four return `Result` with a `ConfigError`. The usual prefix is `RUST_MILTER_`; an application can choose its own, such as `MYFILTER_`.
+
+### Variable names
+
+A variable name is the prefix followed by the setting's path in upper case, with `__` (two underscores) between the levels of the path:
+
+| Setting | Variable (prefix `RUST_MILTER_`) |
+|---------|----------------------------------|
+| `bind_addresses` | `RUST_MILTER_BIND_ADDRESSES` |
+| `max_connections` | `RUST_MILTER_MAX_CONNECTIONS` |
+| `timeouts.idle` | `RUST_MILTER_TIMEOUTS__IDLE` |
+| `socket_options.keepalive.time` | `RUST_MILTER_SOCKET_OPTIONS__KEEPALIVE__TIME` |
+| `shutdown.drain_timeout` | `RUST_MILTER_SHUTDOWN__DRAIN_TIMEOUT` |
+| `resource_limits.per_connection_buffer` | `RUST_MILTER_RESOURCE_LIMITS__PER_CONNECTION_BUFFER` |
+| `telemetry.trace_commands` | `RUST_MILTER_TELEMETRY__TRACE_COMMANDS` |
+
+Every setting in [ServerConfig reference](#serverconfig-reference) has a variable built the same way.
+
+### Values
+
+| Value type | Format |
+|------------|--------|
+| Durations, enums, sizes, socket addresses | The same text as in the [file format](#mapping), for example `30s`, `best_effort`, `131072`, `0.0.0.0:8891` |
+| Booleans | `true` or `false` |
+| Lists (`bind_addresses`) | Items separated by commas; spaces around items are ignored |
+| `keepalive` | `false` turns keepalive off; the `KEEPALIVE__*` variables set its parts |
+| `Option` fields | Leave the variable unset to keep the default |
+
+### Rules
+
+1. Only variables that start with the prefix are read. All others, such as `PATH` or `OTEL_EXPORTER_OTLP_ENDPOINT`, are ignored.
+2. A variable with the prefix that names no setting is an error (`ConfigError::UnknownEnvVariable`), so a misspelled name fails instead of being ignored.
+3. A value that cannot be parsed is an error (`ConfigError::InvalidEnvValue`) that names the variable and the reason, not the value.
+4. With `apply_env`, environment variables win over the values already in the configuration. Applying a file first and the environment second gives the order defaults, then file, then environment.
+5. The helpers check names and value formats only. The [validation rules](#validation-rules) run as usual when the configuration reaches `build()` or a reload.
+6. The process environment does not change while the process runs. A reload loader that calls `apply_env` again gets the same values, so changing an environment variable takes a restart; in Kubernetes, a rollout.
+
+How to run a milter in a container with these variables is shown in the how-to guide [Run a milter in Docker or Kubernetes](../how-to/run-a-milter-in-docker-or-kubernetes.md).
+
 ## Example
 
 The [getting started tutorial](../tutorials/getting-started.md) builds a `ServerConfig` and a server step by step. The how-to guide [Reload the configuration without a restart](../how-to/reload-the-configuration.md) adds an application configuration and a reload loader.
 
-## Milter client configuration
+## Milter client sample
 
-The milter client (`docs/reference/milter-client.md`) has its own `ClientConfig`, defined in that document. The server's reload does not touch it. To change it, the application builds a new `MilterClient` and shuts down the old one.
-
-## Open questions
-
-1. Should rust-milter offer a helper that maps standard environment variables to `ServerConfig`, or leave that entirely to the application?
+The milter client sample (`docs/reference/milter-client.md`) has its own settings, defined in that document. They are not part of `ServerConfig`, and the server's reload does not touch them.

@@ -558,7 +558,7 @@ How to deploy the server safely (unprivileged user, loopback binding, firewall r
 ## Future considerations
 
 - TLS support: optional TLS termination
-- connection pooling for milter client connections: designed in [milter-client.md](milter-client.md)
+- connection pooling for milter client connections: designed for the client sample in [milter-client.md](milter-client.md)
 - hot reload of the configuration on SIGHUP: designed in [hot-reload.md](hot-reload.md)
 - clustering: coordination between several server instances
 - metrics export through OpenTelemetry: designed in [telemetry.md](telemetry.md)

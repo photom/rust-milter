@@ -117,7 +117,7 @@ The protocol engine runs the Milter conversation for each connection, as libmilt
 
 Responsibilities:
 - negotiate options: protocol version (2 to 6), action flags from `Handler::actions()`, protocol flags from `Handler::events()`
-- track the protocol state with libmilter's transition rules, and close the connection on `SMFIC_QUIT_NC` outside `ST_ENDM` and `ST_UNKN`
+- track the protocol state with libmilter's transition rules, recover from a command in a wrong state where libmilter recovers, and close the connection where libmilter would leave the MTA waiting ([ADR 0001](../adr/0001-commands-in-wrong-state-recover-like-libmilter-or-close.md))
 - store macros per stage and clear them when the session ends
 - create the handler's `Session` value at `SMFIC_CONNECT` and its `Message` value at `SMFIC_MAIL`, and drop them when the session or message ends
 - call the matching handler callback for each command, and turn its decision into the protocol reply, or into no reply where the protocol forbids one
@@ -186,9 +186,9 @@ Responsibilities:
 
 The variants are listed in [api-specification.md](../reference/api-specification.md#errors).
 
-### Milter client (design)
+### Milter client sample
 
-The MTA-side client and its connection pool are a separate component group that shares Frame, Message, and the error types with the server. They are specified in [milter-client.md](../reference/milter-client.md) and are not implemented yet.
+A reference implementation of the MTA side, with a connection pool, will live in `examples/milter_client/`. It is not part of the library: it uses only the library's public protocol types (`Frame`, `Command`, `Reply`), and CI builds it. Its design is recorded in [milter-client.md](../reference/milter-client.md).
 
 ## Module structure
 
@@ -206,7 +206,6 @@ flowchart LR
     root --> reload
     root --> telemetry
     root --> error
-    root --> client["client (design)"]
 
     server --> listener
     server --> acceptor
@@ -227,8 +226,6 @@ flowchart LR
     telemetry --> status
     telemetry --> otel["otel (feature)"]
 
-    client --> pool
-    client --> session
 ```
 
 Module boundaries follow the components. `config` knows nothing about sockets; `frame` and `message` know nothing about Tokio; `telemetry::otel` compiles only with the `otel` feature.
@@ -360,7 +357,7 @@ Two separate state machines track each connection:
 | Transport | `CONNECTED`, `IDLE`, `ACTIVE`, `DRAINING`, `ERROR`, `CLOSED`, driven by socket events, timeouts, and shutdown | [tcp-server.md](../reference/tcp-server.md#connection-lifecycle) |
 | Protocol | `ST_INIT` to `ST_QUIT`, driven by Milter commands, as libmilter defines them | [milter-protocol.md](../reference/milter-protocol.md#protocol-states) |
 
-The Connection component owns the transport state. The protocol engine owns the protocol state, validates every command against it, and closes the connection on an invalid transition, including `SMFIC_QUIT_NC` outside `ST_ENDM` and `ST_UNKN`. Handlers never see protocol state.
+The Connection component owns the transport state. The protocol engine owns the protocol state and validates every command against it. For a command in a wrong state it follows libmilter where libmilter's behavior works: it recovers for `SMFIC_HELO`, `SMFIC_MAIL`, and `SMFIC_UNKNOWN`, and ignores `SMFIC_ABORT` and `SMFIC_QUIT`. Where libmilter would ignore a command and leave the MTA waiting for a reply, including `SMFIC_QUIT_NC`, it closes the connection ([ADR 0001](../adr/0001-commands-in-wrong-state-recover-like-libmilter-or-close.md)). Handlers never see protocol state.
 
 ## Resource management
 
@@ -526,4 +523,4 @@ Performance targets:
 - [Milter protocol specification](../reference/milter-protocol.md)
 - [Configuration hot reload](../reference/hot-reload.md)
 - [Telemetry](../reference/telemetry.md)
-- [Milter client and connection pool](../reference/milter-client.md)
+- [Milter client sample](../reference/milter-client.md)

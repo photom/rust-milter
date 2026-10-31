@@ -4,7 +4,7 @@ Decisions that shape rust-milter, with their context and consequences. These rec
 
 | ADR | Title | Status |
 |-----|-------|--------|
-| [0001](0001-close-connection-on-smfic-quit-nc-in-wrong-state.md) | Close the connection on SMFIC_QUIT_NC in a wrong state | Accepted |
+| [0001](0001-commands-in-wrong-state-recover-like-libmilter-or-close.md) | Commands in a wrong state recover like libmilter, or close the connection | Accepted |
 | [0002](0002-library-runs-the-protocol-handlers-decide.md) | The library runs the Milter protocol; handlers make decisions | Accepted |
 
 Conventions:

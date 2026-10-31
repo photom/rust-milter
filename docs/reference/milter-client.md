@@ -1,6 +1,6 @@
-# Milter client and connection pool specification
+# Milter client sample: design reference
 
-Status: design, not implemented.
+Status: reference sample, not part of the product. The sample will live in `examples/milter_client/` of this repository. CI builds it, it is not published to crates.io, and the rust-milter library does not export its types. This document records its design as a reference.
 
 The MTA side of the Milter protocol for rust-milter: a client that talks to milter servers, and a pool that keeps those connections open and reuses them across SMTP sessions with `SMFIC_QUIT_NC`.
 
@@ -20,13 +20,13 @@ The MTA side of the Milter protocol for rust-milter: a client that talks to milt
 - [Shutdown](#shutdown)
 - [Logging and metrics](#logging-and-metrics)
 - [Testing requirements](#testing-requirements)
-- [Open questions](#open-questions)
+- [Decisions](#decisions)
 
 ## Scope
 
-rust-milter today is a milter server: an MTA connects to it. The client described here plays the MTA's role. It serves:
-- MTAs and SMTP servers written in Rust that want to call existing milters
-- milter proxies and chains that forward a session to downstream milters
+rust-milter is a milter server: an MTA connects to it. The sample described here plays the MTA's role, using only the library's public protocol types (`Frame`, `Command`, `Reply`). It is a reference for:
+- authors of MTAs and SMTP servers in Rust who want to call existing milters
+- authors of milter proxies
 - test harnesses that drive a milter without running Sendmail or Postfix
 
 In scope:
@@ -36,7 +36,7 @@ In scope:
 - timeouts and failure handling equivalent to Sendmail's and Postfix's
 
 Out of scope:
-- Unix domain sockets, which rust-milter does not support
+- Unix domain sockets, which rust-milter supports neither as a server nor as a client. A milter that listens only on a Unix socket must be configured to listen on TCP before the client can reach it
 - running several milters in sequence (a milter chain). An application can build one on top of several clients.
 - applying message modifications. The client returns them; the application applies them to its own queue file.
 
@@ -321,7 +321,7 @@ The timeout defaults follow Postfix (`milter_connect_timeout`, `milter_command_t
 
 ## API
 
-`MilterClient::builder()` takes the settings in [Configuration](#configuration), and `build()` returns the client. The how-to guide [Call a milter with the milter client](../how-to/call-a-milter-with-the-client.md) shows it in use.
+These types belong to the sample and are not exported by the rust-milter library. `MilterClient::builder()` takes the settings in [Configuration](#configuration), and `build()` returns the client.
 
 | Method | Async | Returns | Description |
 |--------|-------|---------|-------------|
@@ -387,9 +387,11 @@ Each log line carries `endpoint` and `conn_id`; session-level lines also carry `
 | Milter unavailable | WARN | `endpoint`, `error`, `failure_action` |
 | Pool exhausted | WARN | `endpoint`, `max_size`, `waiters` |
 
-The client reports the metrics defined under "Milter client metrics" in [telemetry.md](telemetry.md).
+The sample exports no metrics.
 
 ## Testing requirements
+
+CI builds the sample. These are the checks the sample itself should have.
 
 Unit tests:
 - the state mirror against libmilter's transition rules, for every reply at every stage
@@ -411,7 +413,6 @@ Integration tests:
 Load tests:
 - 1000 sessions per second through a pool of 32 connections, with reuse rate and checkout latency reported
 
-## Open questions
+## Decisions
 
-1. Should milter chains (several milters per session, in order, as Sendmail and Postfix run them) be part of this client or a separate component?
-2. Does the client need Unix domain sockets to reach milters that listen only on them? The server side has dropped them.
+- Milter chains (several milters per session, in order) are left to the program that uses the client: it creates one client per milter and calls them in order, as Sendmail and Postfix do in their own code.

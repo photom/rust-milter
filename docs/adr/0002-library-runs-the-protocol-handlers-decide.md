@@ -8,7 +8,7 @@
 
 A rust-milter handler can be designed in two ways:
 
-- (A) The handler receives raw protocol frames on its connection and implements the protocol itself: option negotiation, state checks, which commands get a reply, which replies each stage allows, encoding replies, and clearing state at the end of messages and sessions. The library provides only transport (sockets, timeouts, frame parsing) and the `SMFIC_QUIT_NC` check from [ADR 0001](0001-close-connection-on-smfic-quit-nc-in-wrong-state.md).
+- (A) The handler receives raw protocol frames on its connection and implements the protocol itself: option negotiation, state checks, which commands get a reply, which replies each stage allows, encoding replies, and clearing state at the end of messages and sessions. The library provides only transport (sockets, timeouts, frame parsing) and the `SMFIC_QUIT_NC` check from [ADR 0001](0001-commands-in-wrong-state-recover-like-libmilter-or-close.md).
 - (B) The library runs the protocol conversation, and the handler implements one callback per event (connect, HELO, MAIL, RCPT, header, body, end of message, and so on), each returning a decision.
 
 Sendmail's libmilter, the reference implementation of the Milter protocol, uses model B. The Sendmail 8.19.0.2 source shows:
@@ -51,7 +51,7 @@ Negative:
 - The library takes on more code: the full protocol engine, not only transport.
 
 Effect on earlier decisions:
-- [ADR 0001](0001-close-connection-on-smfic-quit-nc-in-wrong-state.md) still applies. The `SMFIC_QUIT_NC` rule is now enforced by the library's protocol engine, which owns the protocol state.
+- [ADR 0001](0001-commands-in-wrong-state-recover-like-libmilter-or-close.md) still applies. The `SMFIC_QUIT_NC` rule is now enforced by the library's protocol engine, which owns the protocol state.
 
 ## References
 

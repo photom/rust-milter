@@ -22,7 +22,7 @@ How rust-milter reports metrics, traces, and logs through OpenTelemetry. This do
 ## Scope
 
 In scope:
-- metrics for the server (`docs/reference/tcp-server.md`), the milter client and pool (`docs/reference/milter-client.md`), and configuration reload (`docs/reference/hot-reload.md`)
+- metrics for the server (`docs/reference/tcp-server.md`) and configuration reload (`docs/reference/hot-reload.md`)
 - traces of connections, SMTP sessions, and messages
 - the bridge from rust-milter's `tracing` logs to OpenTelemetry logs
 
@@ -82,7 +82,7 @@ No metric attribute, span attribute, span event, or log field produced by rust-m
 
 `network.peer.address` on a server span is the MTA's address, the peer of the milter connection, not the SMTP client's.
 
-Telemetry follows the session isolation rule from `docs/reference/milter-client.md`: a session span ends when its SMTP session ends, and nothing from it is attached to a later session on the same connection.
+Telemetry follows the session isolation rule (see [Connection reuse and session isolation](../explanation/connection-reuse.md)): a session span ends when its SMTP session ends, and nothing from it is attached to a later session on the same connection.
 
 A handler can add its own attributes to the current span. What it records is the application's responsibility; `logging-principles` gives the masking rules.
 
@@ -110,19 +110,6 @@ Durations use the unit `s`. Every histogram sets these advisory bucket boundarie
 
 `server.address` and `server.port` name the listener, which comes from the configuration. Their values are bounded by the number of listeners.
 
-### Milter client metrics
-
-| Name | Instrument | Unit | Attributes | Description |
-|------|------------|------|------------|-------------|
-| `milter.client.connection.open` | UpDownCounter (observable) | `{connection}` | `server.address`, `server.port`, `milter.connection.state` | Open pooled connections, `idle` or `in_use` |
-| `milter.client.connection.created` | Counter (observable) | `{connection}` | `server.address`, `server.port` | New TCP connections to the milter |
-| `milter.client.session` | Counter (observable) | `{session}` | `server.address`, `server.port`, `milter.connection.reused` | Sessions, on a reused or a new connection |
-| `milter.client.connection.not_reusable` | Counter (observable) | `{session}` | `server.address`, `server.port`, `milter.not_reusable_reason` | Sessions whose connection could not be reused |
-| `milter.client.checkout.duration` | Histogram | `s` | `server.address`, `server.port` | Time waiting for a pooled connection |
-| `milter.client.failure` | Counter (observable) | `{failure}` | `server.address`, `server.port`, `error.type`, `milter.failure_action` | Sessions ended because the milter was unavailable |
-
-For the client, `server.address` and `server.port` name the milter endpoint from the configuration.
-
 ### Configuration reload metrics
 
 | Name | Instrument | Unit | Attributes | Description |
@@ -142,10 +129,6 @@ For the client, `server.address` and `server.port` name the milter endpoint from
 | `milter.protocol.version` | `2`, `3`, `4`, `6` |
 | `milter.command` | `optneg`, `macro`, `connect`, `helo`, `mail`, `rcpt`, `data`, `header`, `eoh`, `body`, `eom`, `abort`, `unknown`, `quit`, `quit_nc` |
 | `milter.reply` | `continue`, `accept`, `reject`, `tempfail`, `discard`, `replycode`, `skip`, `progress`, `noreply`, plus `modification` for any `SMFIR_*` modification action |
-| `milter.connection.state` | `idle`, `in_use` |
-| `milter.connection.reused` | `true`, `false` |
-| `milter.not_reusable_reason` | `mirror_state`, `version`, `error`, `cancelled`, `buffer`, `max_lifetime`, `max_sessions`, `shutdown`, `policy_never` |
-| `milter.failure_action` | `accept`, `reject`, `tempfail`, `error` |
 | `milter.reload_result` | `applied`, `failed` |
 | `milter.reload_source` | `sighup`, `api` |
 
@@ -178,8 +161,6 @@ flowchart TB
 | `milter.session` | INTERNAL | `SMFIC_CONNECT` | `SMFIC_QUIT`, `SMFIC_QUIT_NC`, or connection close |
 | `milter.message` | INTERNAL | `SMFIC_MAIL` | the final reply at end of message, `SMFIC_ABORT`, or session end |
 
-The milter client creates the same three spans with kind CLIENT for `milter.connection`, as children of whatever span is current in the application. A pooled connection's span covers only its creation and negotiation; each `milter.session` span is a child of the application's span for that SMTP session, with a span link to the connection span. A reused connection therefore never makes one SMTP session the parent of another.
-
 Span names are fixed strings. Nothing variable goes into a name.
 
 ### Span attributes
@@ -188,8 +169,8 @@ Span names are fixed strings. Nothing variable goes into a name.
 |-----------|----------|-------|
 | `network.transport` | connection | `tcp` |
 | `network.type` | connection | `ipv4` or `ipv6` |
-| `network.peer.address`, `network.peer.port` | connection | the MTA's address (server) or the milter's address (client) |
-| `server.address`, `server.port` | connection | the listener (server) or the milter endpoint (client) |
+| `network.peer.address`, `network.peer.port` | connection | the MTA's address |
+| `server.address`, `server.port` | connection | the listener that accepted the connection |
 | `milter.connection.id` | connection | connection ID |
 | `milter.protocol.version` | connection | negotiated version |
 | `milter.session.id` | session | session ID, new for every session |
@@ -213,8 +194,6 @@ Each command and its reply become one span event named `milter.command`, with th
 
 The Milter protocol carries no trace context, and Sendmail and Postfix cannot send one, so each server-side `milter.connection` span starts a new trace. Operators match a trace with the MTA's records through `milter.queue_id`.
 
-Between a rust-milter client and a rust-milter server, the client can pass W3C trace context in a macro named `{traceparent}`, sent only when the server's symbol list asks for it. The server then continues the client's trace. This is off by default on both sides; see [Open questions](#open-questions).
-
 ## Logs
 
 rust-milter logs through `tracing`, with the fields from `docs/reference/tcp-server.md` and the masking rules from `logging-principles`. To send those logs over OpenTelemetry, the application adds the `opentelemetry-appender-tracing` layer. With `tracing-opentelemetry` installed as well, every log record carries the trace and span IDs of the span it was emitted in, which links logs to traces without extra work in the library.
@@ -226,7 +205,6 @@ rust-milter logs through `tracing`, with the fields from `docs/reference/tcp-ser
 | Cargo feature `otel` | Enables the OpenTelemetry instruments. Off by default |
 | `ServerBuilder::meter_provider(provider)` | Use this `MeterProvider`. Without it, rust-milter uses `opentelemetry::global::meter_provider()` |
 | `telemetry.trace_commands` in `ServerConfig` | `None`, `Envelope` (default), or `All`; reloadable (see [configuration.md](configuration.md)) |
-| `MilterClientBuilder::meter_provider(provider)` | The same, for the client |
 | `ServerHandle::status()` | In-process snapshot of the status counters, available without the `otel` feature |
 
 The application installs the SDK: it builds a `MeterProvider` with an exporter, such as OTLP, and passes it to `ServerBuilder::meter_provider`. The how-to guide [Export metrics with OpenTelemetry](../how-to/export-metrics-with-opentelemetry.md) shows the steps.
@@ -258,6 +236,5 @@ When OpenTelemetry metrics are converted to Prometheus, dots become underscores,
 
 ## Open questions
 
-1. Should the `{traceparent}` macro between a rust-milter client and server be part of the first version?
-2. Should the SMTP client's address be available as an opt-in span attribute? It is useful for abuse investigations, but it is personal data under many privacy laws and is excluded by default.
-3. `docs/explanation/architecture.md` and `docs/reference/api-specification.md` list a future "metrics collector trait". Should it be dropped in favor of this design?
+1. Should the SMTP client's address be available as an opt-in span attribute? It is useful for abuse investigations, but it is personal data under many privacy laws and is excluded by default.
+2. `docs/explanation/architecture.md` and `docs/reference/api-specification.md` list a future "metrics collector trait". Should it be dropped in favor of this design?

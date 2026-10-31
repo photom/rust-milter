@@ -10,6 +10,7 @@ The fixed TCP ports that rust-milter's tests listen on, how tests share them, an
 - [Port leases](#port-leases)
 - [Environment variables](#environment-variables)
 - [Rules for tests](#rules-for-tests)
+- [Documentation check](#documentation-check)
 - [Toolchain](#toolchain)
 
 ## Test ports
@@ -56,6 +57,19 @@ A lease does not keep the port bound. The server under test binds it after the t
 4. Stop servers through `ServerHandle::shutdown()` and wait for them before the lease is dropped. Only process-level signal tests send real signals.
 5. Run timeouts on Tokio's paused clock (`tokio::time::pause`) wherever the test does not need real network delays, so that long timeouts take no real time.
 6. Tests that need IPv6 follow `RUST_MILTER_TEST_IPV6` and report a skip, not a pass, when IPv6 is unavailable.
+
+## Documentation check
+
+`cargo test` compiles the Rust code blocks in the tutorials and how-to guides, and CI runs it on every push and pull request.
+
+| Item | Behavior |
+|------|----------|
+| Documents checked | Every Markdown file in `docs/tutorials/` and `docs/how-to/`, found automatically; a new file needs no registration |
+| Code blocks checked | Blocks marked as Rust; shell, TOML, YAML, and other blocks are not compiled |
+| Mechanism | The documents are included as doctests, so they remain the only copy of the examples |
+| Fragments | A fragment that cannot compile alone gets hidden setup lines, which do not appear in the rendered document |
+| Exceptions | A block that cannot compile at all, even with setup lines, is marked as not compiled, with the reason stated next to it |
+| Failure | A block that does not compile fails the test run, and with it the CI build |
 
 ## Toolchain
 

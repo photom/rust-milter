@@ -18,7 +18,7 @@ Reloading the server configuration while rust-milter keeps running, triggered by
 - [Errors](#errors)
 - [Logging and metrics](#logging-and-metrics)
 - [Testing requirements](#testing-requirements)
-- [Open questions](#open-questions)
+- [Decisions](#decisions)
 
 ## Scope
 
@@ -209,10 +209,8 @@ Integration tests:
 - `SIGHUP` without a loader, and during shutdown
 - a handler reading `ConfigWatch` sees one value for a whole message while a reload happens
 
-## Open questions
+## Decisions
 
-1. Does the milter client in `docs/reference/milter-client.md` need the same reload support for its pool settings?
-
-Decided:
+- The milter client sample has no reload. A program that uses it builds a new client to change its settings and shuts down the old one; sessions in progress finish on the old client.
 - A lowered `max_connections` closes no open connection; new connections are closed at once until the count drops below the new limit.
 - A changed `backlog` on an address that stays bound is not applied by rebinding the listener; it is reported as needing a restart.
