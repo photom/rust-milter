@@ -29,15 +29,19 @@ Step-by-step lessons that teach the basics through guided practice. Start here i
 
 Available (written against the designed API; the library is not implemented yet):
 - [Getting started: build your first milter](docs/tutorials/getting-started.md)
-- [Reload the configuration without a restart](docs/tutorials/reloading-configuration.md)
-- [Export metrics with OpenTelemetry](docs/tutorials/exporting-telemetry.md)
-- [Call a milter from Rust with the milter client](docs/tutorials/using-the-milter-client.md)
 
 ### [How-to guides](docs/how-to/) (tasks)
 
 Practical steps for solving a specific problem. Use them when you have a particular task to finish.
 
-Status: coming soon
+Available (written against the designed API; the library is not implemented yet):
+- [Reload the configuration without a restart](docs/how-to/reload-the-configuration.md)
+- [Export metrics with OpenTelemetry](docs/how-to/export-metrics-with-opentelemetry.md)
+- [Call a milter with the milter client](docs/how-to/call-a-milter-with-the-client.md)
+- [Make a milter work with both Sendmail and Postfix](docs/how-to/make-a-milter-work-with-sendmail-and-postfix.md)
+- [Deploy a milter in production](docs/how-to/deploy-a-milter-in-production.md)
+- [Run the tests](docs/how-to/run-the-tests.md)
+- [Write a network test](docs/how-to/write-a-network-test.md)
 
 ### [Reference](docs/reference/) (information)
 
@@ -46,19 +50,28 @@ Accurate and complete technical specifications. Use them to look up specific det
 Available:
 - [Milter protocol specification](docs/reference/milter-protocol.md)
 - [TCP server specification](docs/reference/tcp-server.md)
-- [Library architecture](docs/reference/architecture.md)
 - [API specification](docs/reference/api-specification.md)
 - [Configuration specification](docs/reference/configuration.md)
 - [Milter client and connection pool](docs/reference/milter-client.md) (design)
 - [Configuration hot reload](docs/reference/hot-reload.md) (design)
 - [Telemetry (OpenTelemetry)](docs/reference/telemetry.md) (design)
+- [Test environment](docs/reference/test-environment.md) (design)
 - API reference: run `cargo doc --open`
 
 ### [Explanation](docs/explanation/) (understanding)
 
 Background on the concepts, design decisions, and architecture.
 
-Status: coming soon
+Available:
+- [Library architecture](docs/explanation/architecture.md)
+- [Connection reuse and session isolation](docs/explanation/connection-reuse.md)
+- [Configuration snapshots and reload](docs/explanation/configuration-and-reload.md)
+- [Telemetry principles](docs/explanation/telemetry-principles.md)
+- [Test ports](docs/explanation/test-ports.md)
+
+## Architecture decisions
+
+Decisions and their reasons are recorded as [architecture decision records](docs/adr/), outside the four documentation types above.
 
 ## License
 

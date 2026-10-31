@@ -294,7 +294,7 @@ gantt
 
 ## Connection handling
 
-The public connection API (the `Handler` trait, `Connection`, `ConnectionInfo`, and `DisconnectReason`) is specified in [api-specification.md](api-specification.md). The byte-level reads and writes, buffers, and transport states in this document are internal to the Connection component.
+The handler API (the `Handler` callbacks, `ConnectionInfo`, and `DisconnectReason`) is specified in [api-specification.md](api-specification.md). Handlers never touch the connection: the byte-level reads and writes, buffers, and transport states in this document are internal, and the protocol engine sits between the connection and the handler.
 
 ### Connection identifier
 

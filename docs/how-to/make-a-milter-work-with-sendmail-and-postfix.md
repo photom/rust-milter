@@ -2,63 +2,54 @@
 
 Status: rust-milter is not implemented yet. This guide follows [milter-protocol.md](../reference/milter-protocol.md) and [api-specification.md](../reference/api-specification.md).
 
-This guide lists what a rust-milter handler must do so that the same milter behaves correctly behind Sendmail and behind Postfix. Where the library already takes care of a point, the guide says so.
+This guide lists what a rust-milter handler author must do so that the same milter behaves correctly behind Sendmail and behind Postfix.
 
-## Handle the connection lifecycle
+The library's protocol engine already handles the protocol differences between the two MTAs:
+- version and flag negotiation
+- macros on every stage, including Postfix's `L`, `B`, and `U`
+- `SMFIC_ABORT` outside a message
+- connections closed without `SMFIC_QUIT`
+- `SMFIC_QUIT_NC`
+- the no-reply rules
 
-1. Expect one SMTP session per milter connection.
-2. Initialize per-session state on each `SMFIC_CONNECT`.
-3. Clean up per-session state when the session ends: on `SMFIC_QUIT`, on `SMFIC_QUIT_NC`, and when `read_frame` returns `None` without a preceding `SMFIC_QUIT`. Postfix closes the socket without `SMFIC_QUIT` after a decision at connect or HELO.
-4. Reset per-message state after `SMFIC_BODYEOB` or `SMFIC_ABORT`.
-5. Accept `SMFIC_ABORT` outside a message transaction and ignore it. Postfix sends it after HELO or after a rejected `MAIL`.
-6. Handle `SMFIC_QUIT_NC` for MTAs other than Sendmail and Postfix: drop all per-session state and keep only the negotiated options. The library closes the connection when `SMFIC_QUIT_NC` arrives in a state where it is not allowed, so the handler only sees it where it is valid.
+The steps below cover what is left to the handler.
 
-## Negotiate the protocol version
+## Keep state in Session and Message
 
-1. Close the connection if the MTA offers a version below 2.
-2. Answer with the lower of the MTA's version and 6.
-3. Treat zero action flags or zero protocol flags from the MTA as the version 1 defaults (`SMFI_V1_ACTS`, `SMFI_V1_PROT`).
-4. Request only action and protocol flags that the MTA offered. Sendmail closes the connection otherwise.
-5. Expect no `SMFIC_UNKNOWN` below version 3 and no `SMFIC_DATA` below version 4. The table in [Protocol version](../reference/milter-protocol.md#protocol-version) lists what each version adds.
+1. Put everything that belongs to one SMTP session in your handler's `Session` type, and everything that belongs to one message in its `Message` type.
+2. Do not keep session or message data in the handler's own fields. One handler value serves all connections at once.
+3. Do cleanup work, such as flushing per-session statistics, in `session_end`. The library calls it for every way a session can end, including Postfix closing the socket without `SMFIC_QUIT` after a decision at connect or HELO.
 
-## Read hostnames correctly
+## Do not depend on optional stages
 
-1. Expect `[<ip>]` as the hostname of an unresolved client from either MTA.
-2. Expect "unknown" from Postfix when the client's address is unknown too.
-3. When the hostname is "unknown" or starts with `[`, take the IP address from the address field of `SMFIC_CONNECT`.
+1. Do not rely on `unknown` being called; it needs protocol version 3 or later.
+2. Do not rely on `data` being called; it needs protocol version 4 or later.
+3. Check `negotiated().version` in a callback if your logic depends on the version.
+4. Set `milter_protocol = 6` in Postfix. Sendmail always negotiates version 6.
 
-## Write reply codes both MTAs accept
+## Read the SMTP client's address from ConnectInfo
 
-1. Write every literal `%` as `%%`. Sendmail rejects a single `%`, and Postfix deletes it.
-2. Start the reply with `4` for a temporary failure and `5` for a rejection, followed by two digits and a space.
-3. Give an enhanced status code the same first digit as the reply code.
-4. For a multi-line reply, start every line with the same 3-digit code, put `-` after the code on every line but the last and a space on the last, separate lines with CRLF, and end the last line without CRLF.
-5. Do not rely on Sendmail showing the text of a reply to `SMFIC_CONNECT`; it keeps only the meaning of the code.
+Both MTAs send `[<ip>]` as the hostname of a client whose name did not resolve, and Postfix sends "unknown" when the address is unknown too. For decisions based on the client, use `ConnectInfo::address`, not the hostname.
 
-`Reply::to_frame` rejects a reply code that breaks these rules, so a mistake shows up as an error in the handler instead of a reply the MTA discards.
+## Request only the actions you use
 
-## Send each reply only where it is allowed
+1. Return from `actions()` only the modifications your milter performs.
+2. Leave out `CHANGE_FROM` and `ADD_RECIPIENTS_WITH_ARGS` unless you need them. They need Sendmail 8.14 or later and Postfix 2.6 or later; an MTA that does not offer a requested action makes the library close the connection.
 
-1. Send `SMFIR_PROGRESS` and `SMFIR_QUARANTINE` only at end of message. Postfix accepts them earlier; Sendmail treats them as an error.
-2. Send `SMFIR_SKIP` only in reply to `SMFIC_BODY`, and only if the MTA offered `SMFIP_SKIP`.
-3. Do not send `SMFIR_DISCARD` in reply to `SMFIC_CONNECT` or `SMFIC_HELO`. Postfix does not allow it there.
-4. Send no reply to `SMFIC_MACRO`, `SMFIC_ABORT`, `SMFIC_QUIT`, or `SMFIC_QUIT_NC`, nor to a stage whose `SMFIP_NR_*` flag was negotiated.
+## Write reply codes for both MTAs
 
-## Accept every macro stage
+1. Build custom replies with `ReplyCode::new` or `ReplyCode::multi_line`. They reject codes that either MTA would refuse, and the library escapes `%` for you.
+2. Use a 4xx code for temporary problems and a 5xx code for rejections.
+3. Do not rely on Sendmail showing the text of a reply returned from `connect`; it keeps only the meaning of the code.
 
-Accept `SMFIC_MACRO` with any stage byte. Postfix also sends `L` (headers), `B` (body), and `U` (unknown commands), and sends macros even for stages the milter turned off. Ignore stages you do not use, and never reply to `SMFIC_MACRO`.
+## Answer temporary failures with TempFail
 
-## Keep long work within the MTA's timeouts
+When a lookup your milter depends on fails, such as DNS or a database, return `TempFail` from the callback. An error returned from a callback closes the connection, and the MTA then applies its failure policy to the whole session: Sendmail's `F=` flags or Postfix's `milter_default_action`.
 
-1. Send `SMFIR_PROGRESS` while end-of-message processing takes long. It restarts the MTA's read timeout.
-2. Keep the whole end-of-message stage within Sendmail's `E` timeout (5 minutes by default) and Postfix's `milter_content_timeout` (300 seconds by default). `SMFIR_PROGRESS` does not extend Sendmail's `E` timeout.
+## Stay within the MTA's timeouts
 
-## Recover from errors
-
-1. Keep processing after non-fatal errors.
-2. Do not assume an error closes the connection; Postfix keeps the socket open after local queue file errors.
-3. Handle missing or malformed commands without panicking. The library already rejects packets longer than `per_connection_buffer` before allocating memory.
-4. Base no security decision on behavior that only one MTA shows.
+1. Call `progress()` on the end-of-message context while long processing runs. It restarts the MTA's read timeout.
+2. Finish the whole end-of-message stage within Sendmail's `E` timeout (5 minutes by default) and Postfix's `milter_content_timeout` (300 seconds by default). `progress()` does not extend Sendmail's `E` timeout.
 
 ## Test against both MTAs
 
@@ -67,7 +58,5 @@ Cover at least:
 - hostnames in the bracketed and "unknown" forms
 - protocol versions 2, 3, 4, and 6, with Postfix's `milter_protocol`
 - reply codes that contain `%`
-- `SMFIC_ABORT` outside a transaction
-- cleanup after errors
-
-Use protocol version 6 in production; it has the full feature set.
+- a message aborted halfway, and `SMFIC_ABORT` outside a message
+- `TempFail` and errors from callbacks

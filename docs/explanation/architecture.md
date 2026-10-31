@@ -8,7 +8,7 @@ How the rust-milter library is put together and why: its components, their respo
 2. Async first: all I/O is asynchronous and runs on Tokio.
 3. Type safety: protocol messages are strongly typed.
 4. Zero copy: `bytes::Bytes` keeps data copying to a minimum.
-5. Trait-based extension: users extend the library by implementing the `Handler` trait.
+5. Trait-based extension: users extend the library by implementing the `Handler` trait, one callback per protocol event, as in libmilter ([ADR 0002](../adr/0002-library-runs-the-protocol-handlers-decide.md)).
 6. Immutable configuration: each configuration is published once as a numbered snapshot; a reload publishes a new snapshot and never edits the old one.
 7. Session isolation: no data from one SMTP session reaches the next, in memory, in logs, or in telemetry.
 8. Zero-cost abstractions: the type safety and validation add no runtime overhead on the hot path.
@@ -30,7 +30,8 @@ flowchart TB
         connection["Connection"]
         frame["Frame"]
         message["Message<br/>(Command, Reply)"]
-        handler["Handler<br/>(user code)"]
+        engine["Protocol engine<br/>(negotiation, state machine,<br/>macros, replies)"]
+        handler["Handler<br/>(user callbacks)"]
     end
     telemetry["Telemetry<br/>(status counters, tracing, OpenTelemetry)"]
     error["Error types"]
@@ -40,22 +41,24 @@ flowchart TB
     reload -->|"publishes generation N+1"| config
     reload -->|"binds and stops listeners"| server
     shutdown -->|"stop accepting, cancel"| server
-    shutdown -->|"CancellationToken"| handler
+    shutdown -->|"CancellationToken"| engine
     config -->|"snapshot at accept"| server
     config -->|"ConfigWatch"| handler
     server -->|"spawns task per connection"| connection
-    server -->|"calls"| handler
-    handler -->|"read_frame, write_frame"| connection
     connection -->|"reads, writes"| frame
     frame <-->|"decode, encode"| message
+    message <-->|"commands, replies"| engine
+    engine -->|"callbacks"| handler
+    handler -->|"decisions, modifications"| engine
     server -.-> telemetry
     connection -.-> telemetry
+    engine -.-> telemetry
     reload -.-> telemetry
     data -.-> error
     control -.-> error
 ```
 
-The control plane decides what the server does: which listeners exist, which configuration applies, and when to stop. The data plane moves milter traffic. The two meet in two places only: a connection takes a configuration snapshot when it is accepted, and the handler receives the shutdown token and a `ConfigWatch`.
+The control plane decides what the server does: which listeners exist, which configuration applies, and when to stop. The data plane moves milter traffic: the connection carries frames, the protocol engine runs the conversation, and the handler only makes decisions. The two planes meet in two places only: a connection takes a configuration snapshot when it is accepted, and the protocol engine and the handler see the shutdown token and a `ConfigWatch`.
 
 ## Component specifications
 
@@ -70,7 +73,7 @@ Responsibilities:
 
 Dependencies:
 - Tokio `TcpListener`, `socket2` for socket options set before `bind()`
-- the Configuration, Connection, and Handler components
+- the Configuration, Connection, and Protocol engine components
 
 Concurrency: one accept task per listener, one task per connection.
 
@@ -83,8 +86,7 @@ Responsibilities:
 - read and write frames, with buffering
 - enforce the `connect`, `read`, `write`, and `idle` timeouts and the `per_connection_buffer` limit from its snapshot
 - track the transport state (`CONNECTED`, `IDLE`, `ACTIVE`, `DRAINING`, `ERROR`, `CLOSED`)
-- track the protocol state from the commands and replies that pass through it, and close the connection on `SMFIC_QUIT_NC` outside `ST_ENDM` and `ST_UNKN`
-- report its close reason to telemetry and to `Handler::on_disconnect`
+- report its close reason to telemetry and to the protocol engine
 
 Dependencies: Tokio `TcpStream`, the Frame component, `bytes::BytesMut`.
 
@@ -109,20 +111,27 @@ Responsibilities:
 
 Dependencies: the Frame component and the protocol constants.
 
-### 5. Handler
+### 5. Protocol engine
 
-The `Handler` trait is where user business logic plugs in. The server calls it once per connection, in that connection's task.
+The protocol engine runs the Milter conversation for each connection, as libmilter's `mi_engine` does.
 
-The implementation:
-- runs the protocol exchange from `SMFIC_OPTNEG` on, following [milter-protocol.md](../reference/milter-protocol.md)
-- implements the filtering logic and returns replies
-- stops when the shutdown token is cancelled
-- drops all per-session state on `SMFIC_QUIT_NC`
-- reads its own settings from `ConfigWatch` at session or message boundaries
+Responsibilities:
+- negotiate options: protocol version (2 to 6), action flags from `Handler::actions()`, protocol flags from `Handler::events()`
+- track the protocol state with libmilter's transition rules, and close the connection on `SMFIC_QUIT_NC` outside `ST_ENDM` and `ST_UNKN`
+- store macros per stage and clear them when the session ends
+- create the handler's `Session` value at `SMFIC_CONNECT` and its `Message` value at `SMFIC_MAIL`, and drop them when the session or message ends
+- call the matching handler callback for each command, and turn its decision into the protocol reply, or into no reply where the protocol forbids one
+- offer the modification methods only at end of message, and check that their actions were negotiated
 
-The trait itself is defined in [api-specification.md](../reference/api-specification.md).
+Dependencies: the Connection, Message, and Handler components.
 
-### 6. Configuration
+### 6. Handler
+
+The `Handler` trait is where user business logic plugs in. It has one callback per protocol event, matching libmilter's `xxfi_*` callbacks, and each callback returns a decision. One handler value serves all connections; per-session and per-message data lives in the handler's `Session` and `Message` types, which the protocol engine creates and drops.
+
+The trait itself is defined in [api-specification.md](../reference/api-specification.md#handler-trait).
+
+### 7. Configuration
 
 Responsibilities:
 - validate a `ServerConfig` and the application configuration, at startup and on reload
@@ -141,7 +150,7 @@ Who reads what:
 
 What a changed setting does on reload, and which settings need a restart, is specified in [configuration.md](../reference/configuration.md#reload-classes). In short: the listener set, `max_connections`, the shutdown timings, and the resource limits apply at once; timeouts, socket options, and buffer size apply to new connections; `worker_threads`, socket options on an address that stays bound, and everything set only on the builder need a restart.
 
-### 7. Reload coordinator
+### 8. Reload coordinator
 
 Responsibilities:
 - receive reload requests from `SIGHUP` and `ServerHandle::reload()`
@@ -152,7 +161,7 @@ Responsibilities:
 
 It is the only component that changes the listener set after startup. The procedure is specified in [hot-reload.md](../reference/hot-reload.md).
 
-### 8. Shutdown coordinator
+### 9. Shutdown coordinator
 
 Responsibilities:
 - handle `SIGTERM`, `SIGINT`, and `SIGQUIT`, and a second signal that forces shutdown
@@ -160,7 +169,7 @@ Responsibilities:
 - force-close remaining connections and end `Server::run()`
 - stop the reload coordinator, so no reload starts during shutdown
 
-### 9. Telemetry
+### 10. Telemetry
 
 Responsibilities:
 - keep the status counters (atomics) behind `ServerHandle::status()` and the health check
@@ -169,7 +178,7 @@ Responsibilities:
 
 Telemetry never records SMTP session data. The metric names, span structure, and forbidden data are in [telemetry.md](../reference/telemetry.md).
 
-### 10. Error types
+### 11. Error types
 
 Responsibilities:
 - define typed error enums: `Error`, `ConfigError`, `ReloadError`, `ProtocolError`, `AddressError`
@@ -191,6 +200,7 @@ flowchart LR
     root --> connection
     root --> frame
     root --> message
+    root --> engine
     root --> handler
     root --> config
     root --> reload
@@ -233,32 +243,37 @@ sequenceDiagram
     participant Connection
     participant Frame
     participant Message
+    participant Engine as Protocol engine
     participant Handler
 
     Socket->>Connection: bytes
     Connection->>Frame: parse (length checked against per_connection_buffer)
     Frame->>Message: decode to Command
-    Message->>Handler: Command
-    Handler-->>Message: Reply
+    Message->>Engine: Command
+    Engine->>Engine: check state, store macros
+    Engine->>Handler: callback (for example header)
+    Handler-->>Engine: decision
 ```
 
 1. Connection reads bytes from the socket.
 2. The frame parser checks the length against `per_connection_buffer` and extracts a frame.
 3. The message decoder converts it into a `Command`.
-4. The handler processes the command.
-5. The handler returns a `Reply`, or none for commands that get no reply.
+4. The protocol engine checks the command against the protocol state and stores any macros.
+5. For an event the handler subscribed to, the engine calls the matching callback, which returns a decision.
 
 ### Outbound: milter to MTA
 
 ```mermaid
 sequenceDiagram
     participant Handler
+    participant Engine as Protocol engine
     participant Message
     participant Frame
     participant Connection
     participant Socket
 
-    Handler->>Message: Reply
+    Handler->>Engine: decision
+    Engine->>Message: Reply, or none where the protocol forbids a reply
     Message->>Message: validate (reply code, header names, body size)
     Message->>Frame: encode
     Frame->>Connection: bytes
@@ -327,11 +342,12 @@ Shared between tasks:
 
 Isolated per connection:
 - the socket, the buffers, and the configuration snapshot
-- all protocol and SMTP session state, held by the handler for that connection
+- the protocol state and macros, held by the protocol engine
+- the handler's `Session` and `Message` values, created and dropped by the protocol engine
 
 ### Async and sync operations
 
-Async: socket I/O, handler execution, timeouts, reload, and shutdown coordination.
+Async: socket I/O, handler callbacks, timeouts, reload, and shutdown coordination.
 
 Sync: frame parsing, message encoding and decoding, configuration validation.
 
@@ -344,7 +360,7 @@ Two separate state machines track each connection:
 | Transport | `CONNECTED`, `IDLE`, `ACTIVE`, `DRAINING`, `ERROR`, `CLOSED`, driven by socket events, timeouts, and shutdown | [tcp-server.md](../reference/tcp-server.md#connection-lifecycle) |
 | Protocol | `ST_INIT` to `ST_QUIT`, driven by Milter commands, as libmilter defines them | [milter-protocol.md](../reference/milter-protocol.md#protocol-states) |
 
-The Connection component owns the transport state. It also tracks the protocol state from the frames it reads and writes, and enforces one rule itself: `SMFIC_QUIT_NC` outside `ST_ENDM` and `ST_UNKN` closes the connection. The handler validates the other commands against the protocol state; an invalid transition is a protocol error.
+The Connection component owns the transport state. The protocol engine owns the protocol state, validates every command against it, and closes the connection on an invalid transition, including `SMFIC_QUIT_NC` outside `ST_ENDM` and `ST_UNKN`. Handlers never see protocol state.
 
 ## Resource management
 
@@ -428,12 +444,14 @@ Data exposure:
 ```mermaid
 flowchart TD
     Server --> Connection
-    Server --> Handler
+    Server --> Engine
     Server --> Config
     Reload --> Config
     Reload --> Server
     Shutdown --> Server
-    Handler --> Connection
+    Engine --> Connection
+    Engine --> Handler
+    Engine --> Message
     Handler --> Config
     Connection --> Frame
     Connection --> Message
@@ -443,6 +461,8 @@ flowchart TD
     Reload --> Telemetry
     Server --> Error
     Connection --> Error
+    Engine --> Error
+    Engine --> Telemetry
     Frame --> Error
     Message --> Error
     Config --> Error

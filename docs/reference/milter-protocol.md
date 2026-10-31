@@ -74,7 +74,7 @@ rust-milter supports Milter protocol versions 2 through 6. The minimum is 2, the
 - rust-milter uses only the commands, replies, and flags that the negotiated version and the MTA's offered flags allow. See [Protocol version](#protocol-version) for what each version adds.
 - There is no protocol version 5. Neither MTA sends it, and Postfix rejects it in `milter_protocol`.
 - `SMFIC_QUIT_NC` is accepted only where libmilter accepts it: in `ST_ENDM` (after the final reply at end of message, if that reply did not reset the state) and in `ST_UNKN`. In any other state rust-milter treats it as a protocol error and closes the connection, where libmilter would ignore it and the next `SMFIC_CONNECT` without replying. The decision is recorded in [ADR 0001](../adr/0001-close-connection-on-smfic-quit-nc-in-wrong-state.md), and [Connection reuse and session isolation](../explanation/connection-reuse.md) explains it.
-- The library, not the handler, enforces this rule. The connection tracks the protocol state from the commands it reads and the replies it writes, with libmilter's rules (see [Protocol states](#protocol-states)).
+- The library's protocol engine runs the whole conversation and enforces this rule; handlers never see protocol frames ([ADR 0002](../adr/0002-library-runs-the-protocol-handlers-decide.md)). It tracks the protocol state with libmilter's rules (see [Protocol states](#protocol-states)).
 
 ## MTA-specific differences
 
