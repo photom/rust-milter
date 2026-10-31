@@ -67,7 +67,7 @@ Follow-up work:
 
 - [milter-protocol.md, rust-milter protocol support](../reference/milter-protocol.md#rust-milter-protocol-support)
 - [milter-protocol.md, protocol states](../reference/milter-protocol.md#protocol-states)
-- [api-specification.md, Connection](../reference/api-specification.md#connection)
+- [api-specification.md, protocol engine behavior](../reference/api-specification.md#protocol-engine-behavior)
 - [milter-client.md, reuse rules](../reference/milter-client.md#reuse-rules)
 - [Connection reuse and session isolation](../explanation/connection-reuse.md)
 - Sendmail 8.19.0.2 source: `libmilter/engine.c` (`next_states`, `trans_ok`, `mi_engine`)

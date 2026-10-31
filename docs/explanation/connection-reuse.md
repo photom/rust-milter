@@ -45,7 +45,7 @@ Closing the connection keeps the rule small. `SMFIC_QUIT_NC` is valid exactly wh
 
 The decision is recorded in [ADR 0001](../adr/0001-close-connection-on-smfic-quit-nc-in-wrong-state.md).
 
-The library enforces this rule itself. The connection already sees every command and reply, so it can track the protocol state without help from the handler. A handler author only meets `SMFIC_QUIT_NC` in states where it is valid.
+The library enforces this rule itself. Its protocol engine runs the whole conversation, as libmilter's does, so it knows the protocol state without help from the handler ([ADR 0002](../adr/0002-library-runs-the-protocol-handlers-decide.md)). Handler authors never deal with `SMFIC_QUIT_NC` at all: when a session ends this way, the engine calls `session_end` and drops the session's state.
 
 ## Why a reused connection forgets everything
 

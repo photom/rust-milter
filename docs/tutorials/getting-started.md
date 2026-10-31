@@ -28,16 +28,13 @@ tracing-subscriber = "0.3"
 
 ## 2. Write the handler
 
-Replace `src/main.rs` with the handler. It answers option negotiation, continues every stage, and adds the header at end of message.
+Replace `src/main.rs` with the handler. The library runs the protocol with the MTA; the handler only adds the header at end of message.
 
 ```rust
-use rust_milter::protocol::SMFIF_ADDHDRS;
 use rust_milter::{
-    CancellationToken, Command, Connection, Handler, HandlerContext, Reply, Result, Server,
-    ServerConfig,
+    Actions, Decision, EomContext, Handler, HandlerContext, Result, Server, ServerConfig,
 };
 
-#[derive(Clone)]
 struct HeaderTagger;
 
 impl HeaderTagger {
@@ -47,52 +44,22 @@ impl HeaderTagger {
 }
 
 impl Handler for HeaderTagger {
-    async fn handle(&self, mut conn: Connection, shutdown: CancellationToken) -> Result<()> {
-        loop {
-            let frame = tokio::select! {
-                _ = shutdown.cancelled() => return Ok(()),
-                frame = conn.read_frame() => frame?,
-            };
-            // `None` means the MTA closed the connection.
-            let Some(frame) = frame else { return Ok(()) };
+    // This milter keeps no state per session or per message.
+    type Session = ();
+    type Message = ();
 
-            let reply = match Command::from_frame(frame)? {
-                Command::OptNeg { version, actions, .. } => {
-                    // Close on versions below 2, or if the MTA cannot add headers.
-                    if version < 2 || actions & SMFIF_ADDHDRS == 0 {
-                        return Ok(());
-                    }
-                    Some(Reply::OptNeg {
-                        version: version.min(6),
-                        actions: SMFIF_ADDHDRS,
-                        protocol: 0,
-                        macros: Vec::new(),
-                    })
-                }
-                // These commands get no reply.
-                Command::Macro { .. } | Command::Abort | Command::QuitNewConnection => None,
-                Command::Quit => return Ok(()),
-                Command::BodyEob(_) => {
-                    let header = Reply::AddHeader {
-                        name: "X-Filtered-By".into(),
-                        value: "rust-milter".into(),
-                    };
-                    conn.write_frame(&header.to_frame()?).await?;
-                    Some(Reply::Continue)
-                }
-                _ => Some(Reply::Continue),
-            };
+    fn actions(&self) -> Actions {
+        Actions::ADD_HEADERS
+    }
 
-            if let Some(reply) = reply {
-                conn.write_frame(&reply.to_frame()?).await?;
-                conn.flush().await?;
-            }
-        }
+    async fn end_of_message(&self, ctx: &mut EomContext<Self>) -> Result<Decision> {
+        ctx.add_header("X-Filtered-By", "rust-milter").await?;
+        Ok(Decision::Continue)
     }
 }
 ```
 
-This handler keeps no state between commands, so it has nothing to drop on `SMFIC_QUIT_NC`.
+Every other callback keeps its default and lets the message continue.
 
 ## 3. Configure and start the server
 

@@ -277,7 +277,7 @@ How the design enforces this:
 5. One trust domain per pool. Connections are reused only within one `MilterClient`: one endpoint and one configuration. An application that serves separate trust domains, such as tenants, must create one `MilterClient` per domain. The pool never moves a connection between clients.
 6. Logging. Each session gets a new `session_id`. Log lines and metrics of one session never carry fields from another; only `conn_id` is shared, on purpose.
 
-The milter must also forget the previous session. On `SMFIC_QUIT_NC`, libmilter calls `xxfi_close` and clears all stored macros. The rust-milter server must do the same: drop the handler's per-session state and every macro value, run its session-close hook, and keep only the negotiated options. A milter that keeps session data in its own global state, keyed by connection, can still leak it across sessions. The client cannot detect this. `reuse_policy = never` turns reuse off.
+The milter must also forget the previous session. On `SMFIC_QUIT_NC`, libmilter calls `xxfi_close` and clears all stored macros. The rust-milter server does the same: its protocol engine calls the handler's `session_end`, drops the handler's `Session` value and every macro value, and keeps only the negotiated options. A milter that keeps session data in its own global state, keyed by connection, can still leak it across sessions. The client cannot detect this. `reuse_policy = never` turns reuse off.
 
 ## Pool behavior
 

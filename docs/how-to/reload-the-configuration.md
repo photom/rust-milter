@@ -92,10 +92,15 @@ let server = Server::builder()
 
 ## Read your settings in the handler
 
-Take a `ConfigWatch` from the handler context, and read it once per message at `SMFIC_MAIL`. Keep the value until the message ends, and drop it on `SMFIC_ABORT` and `SMFIC_QUIT_NC`:
+Take a `ConfigWatch` from the handler context. Read it once per message, in `mail`, and keep the value in the handler's `Message` type. The library drops the `Message` value when the message ends or is aborted.
 
 ```rust
-#[derive(Clone)]
+use std::sync::Arc;
+
+use rust_milter::{
+    Actions, ConfigWatch, Decision, EomContext, Handler, HandlerContext, MessageContext, Result,
+};
+
 struct HeaderTagger {
     config: ConfigWatch<TaggerConfig>,
 }
@@ -106,31 +111,35 @@ impl HeaderTagger {
     }
 }
 
-// Inside `handle`, with `message_config: Option<Arc<TaggerConfig>>`:
-match Command::from_frame(frame)? {
-    Command::Mail(_) => {
-        message_config = Some(self.config.current());
-        Some(Reply::Continue)
+impl Handler for HeaderTagger {
+    type Session = ();
+    // The settings that apply to the current message.
+    type Message = Option<Arc<TaggerConfig>>;
+
+    fn actions(&self) -> Actions {
+        Actions::ADD_HEADERS
     }
-    Command::BodyEob(_) => {
-        if let Some(config) = message_config.take() {
-            let header = Reply::AddHeader {
-                name: "X-Filtered-By".into(),
-                value: config.header_value.clone(),
-            };
-            conn.write_frame(&header.to_frame()?).await?;
+
+    async fn mail(
+        &self,
+        ctx: &mut MessageContext<Self>,
+        _sender: &str,
+        _args: &[String],
+    ) -> Result<Decision> {
+        *ctx.message() = Some(self.config.current());
+        Ok(Decision::Continue)
+    }
+
+    async fn end_of_message(&self, ctx: &mut EomContext<Self>) -> Result<Decision> {
+        if let Some(config) = ctx.message().clone() {
+            ctx.add_header("X-Filtered-By", &config.header_value).await?;
         }
-        Some(Reply::Continue)
+        Ok(Decision::Continue)
     }
-    Command::Abort | Command::QuitNewConnection => {
-        message_config = None;
-        None
-    }
-    // other commands as before
 }
 ```
 
-To read it once per SMTP session instead, take it at `SMFIC_CONNECT` and drop it when the session ends.
+To read the settings once per SMTP session instead, store them in `Session` from the `connect` callback.
 
 ## Trigger a reload
 

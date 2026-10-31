@@ -35,6 +35,8 @@ These rules apply to every task in this repository.
 
 ## Documentation
 
+- Maintain all documentation under Diátaxis (see the diataxis skill). Each document is exactly one type: tutorial (`docs/tutorials/`), how-to guide (`docs/how-to/`), reference (`docs/reference/`), or explanation (`docs/explanation/`). Do not mix types in one document; link between them instead.
+- Record architecture decisions as ADRs in `docs/adr/`, outside the Diátaxis structure (see `docs/adr/README.md`). Do not rewrite an accepted ADR; supersede it with a new one.
 - Write diagrams in Mermaid. Do not draw ASCII diagrams.
 - Do not write code in documentation, except example code.
 - Put example code only in tutorials (`docs/tutorials/`) and how-to guides (`docs/how-to/`). Reference documents and the README link to them instead.

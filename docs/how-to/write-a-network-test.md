@@ -23,7 +23,7 @@ async fn server_answers_option_negotiation() {
 
 ## 2. Start the server on the leased port
 
-`EchoNegotiation` is a test handler in `tests/support` that answers option negotiation and continues every other command.
+`ContinueAll` is a test handler in `tests/support` that implements no callbacks, so the library negotiates options and answers every command with `Continue`.
 
 ```rust
 use rust_milter::{Server, ServerConfig};
@@ -34,7 +34,7 @@ let config = ServerConfig {
 };
 let server = Server::builder()
     .config(config)
-    .handler(EchoNegotiation::new)
+    .handler(ContinueAll::new)
     .build()
     .unwrap();
 let handle = server.handle();
@@ -109,7 +109,7 @@ let config = ServerConfig {
 };
 let result = Server::builder()
     .config(config)
-    .handler(EchoNegotiation::new)
+    .handler(ContinueAll::new)
     .build()
     .unwrap()
     .run()
