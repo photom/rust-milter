@@ -12,6 +12,7 @@ The fixed TCP ports that rust-milter's tests listen on, how tests share them, an
 - [Rules for tests](#rules-for-tests)
 - [Documentation check](#documentation-check)
 - [Interoperability environment](#interoperability-environment)
+- [CI](#ci)
 - [Toolchain](#toolchain)
 
 ## Test ports
@@ -130,6 +131,23 @@ Rules:
 
 How to run the stack is in [Run the tests](../how-to/run-the-tests.md#run-the-interoperability-tests).
 
+## CI
+
+GitHub Actions runs these jobs on every push to `main` and on every pull request. The tools are chosen in [testing ADR 0002](../testing/adr/0002-ci-scans-with-cargo-deny-clippy-and-codeql.md).
+
+| Job | Workflow | Checks |
+|-----|----------|--------|
+| Format | `ci.yml` | `cargo fmt --check` |
+| Clippy | `ci.yml` | Clippy with warnings as errors, with all features and with none |
+| Test | `ci.yml` | `cargo test` on Linux and macOS, with all features and with none, and `RUST_MILTER_TEST_IPV6=on` |
+| MSRV | `ci.yml` | The library builds with Rust 1.85, with all features and with none |
+| Rustdoc | `ci.yml` | The API documentation builds without warnings |
+| Dependencies | `ci.yml` | cargo-deny: known vulnerabilities, yanked crates, licenses, and sources, as set in `deny.toml` |
+| Interoperability | `ci.yml` | The `INT` tests in the [interoperability environment](#interoperability-environment) |
+| CodeQL | `codeql.yml` | CodeQL's Rust analysis; also runs weekly |
+
+Every action is pinned to a full commit SHA. Dependabot proposes updates to Cargo dependencies, the pinned actions, and the interop base images every week (`.github/dependabot.yml`).
+
 ## Toolchain
 
-The library's minimum supported Rust version stays 1.85. The test support code locks files with `std::fs::File::try_lock`, stable since Rust 1.89, so running the tests needs Rust 1.89 or later. The MSRV check in CI builds the library without its tests.
+The library's minimum supported Rust version stays 1.85. The test support code locks files with `std::fs::File::try_lock`, stable since Rust 1.89, so running the tests needs Rust 1.89 or later. `rust-toolchain.toml` selects Rust 1.89 for work in the repository. The MSRV check in CI builds the library without its tests.
