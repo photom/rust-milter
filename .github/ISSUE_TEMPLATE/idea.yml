@@ -1,0 +1,27 @@
+name: Idea
+description: Share a rough idea or a direction for the project, open for discussion.
+labels: [idea]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ideas do not need a design. If you already know the behavior you want, use the "Feature request" form instead.
+  - type: textarea
+    id: idea
+    attributes:
+      label: Idea
+      description: The idea, in a few sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Why it matters
+      description: Who would benefit, and what it would make possible.
+    validations:
+      required: true
+  - type: textarea
+    id: questions
+    attributes:
+      label: Open questions
+      description: What you are unsure about, or would like others to weigh in on.
