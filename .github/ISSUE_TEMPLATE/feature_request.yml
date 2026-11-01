@@ -2,10 +2,6 @@ name: Feature request
 description: Propose a specific new feature or a change to existing behavior.
 labels: [enhancement]
 body:
-  - type: markdown
-    attributes:
-      value: |
-        Use this form when you know what you want added or changed. To talk through a rough idea first, use the "Idea" form.
   - type: textarea
     id: problem
     attributes:
