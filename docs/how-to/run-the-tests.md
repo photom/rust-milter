@@ -4,11 +4,7 @@ Status: the test suite is not written yet. This guide follows the design in [tes
 
 ## Run the whole suite
 
-1. Check the toolchain. The tests need Rust 1.89 or later:
-
-   ```sh
-   rustc --version
-   ```
+1. Install [rustup](https://rustup.rs/). The first `cargo` command in the repository installs the toolchain that `rust-toolchain.toml` selects.
 
 2. Run the tests:
 

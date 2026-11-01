@@ -95,7 +95,7 @@ flowchart LR
 
 | Service | Image | Role |
 |---------|-------|------|
-| `runner` | `rust:1.89`, with the repository copied in when the image is built | Builds the `INT` tests when the image is built, while the build can still reach the network, then runs them offline, one at a time. Each test starts its own milter on port 8891 with the scenario's handler, sends mail through an MTA, and stops the milter. The runner also holds an SMTP sink on port 2525 that keeps every delivered message for the test to inspect |
+| `runner` | The official `rust` image, at the tag in `tests/interop/runner/Dockerfile`, with the repository copied in when the image is built | Builds the `INT` tests with the toolchain from `rust-toolchain.toml` when the image is built, while the build can still reach the network, then runs them offline, one at a time. Each test starts its own milter on port 8891 with the scenario's handler, sends mail through an MTA, and stops the milter. The runner also holds an SMTP sink on port 2525 that keeps every delivered message for the test to inspect |
 | `postfix` | The pinned Debian release with the `postfix` package | MTA under test |
 | `sendmail` | The same Debian release with the `sendmail` package | MTA under test |
 | `sendmail-short` | The `sendmail` image with the filter timeouts `T=E:3s;R:2s` | MTA for the Sendmail timeout scenario |
@@ -150,4 +150,4 @@ Every action is pinned to a full commit SHA. Dependabot proposes updates to Carg
 
 ## Toolchain
 
-The library's minimum supported Rust version stays 1.85. The test support code locks files with `std::fs::File::try_lock`, stable since Rust 1.89, so running the tests needs Rust 1.89 or later. `rust-toolchain.toml` selects Rust 1.89 for work in the repository. The MSRV check in CI builds the library without its tests.
+The library's minimum supported Rust version stays 1.85. The test support code locks files with `std::fs::File::try_lock`, stable since Rust 1.89, so running the tests needs Rust 1.89 or later. `rust-toolchain.toml` is the only file that sets the toolchain version. It applies to work in the repository, to every CI job except MSRV, and to the interop runner, whatever the tag of the runner's image. The MSRV check in CI builds the library without its tests.

@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # rust-toolchain.toml selects Rust 1.89 with rustfmt and clippy.
+      # rust-toolchain.toml selects the toolchain, with rustfmt and clippy.
       - run: cargo fmt --all --check
 
   clippy:
@@ -58,7 +58,7 @@ jobs:
         with:
           toolchain: "1.85"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      # The tests need Rust 1.89; the MSRV check builds the library without them.
+      # The tests need a newer Rust than the MSRV; the MSRV check builds the library without them.
       - run: cargo +1.85 check -p rust-milter --lib --all-features
       - run: cargo +1.85 check -p rust-milter --lib --no-default-features
 
