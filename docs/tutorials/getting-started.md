@@ -113,7 +113,7 @@ sudo postfix reload
 ## 5. Send a test message
 
 ```sh
-swaks --server 127.0.0.1 --to "$USER@localhost" --from test@example.org
+swaks --server 127.0.0.1 --to "$USER@localhost" --from test@void.invalid
 ```
 
 Open the delivered message, for example in `/var/mail/$USER`. Its headers include:
@@ -121,8 +121,6 @@ Open the delivered message, for example in `/var/mail/$USER`. Its headers includ
 ```
 X-Filtered-By: rust-milter
 ```
-
-The milter log shows the connection being accepted and closed.
 
 ## Next steps
 

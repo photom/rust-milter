@@ -84,7 +84,3 @@ Add a Prometheus exporter to the Collector and let Prometheus scrape the Collect
 ## Check that metrics arrive
 
 Send some mail through the milter. Within a minute, the Collector receives metrics named `milter.server.connection.accepted`, `milter.server.command`, and `milter.server.eom.duration`. All names and attributes are listed in [telemetry.md](../reference/telemetry.md#metrics).
-
-## Choose how much tracing detail to record
-
-Command events on spans are controlled by `telemetry.trace_commands` in `ServerConfig`: `"none"`, `"envelope"` (default), or `"all"`. The setting can be changed by a reload. Use `"all"` only while debugging; it records one event per header and body chunk.

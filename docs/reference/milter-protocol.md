@@ -73,7 +73,7 @@ rust-milter supports Milter protocol versions 2 through 6. The minimum is 2, the
 - Otherwise rust-milter answers with the lower of the MTA's version and 6, as libmilter does.
 - rust-milter uses only the commands, replies, and flags that the negotiated version and the MTA's offered flags allow. See [Protocol version](#protocol-version) for what each version adds.
 - There is no protocol version 5. Neither MTA sends it, and Postfix rejects it in `milter_protocol`.
-- `SMFIC_QUIT_NC` is accepted only where libmilter accepts it: in `ST_ENDM` (after the final reply at end of message, if that reply did not reset the state) and in `ST_UNKN`. In any other state rust-milter treats it as a protocol error and closes the connection, where libmilter would ignore it and the next `SMFIC_CONNECT` without replying. The decision is recorded in [ADR 0001](../adr/0001-commands-in-wrong-state-recover-like-libmilter-or-close.md), and [Connection reuse and session isolation](../explanation/connection-reuse.md) explains it.
+- `SMFIC_QUIT_NC` is accepted only where libmilter accepts it: in `ST_ENDM` (after the final reply at end of message, if that reply did not reset the state) and in `ST_UNKN`. In any other state rust-milter treats it as a protocol error and closes the connection, where libmilter would ignore it, then ignore the next `SMFIC_CONNECT` too, and leave the MTA waiting for a reply. The decision is recorded in [ADR 0001](../adr/0001-commands-in-wrong-state-recover-like-libmilter-or-close.md), and [Connection reuse and session isolation](../explanation/connection-reuse.md) explains it.
 - Any other command in a wrong state recovers as in libmilter if it fits from `ST_HELO` (`SMFIC_HELO`, `SMFIC_MAIL`, `SMFIC_UNKNOWN`); `SMFIC_ABORT` and `SMFIC_QUIT` are ignored as in libmilter; every other command closes the connection, where libmilter would ignore it without a reply ([ADR 0001](../adr/0001-commands-in-wrong-state-recover-like-libmilter-or-close.md)).
 - The library's protocol engine runs the whole conversation and enforces these rules; handlers never see protocol frames ([ADR 0002](../adr/0002-library-runs-the-protocol-handlers-decide.md)). It tracks the protocol state with libmilter's rules (see [Protocol states](#protocol-states)).
 
@@ -147,7 +147,7 @@ Postfix offers only the protocol flags that its configured version defines, but 
 
 ### Macros
 
-The MTA sends `SMFIC_MACRO` just before the command the macros belong to. The first data byte is the command code of that command.
+The MTA sends `SMFIC_MACRO` immediately before the command the macros belong to. The first data byte is the command code of that command.
 
 - Sendmail sends macros for connect, HELO, MAIL, RCPT, DATA, end of headers, and end of message. It sends none for `SMFIC_UNKNOWN`, headers, or body chunks.
 - Postfix also sends macros for `SMFIC_UNKNOWN` (`U`), and repeats the end-of-headers macros before each `SMFIC_HEADER` (`L`) and the end-of-data macros before each `SMFIC_BODY` (`B`).
@@ -263,7 +263,7 @@ libmilter runs the protocol as a state machine with these states:
 | `ST_EOHS` | 8 | End of headers |
 | `ST_BODY` | 9 | Body chunks being received |
 | `ST_ENDM` | 10 | End of message |
-| `ST_QUIT` | 11 | QUIT command received (terminal) | 
+| `ST_QUIT` | 11 | QUIT command received (terminal) |
 | `ST_ABRT` | 12 | Message aborted (returns to waiting) |
 | `ST_UNKN` | 13 | Unknown SMTP command |
 | `ST_Q_NC` | 14 | Quit, new connection follows |
@@ -796,13 +796,15 @@ A milter implementation provides these callback functions:
 | `xxfi_envfrom` | `SMFIC_MAIL` | Same as connect |
 | `xxfi_envrcpt` | `SMFIC_RCPT` | Same as connect |
 | `xxfi_data` | `SMFIC_DATA` | Same as connect |
-| `xxfi_header` | `SMFIC_HEADER` | Same as connect, plus `SMFIS_NOREPLY` |
+| `xxfi_header` | `SMFIC_HEADER` | Same as connect |
 | `xxfi_eoh` | `SMFIC_EOH` | Same as connect |
-| `xxfi_body` | `SMFIC_BODY` | Same as connect, plus `SMFIS_NOREPLY`, `SMFIS_SKIP` |
+| `xxfi_body` | `SMFIC_BODY` | Same as connect, plus `SMFIS_SKIP` |
 | `xxfi_eom` | `SMFIC_BODYEOB` | Same as connect (can also send modifications) |
 | `xxfi_abort` | `SMFIC_ABORT` | Return ignored (no reply sent) |
 | `xxfi_close` | Connection end | Return ignored (no reply sent) |
 | `xxfi_unknown` | `SMFIC_UNKNOWN` | Same as connect |
+
+Each callback that has a no-reply flag (connect, HELO, MAIL, RCPT, DATA, unknown, header, end of headers, and body) can also return `SMFIS_NOREPLY` once the matching `SMFIP_NR_*` flag is negotiated. If the milter asked for the flag and the MTA did not offer it, libmilter sends `SMFIR_CONTINUE` in its place.
 
 When libmilter calls `xxfi_close`:
 - when the connection ends, after `SMFIC_QUIT`
@@ -860,6 +862,8 @@ Postfix timeouts, set in `main.cf`:
 | `milter_connect_timeout` | Connecting to the milter and negotiating options | 30s |
 | `milter_command_timeout` | Sending an SMTP command and receiving the reply | 30s |
 | `milter_content_timeout` | Sending message content and receiving the reply | 300s |
+
+Postfix applies each timeout to every single read or write, with no deadline for a whole stage. A `SMFIR_PROGRESS` reply therefore restarts `milter_content_timeout`.
 
 ## Error handling
 
@@ -980,7 +984,7 @@ Sendmail ships a complete libmilter example in `libmilter/example.c` of its sour
 11. Connection reuse: neither Sendmail nor Postfix reuses a milter connection; both open one per SMTP session.
 12. Hostname format: both MTAs send `[<ip>]` for an unresolved client.
 13. Reply escaping: write `%` as `%%`. Sendmail rejects a lone `%`; Postfix deletes it.
-14. Protocol version: Postfix needs `milter_protocol` configured; Sendmail always offers version 6.
+14. Protocol version: Postfix offers the version set in `milter_protocol` (default 6); Sendmail always offers version 6.
 15. Error recovery: Postfix keeps connections open after local errors; Sendmail may close them at once.
 16. Disconnect: Postfix closes the milter connection when the SMTP client disconnects, and without `SMFIC_QUIT` after a connect-level decision.
 

@@ -18,8 +18,8 @@ Scenarios for decoding commands, encoding replies, and validating custom reply c
 | CMD-023 | unit | A `C` frame with family `L`, port 0, and an address string, as an MTA sends for a local client | the frame is decoded | `Connect` with family Unix, port 0, and the address string | [protocol: Connection info format](../reference/milter-protocol.md#connection-info-format-smfic_connect) |
 | CMD-024 | unit | A `C` frame with family `4` that ends after the hostname and family | the frame is decoded | a protocol error | [protocol: Connection info format](../reference/milter-protocol.md#connection-info-format-smfic_connect) |
 | CMD-030 | unit | An `H` frame with `client.example.org\0` | the frame is decoded | `Helo` with `client.example.org` | [api: Command](../reference/api-specification.md#command) |
-| CMD-031 | unit | An `M` frame with `<a@example.org>\0SIZE=100\0BODY=8BITMIME\0` | the frame is decoded | `Mail` with the sender and both arguments in order | [protocol: Commands](../reference/milter-protocol.md#commands-from-mta-to-milter) |
-| CMD-032 | unit | An `R` frame with `<b@example.net>\0` | the frame is decoded | `Rcpt` with the recipient and no arguments | [protocol: Commands](../reference/milter-protocol.md#commands-from-mta-to-milter) |
+| CMD-031 | unit | An `M` frame with `<a@void.invalid>\0SIZE=100\0BODY=8BITMIME\0` | the frame is decoded | `Mail` with the sender and both arguments in order | [protocol: Commands](../reference/milter-protocol.md#commands-from-mta-to-milter) |
+| CMD-032 | unit | An `R` frame with `<b@void.invalid>\0` | the frame is decoded | `Rcpt` with the recipient and no arguments | [protocol: Commands](../reference/milter-protocol.md#commands-from-mta-to-milter) |
 | CMD-033 | unit | An `L` frame whose value holds a folded header, with LF between the lines | the frame is decoded | `Header` with the value unchanged, LF included | [protocol: Headers and body](../reference/milter-protocol.md#headers-and-body) |
 | CMD-034 | unit | A `B` frame with binary data that includes NUL and CR bytes | the frame is decoded | `Body` with the data unchanged | [api: Command](../reference/api-specification.md#command) |
 | CMD-035 | unit | An `E` frame with no data, and another with 10 data bytes | each frame is decoded | `BodyEob` with empty data, and with the 10 bytes | [protocol: Commands](../reference/milter-protocol.md#commands-from-mta-to-milter) |
@@ -27,8 +27,8 @@ Scenarios for decoding commands, encoding replies, and validating custom reply c
 | CMD-037 | unit | A `U` frame with `XFOO bar\0` | the frame is decoded | `Unknown` with `XFOO bar` | [api: Command](../reference/api-specification.md#command) |
 | CMD-040 | unit | A frame with the command byte `Z` | the frame is decoded | a protocol error | [api: Command](../reference/api-specification.md#command) |
 | CMD-041 | unit | An `H` frame whose string is not null-terminated | the frame is decoded | a protocol error | [api: Command](../reference/api-specification.md#command) |
-| CMD-042 | unit | An `M` frame whose sender holds bytes that are not valid UTF-8 | the frame is decoded | `Mail` with the raw bytes kept, no error | [api: Command](../reference/api-specification.md#command) |
-| CMD-043 | unit | An `M` frame with an SMTPUTF8 address such as `<ユーザー@example.jp>` | the frame is decoded | `Mail` with the address as UTF-8 text | [api: Command](../reference/api-specification.md#command) |
+| CMD-042 | unit | An `M` frame whose sender holds bytes that are not valid UTF-8 | the frame is decoded | `Mail` with the raw bytes kept in a `MilterText` whose `as_str()` returns `None`; no error | [api: Text from the MTA](../reference/api-specification.md#text-from-the-mta) |
+| CMD-043 | unit | An `M` frame with an SMTPUTF8 address such as `<ユーザー@void.invalid>` | the frame is decoded | `Mail` whose sender's `as_str()` returns the address | [api: Text from the MTA](../reference/api-specification.md#text-from-the-mta) |
 
 ## Reply encoding
 

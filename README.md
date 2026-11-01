@@ -2,18 +2,22 @@
 
 An asynchronous Milter protocol library for Rust, built for high throughput.
 
+Status: design phase. The documentation describes the designed library; the code is not written yet.
+
 ## Overview
 
-rust-milter implements the Milter (mail filter) protocol that Sendmail and Postfix use, in pure Rust. Its async, type-safe API lets you build mail filters without depending on libmilter's C library.
+rust-milter implements the Milter (mail filter) protocol that Sendmail and Postfix use, in pure Rust. You build a mail filter by writing callbacks, one per protocol event, as with Sendmail's libmilter, without depending on libmilter's C library.
 
 ## Features
 
-- Async first: runs on Tokio and handles connections concurrently.
-- Typed protocol: frames, commands, and replies are parsed into Rust types.
+- Callback API: the library runs the protocol, and your handler answers each event with a decision, following libmilter's model.
 - MTA compatibility: works with Sendmail and Postfix, protocol versions 2 to 6.
-- Scale: designed for 10,000+ concurrent connections (C10K).
-- Graceful shutdown: closes connections cleanly on shutdown.
+- Async first: runs on Tokio and handles connections concurrently, designed for 10,000+ concurrent connections (C10K).
+- Graceful shutdown: drains open SMTP sessions before it stops.
+- Configuration reload on `SIGHUP`, and configuration from environment variables for Docker and Kubernetes.
+- Optional OpenTelemetry metrics.
 - Pure Rust: no C dependencies and no FFI overhead.
+- TCP only (IPv4 and IPv6); Unix domain sockets are not supported.
 
 ## Usage
 
@@ -21,25 +25,24 @@ The [getting started tutorial](docs/tutorials/getting-started.md) adds rust-milt
 
 ## Documentation
 
-The documentation follows the [Diátaxis](https://diataxis.fr/) framework, which splits it into four types.
+The documentation follows the [Diátaxis](https://diataxis.fr/) framework, which splits it into four types. Example code appears only in the tutorials and the how-to guides.
 
 ### [Tutorials](docs/tutorials/) (learning)
 
-Step-by-step lessons that teach the basics through guided practice. Start here if you are new to rust-milter or to the Milter protocol. Example code lives only in the tutorials and the how-to guides.
+Step-by-step lessons that teach the basics through guided practice. Start here if you are new to rust-milter or to the Milter protocol.
 
-Available (written against the designed API; the library is not implemented yet):
 - [Getting started: build your first milter](docs/tutorials/getting-started.md)
 
 ### [How-to guides](docs/how-to/) (tasks)
 
 Practical steps for solving a specific problem. Use them when you have a particular task to finish.
 
-Available (written against the designed API; the library is not implemented yet):
 - [Reload the configuration without a restart](docs/how-to/reload-the-configuration.md)
 - [Export metrics with OpenTelemetry](docs/how-to/export-metrics-with-opentelemetry.md)
-- [Call a milter with the milter client](docs/how-to/call-a-milter-with-the-client.md)
+- [Record the SMTP client's address](docs/how-to/record-the-smtp-client-address.md)
 - [Make a milter work with both Sendmail and Postfix](docs/how-to/make-a-milter-work-with-sendmail-and-postfix.md)
 - [Deploy a milter in production](docs/how-to/deploy-a-milter-in-production.md)
+- [Run a milter in Docker or Kubernetes](docs/how-to/run-a-milter-in-docker-or-kubernetes.md)
 - [Run the tests](docs/how-to/run-the-tests.md)
 - [Write a network test](docs/how-to/write-a-network-test.md)
 
@@ -47,12 +50,11 @@ Available (written against the designed API; the library is not implemented yet)
 
 Accurate and complete technical specifications. Use them to look up specific details.
 
-Available:
 - [Milter protocol specification](docs/reference/milter-protocol.md)
 - [TCP server specification](docs/reference/tcp-server.md)
 - [API specification](docs/reference/api-specification.md)
 - [Configuration specification](docs/reference/configuration.md)
-- [Milter client and connection pool](docs/reference/milter-client.md) (design)
+- [Milter client sample](docs/reference/milter-client.md) (design reference for the sample in `examples/`)
 - [Configuration hot reload](docs/reference/hot-reload.md) (design)
 - [Telemetry (OpenTelemetry)](docs/reference/telemetry.md) (design)
 - [Test environment](docs/reference/test-environment.md) (design)
@@ -62,16 +64,19 @@ Available:
 
 Background on the concepts, design decisions, and architecture.
 
-Available:
 - [Library architecture](docs/explanation/architecture.md)
 - [Connection reuse and session isolation](docs/explanation/connection-reuse.md)
 - [Configuration snapshots and reload](docs/explanation/configuration-and-reload.md)
 - [Telemetry principles](docs/explanation/telemetry-principles.md)
 - [Test ports](docs/explanation/test-ports.md)
 
+## Test scenarios
+
+The planned tests are listed as [test scenarios](docs/testing/), one table row per behavior, each linked to the specification rule it checks.
+
 ## Architecture decisions
 
-Decisions and their reasons are recorded as [architecture decision records](docs/adr/), outside the four documentation types above.
+Decisions and their reasons are recorded as [architecture decision records](docs/adr/), outside the four documentation types above. Decisions about testing are kept apart, in [testing decision records](docs/testing/adr/).
 
 ## License
 

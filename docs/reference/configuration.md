@@ -47,7 +47,7 @@ flowchart LR
     accept --> conn
 ```
 
-Each valid configuration is published once as an immutable value with a generation number, starting at 1. A reload never changes a published value in place; it publishes generation N+1. The reload procedure itself is specified in `docs/reference/hot-reload.md`.
+Each valid configuration is published once as an immutable value with a generation number, starting at 1. A reload never changes a published value in place; it publishes generation N+1. The reload procedure itself is specified in [hot-reload.md](hot-reload.md).
 
 ## Reload classes
 
@@ -68,7 +68,6 @@ A `new_listeners` change on an address that stays in `bind_addresses` cannot rea
 
 | Setting | Fixed when |
 |---------|------------|
-| `worker_threads` | the Tokio runtime starts |
 | `backlog` on an address that stays bound | the listener starts listening |
 | `socket_options.reuse_addr`, `reuse_port`, `ipv6_only` on an address that stays bound | the listener is bound |
 | Builder-only settings (handler, reload loader, meter provider, runtime settings) | the server is built; see [Builder-only settings](#builder-only-settings) |
@@ -93,7 +92,7 @@ The reasons behind the reload classes are explained in [Configuration snapshots 
 | `telemetry.trace_commands` | `new_connections` |
 | Application configuration | `immediate` publication; handlers choose when to read it |
 
-Lowering `max_connections` below the current count closes no open connection. New connections are closed at once until the count drops below the new limit.
+Lowering `max_connections` below the current count closes no open connection. New connections are closed at once until the count drops below the new limit ([ADR 0005](../adr/0005-reload-closes-no-connection-and-rebinds-no-listener.md)).
 
 ## ServerConfig reference
 
@@ -106,8 +105,7 @@ Lowering `max_connections` below the current count closes no open connection. Ne
 | `bind_addresses` | `Vec<SocketAddr>` | none (required) | 1 or more, no duplicates; ports 1 to 65535 | `immediate` |
 | `bind_mode` | `BindMode` | `FailFast` | `FailFast`, `BestEffort` | `immediate` |
 | `backlog` | `u32` | 1024 | 1 to 65535 | `new_listeners` |
-| `max_connections` | `usize` | 10000 | 0 (unlimited) to 1,000,000 | `immediate` |
-| `worker_threads` | `Option<usize>` | `None` (number of CPU cores) | 1 to 1024 | `restart` |
+| `max_connections` | `usize` | 10000 | 1 to 1,000,000 | `immediate` |
 | `timeouts` | `TimeoutConfig` | see below | | |
 | `socket_options` | `SocketOptions` | see below | | |
 | `shutdown` | `ShutdownConfig` | see below | | |
@@ -123,9 +121,15 @@ Lowering `max_connections` below the current count closes no open connection. Ne
 | `connect` | `Duration` | 10 s | 1 ms to 5 min | `new_connections` |
 | `read` | `Duration` | 30 s | 1 ms to 1 h | `new_connections` |
 | `write` | `Duration` | 30 s | 1 ms to 1 h | `new_connections` |
-| `idle` | `Duration` | 300 s | 1 s to 24 h | `new_connections` |
+| `idle` | `Duration` | 7210 s | 1 s to 24 h | `new_connections` |
 
-`connect` runs from `accept()` until the MTA's first command (`SMFIC_OPTNEG`) arrives. The kernel completes the TCP handshake before `accept()` returns, so the server cannot time it.
+What each timeout measures:
+- `connect`: from `accept()` until the MTA's first command (`SMFIC_OPTNEG`) arrives. The kernel completes the TCP handshake before `accept()` returns, so the server cannot time it.
+- `idle`: while the connection waits for the first byte of the MTA's next command. The default is libmilter's `MI_TIMEOUT`.
+- `read`: from the first byte of a frame until the frame is complete.
+- `write`: while one reply is being written. It expires when the MTA stops reading.
+
+Time a handler spends in a callback counts against none of them; the MTA's own milter timeouts limit it ([ADR 0006](../adr/0006-connection-timeouts-per-frame-and-libmilter-idle-default.md)).
 
 ### SocketOptions
 
@@ -162,7 +166,7 @@ Lowering `max_connections` below the current count closes no open connection. Ne
 | `max_memory` | `Option<usize>` | `None` (unlimited) | at least `per_connection_buffer` | `immediate` |
 | `per_connection_buffer` | `usize` | 128 KB | 65,540 bytes to 16 MB | `new_connections` |
 
-`per_connection_buffer` is also the largest milter packet the server accepts. Its lower bound is one full default-size packet: 4 length bytes, 1 command byte, and 65,535 data bytes. Postfix can send a header packet larger than that, so raise the value if very long headers are expected.
+`per_connection_buffer` is also the largest milter packet the server accepts. Its lower bound is one full default-size packet: 4 length bytes, 1 command byte, and 65,535 data bytes. Postfix can send a header packet larger than that, so raise the value if headers longer than about 64 KB are expected.
 
 ### TelemetryConfig
 
@@ -170,7 +174,7 @@ Lowering `max_connections` below the current count closes no open connection. Ne
 |-------|------|---------|--------------|--------------|
 | `trace_commands` | `TraceCommands` | `Envelope` | `None`, `Envelope`, `All` | `new_connections` |
 
-See `docs/reference/telemetry.md` for what each level records.
+[telemetry.md](telemetry.md#command-events) lists what each level records.
 
 ## Builder-only settings
 
@@ -182,7 +186,7 @@ These are set on `ServerBuilder` and are not part of `ServerConfig`, so a reload
 | Reload loader | `reload_with(...)` | The loader is what performs reloads |
 | Initial application configuration | `app_config(...)` | Later values come through reloads |
 | OpenTelemetry meter provider | `meter_provider(...)` | Instruments are created once from it at build time |
-| Tokio runtime flavor and thread stack size | runtime builder in the application | The runtime runs the server and every reload |
+| Tokio runtime settings: flavor, worker threads, thread stack size | the application's runtime builder, such as `#[tokio::main(worker_threads = 8)]` | The application creates the runtime, and the runtime runs the server and every reload |
 
 ## Application configuration
 
@@ -196,7 +200,7 @@ The application validates `A` in its loader. If the loader returns an error, the
 
 ## Validation rules
 
-The same rules run at startup and on every reload. A failure at startup stops the server with exit code 2. A failure on reload leaves the running generation unchanged.
+The same rules run at startup and on every reload. A failure at startup makes `build()` return an error, and the server does not start. A failure on reload leaves the running generation unchanged.
 
 1. Every field is within the range in the reference tables.
 2. `bind_addresses` is not empty and has no duplicates.
@@ -207,7 +211,7 @@ The same rules run at startup and on every reload. A failure at startup stops th
 
 On reload only:
 
-7. The new configuration must leave at least one listener (see `docs/reference/hot-reload.md`).
+7. The new configuration must leave at least one listener (see [hot-reload.md](hot-reload.md)).
 8. Changes to `restart` settings are not errors. They are reported as `pending_restart`.
 
 ## File format (serde feature)
@@ -294,4 +298,4 @@ The [getting started tutorial](../tutorials/getting-started.md) builds a `Server
 
 ## Milter client sample
 
-The milter client sample (`docs/reference/milter-client.md`) has its own settings, defined in that document. They are not part of `ServerConfig`, and the server's reload does not touch them.
+The milter client sample has its own settings, defined in [milter-client.md](milter-client.md#configuration). They are not part of `ServerConfig`, and the server's reload does not touch them.

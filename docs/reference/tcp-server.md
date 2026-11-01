@@ -107,14 +107,14 @@ Each listener accepts TCP connections from its own address. The server spawns on
 
 ### Async runtime
 
-The server MUST use Tokio as its async runtime, configured as follows:
+The server runs on a Tokio multi-threaded runtime. The application creates the runtime, for example with `#[tokio::main]`, and chooses its settings; rust-milter does not build one.
 
-| Setting | Description | Default |
-|---------|-------------|---------|
-| Runtime type | Multi-threaded runtime for production use | multi_thread |
-| Worker threads | Number of worker threads | Number of CPU cores |
-| I/O driver | Platform-specific async I/O | epoll (Linux), kqueue (macOS/BSD) |
-| Thread stack size | Stack size per worker thread | 2 MiB |
+| Setting | Tokio default | Set by |
+|---------|---------------|--------|
+| Runtime type | multi-threaded with `#[tokio::main]` | the application; rust-milter requires the multi-threaded runtime |
+| Worker threads | number of CPU cores | the application |
+| I/O driver | epoll (Linux), kqueue (macOS, BSD) | Tokio |
+| Thread stack size | 2 MiB | the application |
 
 ## Configuration
 
@@ -162,18 +162,18 @@ IPv6 handling:
 stateDiagram-v2
     [*] --> CONNECTED: accept() returns
     CONNECTED --> ACTIVE: first command received
-    CONNECTED --> ERROR: connect_timeout expired or setup error
+    CONNECTED --> ERROR: timeouts.connect expired or setup error
     CONNECTED --> CLOSED: client closed or shutdown signal
     IDLE --> ACTIVE: data received
     ACTIVE --> IDLE: request processing complete
-    IDLE --> ERROR: idle_timeout expired
-    ACTIVE --> ERROR: I/O or protocol error
+    IDLE --> ERROR: timeouts.idle expired
+    ACTIVE --> ERROR: timeouts.read or timeouts.write expired, or I/O or protocol error
     IDLE --> DRAINING: shutdown signal
     ACTIVE --> DRAINING: shutdown signal (after current request)
     IDLE --> CLOSED: client closed
     ACTIVE --> CLOSED: client closed
     ERROR --> CLOSED: error logged, cleanup complete
-    DRAINING --> CLOSED: current work complete or drain_timeout expired
+    DRAINING --> CLOSED: current work complete or shutdown.drain_timeout expired
     CLOSED --> [*]
 ```
 
@@ -184,26 +184,26 @@ A connection waiting in the kernel's accept queue is not visible to the server. 
 | From | To | Trigger |
 |------|----|---------|
 | CONNECTED | ACTIVE | First command received |
-| CONNECTED | ERROR | `connect_timeout` expired, or socket setup failed |
+| CONNECTED | ERROR | `timeouts.connect` expired, or socket setup failed |
 | CONNECTED | CLOSED | Client closed the connection, or a shutdown signal arrived before any command |
 | IDLE | ACTIVE | Data received |
-| IDLE | ERROR | Idle timeout exceeded |
+| IDLE | ERROR | `timeouts.idle` expired |
 | IDLE | DRAINING | Shutdown signal received |
 | IDLE | CLOSED | Client closes connection |
 | ACTIVE | IDLE | Request processing complete |
-| ACTIVE | ERROR | I/O error or protocol error |
+| ACTIVE | ERROR | `timeouts.read` or `timeouts.write` expired, or an I/O or protocol error |
 | ACTIVE | DRAINING | Shutdown signal received (after current request) |
 | ACTIVE | CLOSED | Client closes connection |
 | ERROR | CLOSED | Error logged, cleanup complete |
-| DRAINING | CLOSED | Current work complete or drain timeout |
+| DRAINING | CLOSED | Current work complete, or `shutdown.drain_timeout` expired |
 
 ### Connection states
 
 | State | Description |
 |-------|-------------|
 | `CONNECTED` | Accepted, waiting for the MTA's first command |
-| `IDLE` | Waiting for data, subject to idle timeout |
-| `ACTIVE` | Currently processing a request |
+| `IDLE` | Waiting for the first byte of the next command, subject to `timeouts.idle` |
+| `ACTIVE` | Receiving a frame (subject to `timeouts.read`), running the handler (no timeout), or writing the reply (subject to `timeouts.write`) |
 | `DRAINING` | Shutdown initiated, completing current work |
 | `ERROR` | Error occurred, connection will be closed |
 | `CLOSED` | Connection terminated |
@@ -225,40 +225,32 @@ Signal handling rules:
 
 1. Signal handlers MUST be registered before the server starts accepting connections.
 2. Signal handlers MUST be async-safe (use `tokio::signal`).
-3. Repeated signals of the same type MUST be deduplicated, so only the first one triggers shutdown.
-4. A second SIGTERM or SIGINT during shutdown SHOULD force immediate termination.
+3. The first SIGTERM, SIGINT, or SIGQUIT starts the graceful shutdown.
+4. A second SIGTERM, SIGINT, or SIGQUIT during shutdown, of any of the three kinds, SHOULD force an immediate shutdown that skips the drain.
 5. Signal handlers MUST NOT block the async runtime.
-
-A second signal during shutdown:
-
-| First signal | Second signal | Behavior |
-|--------------|---------------|----------|
-| SIGTERM | SIGTERM | Force immediate shutdown (skip drain) |
-| SIGINT | SIGINT | Force immediate shutdown (skip drain) |
-| SIGTERM | SIGINT | Force immediate shutdown (skip drain) |
-| SIGINT | SIGTERM | Force immediate shutdown (skip drain) |
 
 ### Shutdown sequence
 
-1. The server receives a shutdown signal (SIGTERM or SIGINT).
-2. It logs the signal at INFO level.
-3. It stops accepting new connections on every listener at once.
-4. It waits `grace_period` so in-flight requests can arrive.
+1. The server receives a shutdown signal (SIGTERM, SIGINT, or SIGQUIT) or a `ServerHandle::shutdown()` call.
+2. It logs the signal or call at INFO level.
+3. It closes every listener at once, so new connections are refused.
+4. It waits `shutdown.grace_period` so commands already on their way can arrive.
 5. It notifies every active connection through the cancellation token.
-6. It lets existing connections finish within `drain_timeout`.
+6. It lets existing connections finish within `shutdown.drain_timeout`.
 7. When the drain timeout expires, it force-closes the remaining connections.
 8. It releases resources.
 9. It logs shutdown completion at INFO level.
-10. The process exits with code 0.
+10. `Server::run()` returns `Ok(())`.
 
 ### Shutdown exit codes
 
-| Condition | Exit code |
-|-----------|-----------|
-| Normal shutdown (SIGTERM/SIGINT) | 0 |
-| Forced shutdown (double signal) | 0 |
-| Shutdown due to fatal error | 1 |
-| Configuration error | 2 |
+rust-milter is a library and never exits the process itself. These are the exit codes an application should use for each result:
+
+| Result | Recommended exit code |
+|--------|-----------------------|
+| `Server::run()` returns `Ok(())` after a normal or forced shutdown | 0 |
+| `Server::run()` returns an error, such as a bind failure in `FailFast` mode | 1 |
+| `ServerBuilder::build()` returns a configuration error | 2 |
 
 ### Shutdown coordination
 
@@ -278,7 +270,7 @@ Shutdown reasons:
 
 ### Shutdown timeline
 
-With the default `grace_period` (5 seconds) and `drain_timeout` (30 seconds):
+With the default `shutdown.grace_period` (5 seconds) and `shutdown.drain_timeout` (30 seconds):
 
 ```mermaid
 gantt
@@ -294,7 +286,7 @@ gantt
 
 ## Connection handling
 
-The handler API (the `Handler` callbacks, `ConnectionInfo`, and `DisconnectReason`) is specified in [api-specification.md](api-specification.md). Handlers never touch the connection: the byte-level reads and writes, buffers, and transport states in this document are internal, and the protocol engine sits between the connection and the handler.
+The handler API (the `Handler` callbacks and `ConnectionInfo`) is specified in [api-specification.md](api-specification.md). Handlers never touch the connection: the byte-level reads and writes, buffers, and transport states in this document are internal, and the protocol engine sits between the connection and the handler.
 
 ### Connection identifier
 
@@ -331,8 +323,7 @@ To support 10,000 or more concurrent connections:
 As the server approaches its resource limits:
 
 1. When `max_connections` is reached, the server accepts each new connection and closes it at once. The MTA sees the connection close during option negotiation and applies its own failure policy (Sendmail `F=` flags, Postfix `milter_default_action`). A TCP server cannot answer an incoming connection with `ECONNREFUSED`; only a port with no listener does that.
-2. Under memory pressure, it applies backpressure to slow clients.
-3. When the CPU is saturated, it limits concurrent request processing.
+2. When `max_memory` is set and the connection buffers would exceed it, the server closes new connections at once, as at `max_connections`, and closes a connection whose buffer would have to grow past the limit (`Error::ResourceLimit`).
 
 ## Error handling
 
@@ -342,8 +333,8 @@ The error types and their variants are specified in [api-specification.md](api-s
 
 | Error | Where | Recovery action |
 |-------|-------|-----------------|
-| `EMFILE` (too many open files) | `accept()` | Log, stop accepting for a short back-off, then retry |
-| `ENFILE` (system file table full) | `accept()` | Log, stop accepting for a short back-off, then retry |
+| `EMFILE` (too many open files) | `accept()` | Log, then back off: stop accepting on that listener for 100 ms, doubling after each consecutive error up to 1 s. A successful accept resets the back-off |
+| `ENFILE` (system file table full) | `accept()` | Same back-off as `EMFILE` |
 | `ECONNABORTED` | `accept()` | The client gave up before `accept()` returned. Log at debug level and keep accepting |
 | `ECONNRESET` | connection | Log at debug level, close connection |
 | `ETIMEDOUT` | connection | Close connection, log |
@@ -351,7 +342,8 @@ The error types and their variants are specified in [api-specification.md](api-s
 | `ENOTCONN` | connection | Close connection, log at debug level |
 | `EWOULDBLOCK` / `EAGAIN` | any | Retry (handled by Tokio) |
 | `EINTR` | any | Retry operation (handled by Tokio) |
-| Temporary errors | any | Retry with exponential backoff (max 5 retries) |
+
+Tokio retries `EINTR`, `EWOULDBLOCK`, and `EAGAIN` itself. rust-milter retries no other error on a connection, because a retried read or write could leave the milter stream out of step: any other error closes the connection.
 
 ### Partial bind failure
 
@@ -365,7 +357,7 @@ When the server binds to several addresses, the failure behavior is configurable
 In `BestEffort` mode the server:
 - logs a WARNING with error details for each failed bind
 - logs INFO for each successful bind
-- returns a `PartialBind` error listing the failed addresses, which the caller can ignore
+- marks each failed listener with `bound = false` in `ServerHandle::status()`
 - serves on the addresses that bound successfully
 
 ## Logging specification
@@ -412,9 +404,9 @@ Fields of the "connection closed" log:
 | `duration_ms` | u64 | Connection duration in milliseconds |
 | `bytes_read` | u64 | Total bytes read |
 | `bytes_written` | u64 | Total bytes written |
-| `reason` | String | Close reason (see DisconnectReason) |
+| `reason` | String | Close reason: one of the `milter.close_reason` values in [telemetry.md](telemetry.md#attribute-values) |
 | `error` | String | Error message (if applicable) |
-| `requests` | u64 | Number of requests processed (if applicable) |
+| `commands` | u64 | Number of commands received |
 
 ### Server lifecycle logs
 
@@ -428,8 +420,8 @@ Fields of the "connection closed" log:
 | Second shutdown signal received | WARN | `signal`, `signal_name`, `action` (force shutdown) |
 | Shutdown grace period started | INFO | `grace_period_ms` |
 | Shutdown draining started | INFO | `active_connections`, `drain_timeout_ms` |
-| Shutdown complete | INFO | `uptime_s`, `total_connections`, `total_bytes_read`, `total_bytes_written`, `exit_code` |
-| Configuration loaded | INFO | `config_summary` |
+| Shutdown complete | INFO | `uptime_s`, `total_connections`, `total_bytes_read`, `total_bytes_written` |
+| Configuration loaded | INFO | `generation` |
 | Configuration error | ERROR | `error`, `field` |
 
 ### Error logs
@@ -444,14 +436,9 @@ Fields of the "connection closed" log:
 
 ### Log fields
 
-Every log entry SHOULD include:
+rust-milter supplies the fields in the tables above. The application's `tracing` subscriber adds the timestamp, level, target, and message, and chooses the output format.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `timestamp` | RFC3339 | Event timestamp with microseconds |
-| `level` | String | Log level |
-| `target` | String | Module path |
-| `message` | String | Human-readable message |
+No log field contains SMTP data: the rules in [telemetry.md](telemetry.md#data-that-must-never-be-recorded) apply to logs as well. `remote_addr` is the MTA's address, not the SMTP client's.
 
 ## Monitoring and observability
 
@@ -488,6 +475,8 @@ The server builder, the server handle, and the rest of the public API are specif
 
 ## Testing requirements
 
+The test scenarios are listed in [docs/testing/](../testing/).
+
 ### Test coverage
 
 | Category | Minimum coverage |
@@ -501,6 +490,7 @@ The server builder, the server handle, and the rest of the public API are specif
 
 - configuration validation
 - socket address parsing, including rejection of `unix:` and `local:` addresses
+- the `IPV6_V6ONLY` option on each IPv6 listener matches `ipv6_only`
 - error handling
 - timeout behavior
 - state machine transitions
@@ -508,7 +498,7 @@ The server builder, the server handle, and the rest of the public API are specif
 
 ### Integration tests
 
-- accepting connections on IPv4, IPv6, and dual-stack sockets
+- accepting connections on the IPv4 and IPv6 loopback addresses
 - handling 100 or more concurrent connections
 - graceful shutdown with active connections
 - timeout enforcement (connect, read, write, idle)
@@ -537,10 +527,10 @@ The server builder, the server handle, and the rest of the public API are specif
 2. Enforce resource limits to prevent denial of service.
 3. The server listens only on the addresses in `bind_addresses`; it never binds a wildcard address on its own.
 4. The server does not require root privileges.
+5. Enforce timeouts to stop slowloris-style attacks.
+6. The server does not rate-limit connections per source. Limit sources with a firewall.
 
 How to deploy the server safely (unprivileged user, loopback binding, firewall rules) is described in [Deploy a milter in production](../how-to/deploy-a-milter-in-production.md).
-5. Enforce timeouts to stop slowloris-style attacks.
-6. Optionally rate-limit connections per source.
 
 ## Dependencies
 
@@ -558,10 +548,9 @@ How to deploy the server safely (unprivileged user, loopback binding, firewall r
 ## Future considerations
 
 - TLS support: optional TLS termination
-- connection pooling for milter client connections: designed for the client sample in [milter-client.md](milter-client.md)
-- hot reload of the configuration on SIGHUP: designed in [hot-reload.md](hot-reload.md)
 - clustering: coordination between several server instances
-- metrics export through OpenTelemetry: designed in [telemetry.md](telemetry.md)
+
+Configuration reload, OpenTelemetry metrics, and the milter client sample are designed in their own documents: [hot-reload.md](hot-reload.md), [telemetry.md](telemetry.md), and [milter-client.md](milter-client.md).
 
 ## References
 

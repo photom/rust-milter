@@ -25,7 +25,7 @@ The steps below cover what is left to the handler.
 1. Do not rely on `unknown` being called; it needs protocol version 3 or later.
 2. Do not rely on `data` being called; it needs protocol version 4 or later.
 3. Check `negotiated().version` in a callback if your logic depends on the version.
-4. Set `milter_protocol = 6` in Postfix. Sendmail always negotiates version 6.
+4. Keep Postfix's `milter_protocol` at 6, its default since Postfix 2.6. Sendmail always offers version 6.
 
 ## Read the SMTP client's address from ConnectInfo
 
@@ -48,8 +48,8 @@ When a lookup your milter depends on fails, such as DNS or a database, return `T
 
 ## Stay within the MTA's timeouts
 
-1. Call `progress()` on the end-of-message context while long processing runs. It restarts the MTA's read timeout.
-2. Finish the whole end-of-message stage within Sendmail's `E` timeout (5 minutes by default) and Postfix's `milter_content_timeout` (300 seconds by default). `progress()` does not extend Sendmail's `E` timeout.
+1. Call `progress()` on the end-of-message context while long processing runs. It restarts Sendmail's `R` timeout and Postfix's `milter_content_timeout` (300 seconds by default).
+2. Finish the whole end-of-message stage within Sendmail's `E` timeout (5 minutes by default). `progress()` does not extend it.
 
 ## Test against both MTAs
 

@@ -1,0 +1,30 @@
+# Test scenarios: Shutdown
+
+Scenarios for graceful and forced shutdown, from `ServerHandle` and from signals. Signal scenarios run the server in a child process, the only tests that send real signals; the child maps the result of `run()` to the recommended exit codes. Every test sets short shutdown timings and finishes in under 10 seconds. Conventions are in [README.md](README.md).
+
+## Graceful shutdown from the handle
+
+| ID | Level | Given | When | Then | Spec |
+|----|-------|-------|------|------|------|
+| SHT-001 | integration | A running server with no connections, `grace_period` = 100 ms | `shutdown()` is called | `run()` returns `Ok(())` within 1 s | [tcp-server: Shutdown sequence](../reference/tcp-server.md#shutdown-sequence) |
+| SHT-002 | integration | A running server, `grace_period` = 1 s | the fake MTA connects 100 ms after `shutdown()` | the connection is refused: the listeners close at once, before the grace period ends | [tcp-server: Shutdown sequence](../reference/tcp-server.md#shutdown-sequence) |
+| SHT-003 | integration | A session open after HELO, `grace_period` = 500 ms | `shutdown()` is called and the fake MTA sends MAIL 200 ms later | MAIL is processed and answered; at the end of the grace period the idle connection closes, and `session_end` gets `SessionEnd::ServerShutdown` | [tcp-server: Shutdown sequence](../reference/tcp-server.md#shutdown-sequence) |
+| SHT-004 | integration | A handler whose `end_of_message` takes 1 s, `grace_period` = 100 ms, `drain_timeout` = 5 s | `shutdown()` is called while `end_of_message` runs | the callback completes, its reply is sent, then the connection closes; `run()` returns `Ok(())` after that | [tcp-server: Shutdown sequence](../reference/tcp-server.md#shutdown-sequence) |
+| SHT-005 | integration | A handler whose `end_of_message` sleeps 10 s and ignores the shutdown token, `grace_period` = 100 ms, `drain_timeout` = 1 s | `shutdown()` is called while it runs | the connection is force-closed about 1.1 s after `shutdown()`, and `run()` returns `Ok(())` | [tcp-server: Shutdown sequence](../reference/tcp-server.md#shutdown-sequence) |
+| SHT-006 | integration | A handler that watches `ctx.shutdown()` in a long `end_of_message`, `grace_period` = 300 ms | `shutdown()` is called | the token is cancelled after the grace period, not before | [api: Async patterns](../reference/api-specification.md#async-patterns) |
+| SHT-007 | integration | Two open sessions and the default shutdown timings | `force_shutdown()` is called | both connections close at once, without the grace period or the drain, and `run()` returns `Ok(())` | [api: ServerHandle](../reference/api-specification.md#serverhandle) |
+| SHT-008 | integration | A server that has stopped | `wait()`, `is_running()`, and `status()` are called on a handle cloned before the stop | `wait()` completes at once, `is_running()` is false, and `status()` still answers | [api: ServerHandle](../reference/api-specification.md#serverhandle) |
+| SHT-009 | integration | A server that served three connections | it shuts down | INFO logs "Shutdown draining started" with `active_connections` and `drain_timeout_ms`, and "Shutdown complete" with `uptime_s`, `total_connections` = 3, `total_bytes_read`, and `total_bytes_written` | [tcp-server: Server lifecycle logs](../reference/tcp-server.md#server-lifecycle-logs) |
+
+## Signals
+
+| ID | Level | Given | When | Then | Spec |
+|----|-------|-------|------|------|------|
+| SHT-020 | integration | A server in a child process, with no connections | the test sends `SIGTERM` | the child exits with code 0, after an INFO log "Shutdown signal received" with `signal_name` = `SIGTERM` | [tcp-server: Signal handling requirements](../reference/tcp-server.md#signal-handling-requirements) |
+| SHT-021 | integration | The same child process | the test sends `SIGINT` | the child exits with code 0 | [tcp-server: Signal handling requirements](../reference/tcp-server.md#signal-handling-requirements) |
+| SHT-022 | integration | The same child process | the test sends `SIGQUIT` | the child exits with code 0 and leaves no core dump | [tcp-server: Signal handling requirements](../reference/tcp-server.md#signal-handling-requirements) |
+| SHT-023 | integration | A child process with a session whose `end_of_message` sleeps 10 s, `drain_timeout` = 30 s | the test sends `SIGTERM`, then a second `SIGTERM` 500 ms later | the child force-closes the connection and exits with code 0 within 2 s of the second signal, after a WARN log "Second shutdown signal received" | [tcp-server: Signal handling requirements](../reference/tcp-server.md#signal-handling-requirements) |
+| SHT-024 | integration | The same setup | the test sends `SIGTERM`, then `SIGINT` | the second signal forces shutdown too: any second shutdown signal counts | [tcp-server: Signal handling requirements](../reference/tcp-server.md#signal-handling-requirements) |
+| SHT-025 | integration | A child process in a drain, with a registered reload loader | the test sends `SIGHUP` | the loader is not called, and a WARN log "SIGHUP ignored" has `reason` = `shutting_down` | [hot-reload: Concurrency rules](../reference/hot-reload.md#concurrency-rules) |
+| SHT-026 | integration | A child process whose configuration fails validation | the child starts | `build()` fails and the child exits with code 2 | [tcp-server: Shutdown exit codes](../reference/tcp-server.md#shutdown-exit-codes) |
+| SHT-027 | integration | A child process whose only listen port is already bound | the child starts | `run()` fails and the child exits with code 1 | [tcp-server: Shutdown exit codes](../reference/tcp-server.md#shutdown-exit-codes) |

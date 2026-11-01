@@ -16,7 +16,7 @@ Containers are the one place where a default helps. Docker and Kubernetes pass c
 
 Each valid configuration is published once, as an immutable value with a generation number. A reload never edits a published value; it publishes the next one.
 
-This removes a whole class of problems. No reader can see a configuration halfway through a change, because there is no "halfway": a reader holds either the old value or the new one. Readers never wait for a writer. And every log line and metric can name the generation it ran under, which makes "did the reload take effect?" a question with a definite answer.
+No reader can see a configuration halfway through a change: a reader holds either the old value or the new one. Readers never wait for a writer. Every log line and metric can name the generation it ran under, so an operator can check whether a reload took effect.
 
 A connection takes the current snapshot when it is accepted and keeps it until it closes. One milter connection lives for one SMTP session with Sendmail and Postfix, usually seconds. Within one SMTP session of a reload, all traffic runs on the new values, without any connection being cut short. A connection that changed its timeouts in the middle of a command would be harder to reason about and gain little.
 
@@ -26,23 +26,23 @@ The reload classes follow from when each setting is used:
 - Settings read for every decision, such as `max_connections` or the shutdown timings, take effect as soon as the new snapshot is published.
 - Settings applied when a connection starts, such as timeouts and socket options, take effect for new connections.
 - Settings applied when a listener is created, such as `backlog` and `reuse_port`, take effect for listeners the reload creates.
-- Settings fixed before anything runs need a restart. The Tokio runtime is built once with its thread count, so `worker_threads` cannot change. The handler, the reload loader, and the meter provider are fixed when the server is built. Cargo features are fixed at compile time.
+- Settings fixed before anything runs need a restart. The application builds the Tokio runtime once, with its thread count, before the server exists. The handler, the reload loader, and the meter provider are fixed when the server is built. Cargo features are fixed at compile time.
 
 A reload that changes a restart-only setting does not fail. Failing would block the other, valid changes for no benefit. The server applies what it can and reports the rest as pending a restart.
 
 ## Why a lower connection limit closes nothing
 
-When a reload lowers `max_connections` below the number of open connections, the server could close connections until it meets the new limit. It does not. A milter connection that looks idle is usually waiting for the next command of an SMTP session in progress. Closing it would make the MTA apply its failure policy to that session, which interrupts mail just as a restart would. Instead, open connections finish normally, and new connections are closed at once until the count falls below the limit. The window is short because SMTP sessions are short.
+When a reload lowers `max_connections` below the number of open connections, the server could close connections until it meets the new limit. It does not. A milter connection that looks idle is usually waiting for the next command of an SMTP session in progress. Closing it would make the MTA apply its failure policy to that session, which interrupts mail the same way a restart would. Instead, open connections finish normally, and new connections are closed at once until the count falls below the limit. The window is short because SMTP sessions are short. The decision is recorded in [ADR 0005](../adr/0005-reload-closes-no-connection-and-rebinds-no-listener.md).
 
 ## Why a changed backlog waits for a restart
 
-The backlog is the kernel's queue of connections that are established but not yet accepted, and it is set once, when the listener starts listening. Applying a new value to an address that stays in use would need a second listener on the same port, opened with `SO_REUSEPORT`, before the old one closes. Connections still waiting in the old queue would be dropped, the behavior differs between Linux and the BSDs, and it depends on `reuse_port` being available. A backlog change is rare, so the reload reports it as needing a restart instead.
+The backlog is the kernel's queue of connections that are established but not yet accepted, and it is set once, when the listener starts listening. Applying a new value to an address that stays in use would need a second listener on the same port, opened with `SO_REUSEPORT`, before the old one closes. Connections still waiting in the old queue would be dropped, the behavior differs between Linux and the BSDs, and it depends on `reuse_port` being available. A backlog change is rare, so the reload reports it as needing a restart instead. [ADR 0005](../adr/0005-reload-closes-no-connection-and-rebinds-no-listener.md) records the options that were weighed.
 
 ## Why the reload binds before it publishes
 
 A reload that moves the server to a new address binds the new listener first, publishes the new configuration, and only then stops the old listener. At no moment is the server without a listener. If the new bind fails, nothing has been published yet, so the running configuration stays as it was.
 
-Requests that arrive during a reload are folded into one more reload after it, which then picks up the latest file. Running reloads in parallel would mean two writers racing for the listener set.
+Requests that arrive during a reload are folded into one more reload after it, which then gets the latest configuration from the loader. Running reloads in parallel would mean two writers racing for the listener set.
 
 ## Why handlers read their settings per message
 

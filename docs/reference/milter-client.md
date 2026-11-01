@@ -20,7 +20,6 @@ The MTA side of the Milter protocol for rust-milter: a client that talks to milt
 - [Shutdown](#shutdown)
 - [Logging and metrics](#logging-and-metrics)
 - [Testing requirements](#testing-requirements)
-- [Decisions](#decisions)
 
 ## Scope
 
@@ -36,8 +35,9 @@ In scope:
 - timeouts and failure handling equivalent to Sendmail's and Postfix's
 
 Out of scope:
-- Unix domain sockets, which rust-milter supports neither as a server nor as a client. A milter that listens only on a Unix socket must be configured to listen on TCP before the client can reach it
-- running several milters in sequence (a milter chain). An application can build one on top of several clients.
+- Unix domain sockets, which rust-milter supports neither as a server nor as a client. A milter that listens only on a Unix socket must be configured to listen on TCP before the client can reach it.
+- running several milters in sequence (a milter chain). The program that uses the client creates one client per milter and calls them in order, as Sendmail and Postfix do in their own code.
+- configuration reload. A program that uses the client builds a new client to change its settings and shuts down the old one; sessions in progress finish on the old client.
 - applying message modifications. The client returns them; the application applies them to its own queue file.
 
 ## Architecture
@@ -45,7 +45,7 @@ Out of scope:
 ```mermaid
 flowchart LR
     app["Application<br/>(MTA, proxy, test harness)"]
-    subgraph client["rust-milter client"]
+    subgraph client["Milter client sample"]
         direction TB
         mc["MilterClient<br/>(one per milter endpoint)"]
         pool["ConnectionPool"]
@@ -142,7 +142,7 @@ classDiagram
 
 The split between `PooledConnection` and `SessionState` is the isolation boundary described in [Session isolation](#session-isolation). `PooledConnection` has no field that can hold SMTP data. Everything a session learns or buffers lives in `SessionState`, which the `Session` owns and drops when it ends.
 
-`Decision` is one of `Continue`, `Accept`, `Reject`, `TempFail`, `Discard`, `ReplyCode(String)`, `Skip`, or `NoReply`. `Modification` mirrors the `SMFIR_*` modification actions in `docs/reference/milter-protocol.md`.
+`Decision` is one of `Continue`, `Accept`, `Reject`, `TempFail`, `Discard`, `ReplyCode(String)`, `Skip`, or `NoReply`. `Modification` mirrors the `SMFIR_*` modification actions in [milter-protocol.md](milter-protocol.md#replies-from-milter-to-mta).
 
 ## Session lifecycle
 
@@ -292,7 +292,7 @@ The milter can close an idle connection at any time, for example on its own idle
 Sizing and maintenance:
 - `min_idle` connections are opened in the background and kept ready.
 - A background task closes idle connections older than `max_idle_time`, and any connection older than `max_lifetime`.
-- `max_idle_time` must be shorter than the milter's own idle timeout: 300 seconds for a rust-milter server by default, 7210 seconds for libmilter (`MI_TIMEOUT`). The default of 60 seconds satisfies both.
+- `max_idle_time` must be shorter than the milter's own idle timeout: 7210 seconds by default for both a rust-milter server and libmilter (`MI_TIMEOUT`). The default of 60 seconds is well below it.
 
 A connection carries one SMTP session at a time. The Milter protocol is strictly sequential, so the pool never multiplexes sessions on one socket.
 
@@ -315,6 +315,7 @@ A connection carries one SMTP session at a time. The Milter protocol is strictly
 | `max_lifetime` | Duration | 1 hour | Connections older than this are retired after their current session |
 | `max_sessions_per_connection` | u32 | 1000 | Sessions after which a connection is retired |
 | `reuse_policy` | enum | `libmilter_compatible` | `libmilter_compatible` or `never` |
+| `drain_timeout` | Duration | 30s | Longest wait for open sessions at shutdown |
 | `failure_action` | enum | `tempfail` | Decision the client reports when the milter is unavailable: `accept`, `reject`, `tempfail`, or `error` |
 
 The timeout defaults follow Postfix (`milter_connect_timeout`, `milter_command_timeout`, `milter_content_timeout`). `reuse_policy = never` turns the pool into a plain connector that behaves like Sendmail and Postfix.
@@ -371,7 +372,7 @@ When a session method fails because the milter is unavailable (`Connect`, `Negot
 1. stops handing out new sessions; `session()` returns `ShuttingDown`
 2. sends `SMFIC_QUIT` on every idle connection and closes it
 3. lets open sessions finish; when each one ends, its connection is closed, not returned
-4. completes when no connection is open, or after `drain_timeout` (default 30 seconds), when it closes the rest
+4. completes when no connection is open, or after `drain_timeout`, when it closes the rest
 
 ## Logging and metrics
 
@@ -412,7 +413,3 @@ Integration tests:
 
 Load tests:
 - 1000 sessions per second through a pool of 32 connections, with reuse rate and checkout latency reported
-
-## Decisions
-
-- Milter chains (several milters per session, in order) are left to the program that uses the client: it creates one client per milter and calls them in order, as Sendmail and Postfix do in their own code.

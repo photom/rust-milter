@@ -58,7 +58,7 @@ flowchart TB
     control -.-> error
 ```
 
-The control plane decides what the server does: which listeners exist, which configuration applies, and when to stop. The data plane moves milter traffic: the connection carries frames, the protocol engine runs the conversation, and the handler only makes decisions. The two planes meet in two places only: a connection takes a configuration snapshot when it is accepted, and the protocol engine and the handler see the shutdown token and a `ConfigWatch`.
+The control plane decides what the server does: which listeners exist, which configuration applies, and when to stop. The data plane moves milter traffic: the connection carries frames, the protocol engine runs the conversation, and the handler only makes decisions. The control plane acts on the data plane through the listener set, the configuration snapshot each connection takes when it is accepted, the shutdown token, and the `ConfigWatch` the handler reads.
 
 ## Component specifications
 
@@ -119,7 +119,7 @@ Responsibilities:
 - negotiate options: protocol version (2 to 6), action flags from `Handler::actions()`, protocol flags from `Handler::events()`
 - track the protocol state with libmilter's transition rules, recover from a command in a wrong state where libmilter recovers, and close the connection where libmilter would leave the MTA waiting ([ADR 0001](../adr/0001-commands-in-wrong-state-recover-like-libmilter-or-close.md))
 - store macros per stage and clear them when the session ends
-- create the handler's `Session` value at `SMFIC_CONNECT` and its `Message` value at `SMFIC_MAIL`, and drop them when the session or message ends
+- create the handler's `Session` value at `SMFIC_CONNECT` and its `Message` value at `SMFIC_MAIL` (or at the first command of a message when the handler leaves `MAIL` out of `events()`), and drop them when the session or message ends
 - call the matching handler callback for each command, and turn its decision into the protocol reply, or into no reply where the protocol forbids one
 - offer the modification methods only at end of message, and check that their actions were negotiated
 
@@ -148,7 +148,7 @@ Who reads what:
 | Shutdown coordinator | `shutdown.*` | when a shutdown starts |
 | Handler | application configuration via `ConfigWatch` | once per session or per message |
 
-What a changed setting does on reload, and which settings need a restart, is specified in [configuration.md](../reference/configuration.md#reload-classes). In short: the listener set, `max_connections`, the shutdown timings, and the resource limits apply at once; timeouts, socket options, and buffer size apply to new connections; `worker_threads`, socket options on an address that stays bound, and everything set only on the builder need a restart.
+What a changed setting does on reload, and which settings need a restart, is specified in [configuration.md](../reference/configuration.md#reload-classes). In short: the listener set, `max_connections`, the shutdown timings, `max_fds`, and `max_memory` apply at once; timeouts, socket options, `per_connection_buffer`, and `trace_commands` apply to new connections; socket options on an address that stays bound and everything set only on the builder need a restart.
 
 ### 8. Reload coordinator
 
@@ -310,7 +310,7 @@ sequenceDiagram
     participant Handlers
     participant Connections
 
-    Signal->>Shutdown: SIGTERM or SIGINT
+    Signal->>Shutdown: SIGTERM, SIGINT, or SIGQUIT
     Shutdown->>Server: stop accepting
     Shutdown->>Shutdown: wait grace_period
     Shutdown->>Handlers: cancel the CancellationToken
@@ -324,8 +324,8 @@ sequenceDiagram
 
 ### Tasks
 
-The library runs on the Tokio multi-threaded runtime:
-- one worker thread per CPU core by default (`worker_threads`, fixed at startup)
+The library runs on the Tokio multi-threaded runtime that the application creates:
+- one worker thread per CPU core by default; the application sets the number on its runtime
 - one accept task per listener
 - one task per connection
 - one reload coordinator task and one shutdown coordinator task
@@ -398,9 +398,9 @@ Recoverable within the connection:
 - incomplete frames, which need more data
 - transient I/O errors, which are retried
 
-Fatal for startup (exit code 2):
-- invalid configuration
-- a bind failure in `FailFast` mode
+Fatal for startup:
+- invalid configuration, returned by `build()`
+- a bind failure in `FailFast` mode, returned by `run()`
 
 Not fatal on reload:
 - a failed load, invalid configuration, or bind failure leaves the running configuration in place and is reported as a `ReloadError`
@@ -409,7 +409,7 @@ Not fatal on reload:
 
 - Use `Result<T, Error>` throughout, with typed error enums.
 - Convert errors at component boundaries and keep the cause in `source()`.
-- Record errors in `tracing` with the masking rules from `logging-principles`.
+- Record errors in `tracing` without SMTP data (see [Data that must never be recorded](../reference/telemetry.md#data-that-must-never-be-recorded)).
 
 ## Security architecture
 
@@ -427,7 +427,7 @@ Input validation:
 
 ### Attack mitigation
 
-Denial of service: connection limits, timeouts from accept on, buffer limits, and optional rate limiting.
+Denial of service: connection limits, timeouts from accept on, and buffer limits. rust-milter does not rate-limit per source; a firewall does that.
 
 Network exposure: the milter protocol has no authentication or encryption. Bind to loopback unless the MTA is on another host, and restrict access with firewall rules when it is.
 
@@ -481,7 +481,8 @@ The reload loader is the second one: the application decides where configuration
 Possible future extension traits:
 - health check provider
 - authentication provider
-- a metrics collector trait; this may be dropped in favor of OpenTelemetry (see the open questions in [telemetry.md](../reference/telemetry.md))
+
+Metrics need no extension trait: they come from OpenTelemetry and `ServerHandle::status()` ([ADR 0004](../adr/0004-metrics-come-from-opentelemetry-and-status.md)).
 
 ## Testing architecture
 
@@ -513,7 +514,6 @@ Performance targets:
 - 10,000 concurrent connections
 - p99 latency per frame under 1 millisecond
 - no memory leaks under load
-- graceful degradation
 
 ## References
 

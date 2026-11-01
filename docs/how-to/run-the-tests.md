@@ -20,11 +20,19 @@ Tests that listen on a port take turns on the 10 test ports, 61000 to 61009. Wit
 
 ## Run one test or one group
 
-Pass part of the test name:
+Test names start with their scenario ID from `docs/testing/`, so you can select by ID or by prefix:
 
 ```sh
-cargo test shutdown
-cargo test --test server shutdown_drains_open_connections
+cargo test frm_
+cargo test --test protocol_engine eng_051
+```
+
+## Run the documentation check
+
+The Rust examples in the tutorials and how-to guides compile as doctests. Run only them:
+
+```sh
+cargo test --doc
 ```
 
 ## Run the suite with cargo-nextest
@@ -34,6 +42,39 @@ cargo test --test server shutdown_drains_open_connections
 ```sh
 cargo nextest run
 ```
+
+`cargo-nextest` does not run doctests. Run the documentation check separately with `cargo test --doc`.
+
+## Run the interoperability tests
+
+The interoperability tests run rust-milter behind real Postfix and Sendmail, in a Docker Compose stack. You need Docker with Compose v2.
+
+1. Build the stack and run every interoperability test:
+
+   ```sh
+   docker compose -f tests/interop/compose.yaml run --build --rm runner
+   ```
+
+2. Run one scenario, for example INT-011:
+
+   ```sh
+   docker compose -f tests/interop/compose.yaml run --rm runner \
+     cargo test -p rust-milter-interop -- --ignored --test-threads=1 int_011
+   ```
+
+3. Read the MTA logs when a test fails:
+
+   ```sh
+   docker compose -f tests/interop/compose.yaml logs postfix sendmail
+   ```
+
+4. Remove the stack when you are done:
+
+   ```sh
+   docker compose -f tests/interop/compose.yaml down
+   ```
+
+The stack and its rules are described in [test-environment.md](../reference/test-environment.md#interoperability-environment).
 
 ## Skip or require the IPv6 tests
 

@@ -8,7 +8,7 @@ Scenarios for configuration validation, address parsing, and the serde file form
 |----|-------|-------|------|------|------|
 | CFG-001 | unit | `ServerConfig::default()` with no bind address | it is validated | `MissingBindAddress` | [configuration: Validation rules](../reference/configuration.md#validation-rules) |
 | CFG-002 | unit | A configuration with one bind address and all other fields at their defaults | it is validated | it is valid | [configuration: ServerConfig reference](../reference/configuration.md#serverconfig-reference) |
-| CFG-003 | unit | For every bounded field, one value just below and one just above its range, all others valid | each configuration is validated | `OutOfRange` naming that field, for every case | [configuration: ServerConfig reference](../reference/configuration.md#serverconfig-reference) |
+| CFG-003 | unit | For every bounded field, one value below its minimum and one above its maximum, all others valid | each configuration is validated | `OutOfRange` naming that field, for every case | [configuration: ServerConfig reference](../reference/configuration.md#serverconfig-reference) |
 | CFG-004 | unit | For every bounded field, its minimum and its maximum | each configuration is validated | it is valid | [configuration: ServerConfig reference](../reference/configuration.md#serverconfig-reference) |
 | CFG-005 | unit | The same bind address listed twice | it is validated | `DuplicateBindAddress` with that address | [configuration: Validation rules](../reference/configuration.md#validation-rules) |
 | CFG-006 | unit | `per_connection_buffer` of 65,539 and of 65,540 | each is validated | the first fails, the second is valid | [configuration: Validation rules](../reference/configuration.md#validation-rules) |
@@ -24,7 +24,7 @@ Scenarios for configuration validation, address parsing, and the serde file form
 | CFG-020 | unit | `127.0.0.1:8891`, `[::1]:8891`, `inet:8891@127.0.0.1`, `inet6:8891@::1` | each is parsed | the matching socket address | [configuration: Top level](../reference/configuration.md#top-level) |
 | CFG-021 | unit | `unix:/run/milter.sock` and `local:/run/milter.sock` | each is parsed | `InvalidFormat` | [configuration: Top level](../reference/configuration.md#top-level) |
 | CFG-022 | unit | Ports 0 and 70000 | each is parsed | `InvalidPort` | [configuration: Top level](../reference/configuration.md#top-level) |
-| CFG-023 | unit | `inet:8891@not a host` | it is parsed | `InvalidHost` | [api: Errors](../reference/api-specification.md#configerror) |
+| CFG-023 | unit | `inet:8891@not a host` | it is parsed | `InvalidHost` | [api: ConfigError](../reference/api-specification.md#configerror) |
 
 ## File format (serde feature)
 
@@ -40,6 +40,12 @@ Scenarios for configuration validation, address parsing, and the serde file form
 | CFG-047 | unit | Nested tables `[timeouts]`, `[shutdown]`, `[resource_limits]` | they are deserialized | the values land in the matching parts | [configuration: Mapping](../reference/configuration.md#mapping) |
 | CFG-048 | unit | A valid configuration with non-default values | it is serialized to TOML and read back | the result equals the original, and the TOML lists every field, defaults included | [configuration: File format](../reference/configuration.md#file-format-serde-feature) |
 | CFG-049 | unit | A deserialized configuration with an invalid value, such as `backlog = 0` | it is validated | `OutOfRange`; deserializing alone does not validate | [configuration: Validation rules](../reference/configuration.md#validation-rules) |
+
+## Reload classes
+
+| ID | Level | Given | When | Then | Spec |
+|----|-------|-------|------|------|------|
+| CFG-060 | unit | The reload class the code assigns to every `ServerConfig` field | it is compared with the tables in configuration.md | every field has the class the document gives it | [configuration: Reload classes](../reference/configuration.md#reload-classes) |
 
 ## Environment variables
 
@@ -58,9 +64,3 @@ These tests use `from_vars` and `apply_vars`, so they never change the real proc
 | CFG-088 | unit | The pairs `RUST_MILTER_BIND_MODE` = `best_effort`, and in another run `BestEffort` | `from_vars` runs | the first gives `BestEffort`, the second is `InvalidEnvValue`; the formats match the file format (CFG-044) | [configuration: Environment variables](../reference/configuration.md#environment-variables) |
 | CFG-089 | unit | The pair `RUST_MILTER_BACKLOG` = `0` | `from_vars` runs, then the result is validated | `from_vars` succeeds; validation fails with `OutOfRange`, because the helpers check formats only | [configuration: Environment variables](../reference/configuration.md#environment-variables) |
 | CFG-090 | unit | One test per setting in the reference tables | a variable is built from the setting's path by the naming rule | `from_vars` sets exactly that setting, so every setting has a working variable | [configuration: Environment variables](../reference/configuration.md#environment-variables) |
-
-## Reload classes
-
-| ID | Level | Given | When | Then | Spec |
-|----|-------|-------|------|------|------|
-| CFG-060 | unit | The reload class the code assigns to every `ServerConfig` field | it is compared with the tables in configuration.md | every field has the class the document gives it | [configuration: Reload classes](../reference/configuration.md#reload-classes) |
