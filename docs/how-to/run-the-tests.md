@@ -1,6 +1,6 @@
 # Run the tests
 
-Status: the test suite is not written yet. This guide follows the design in [test-environment.md](../reference/test-environment.md).
+Status: the test suite is incomplete. This guide follows the design in [test-environment.md](../reference/test-environment.md).
 
 ## Run the whole suite
 
