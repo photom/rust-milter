@@ -1,0 +1,49 @@
+name: Feature request
+description: Propose a specific new feature or a change to existing behavior.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What you are trying to do, and why rust-milter does not let you do it today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: How the feature should behave. Include the API you have in mind, if any.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - Milter protocol
+        - Handler API
+        - TCP server and listeners
+        - Configuration and reload
+        - Telemetry
+        - Shutdown
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: Other ways to solve the problem, including workarounds you use now.
+  - type: textarea
+    id: references
+    attributes:
+      label: References
+      description: libmilter documentation, MTA documentation, RFCs, or other milter libraries that do this.
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contribution
+      options:
+        - label: I am willing to open a pull request for this.
