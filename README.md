@@ -2,7 +2,7 @@
 
 An asynchronous Milter protocol library for Rust, built for high throughput.
 
-Status: design phase. The documentation describes the designed library; the code is not written yet.
+Status: in development. The documentation describes the designed library; the code implements part of it so far.
 
 ## Overview
 
