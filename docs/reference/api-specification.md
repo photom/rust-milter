@@ -52,9 +52,10 @@ The public API of the rust-milter server library: its types, traits, errors, and
 | `ConnectionInfo` | I/O | Read-only facts about an MTA connection: ID, addresses, accept time |
 | `Frame` | Protocol | Milter protocol frame (used by the milter client sample in `examples/` and by tests) |
 | `Command` | Protocol | Commands from MTA to milter (`SMFIC_*`) |
+| `AddressFamily` | Protocol | The SMTP client's address family in `Command::Connect` (`SMFIA_*`) |
 | `Reply` | Protocol | Replies from milter to MTA (`SMFIR_*`) |
 | `Error` | Error | Library error type |
-| `ConfigError`, `ReloadError`, `ProtocolError`, `AddressError` | Error | Error types for specific areas |
+| `ConfigError`, `ReloadError`, `ProtocolError`, `ReplyError`, `AddressError` | Error | Error types for specific areas |
 | `Result<T>` | Error | `std::result::Result<T, Error>` |
 | `protocol` (module) | Protocol | The constants from [milter-protocol.md](milter-protocol.md): `SMFIC_*`, `SMFIR_*`, `SMFIF_*`, `SMFIP_*`, `SMFIM_*`, `SMFIA_*`, and the `SMFI_*` versions and flag sets |
 
@@ -238,13 +239,14 @@ The variants mean what libmilter's `SMFIS_*` codes mean:
 - `Reply(ReplyCode)`: a custom reply; a 4xx code acts as `TempFail`, a 5xx code as `Reject`.
 - `Skip`: receive no more body chunks and go to end of message. If the MTA did not offer `SMFIP_SKIP`, the library sends `Continue` and stops calling `body` for this message.
 
-`ReplyCode` is built with `ReplyCode::new(code, enhanced_code, text)` or `ReplyCode::multi_line(code, enhanced_code, lines)`. Both return `Result` and check, as libmilter's `smfi_setreply` and `smfi_setmlreply` do:
+`ReplyCode` is built with `ReplyCode::new(code, enhanced_code, text)` or `ReplyCode::multi_line(code, enhanced_code, lines)`. `code` is a `u16` and `enhanced_code` an `Option<&str>`. Both return `Result<ReplyCode, ReplyError>` and check, as libmilter's `smfi_setreply` and `smfi_setmlreply` do:
 - the code is 4xx or 5xx
 - the enhanced status code, if given, has the form `d.ddd.ddd` and the same first digit as the code
-- no line contains CR or LF, and no line is longer than 980 characters
+- without an enhanced status code, no line starts with a digit other than the code's first digit, which Postfix would reject as a mismatched enhanced status code
+- no line contains CR, LF, or NUL, and no line is longer than 980 bytes
 - a multi-line reply has at most 32 lines
 
-The text is taken literally. The library writes each `%` as `%%` on the wire, so a reply shows on both MTAs exactly as written.
+The text is taken literally. The library writes each `%` as `%%` on the wire, so a reply shows on both MTAs exactly as written. `Reply::from(reply_code)` gives the `Reply::ReplyCode` that carries it.
 
 ## Protocol engine behavior
 
@@ -326,9 +328,9 @@ Type-safe form of the commands the MTA sends.
 
 | Variant | Command |
 |---------|---------|
-| `OptNeg { version, actions, protocol }` | `SMFIC_OPTNEG` |
-| `Macro { stage, macros }` | `SMFIC_MACRO`; `stage` is the raw stage byte, including `L`, `B`, and `U` from Postfix |
-| `Connect { hostname, family, port, address }` | `SMFIC_CONNECT` |
+| `OptNeg { version, actions, protocol }` | `SMFIC_OPTNEG`; three `u32` values as sent, zeros included |
+| `Macro { stage, macros }` | `SMFIC_MACRO`; `stage` is the raw stage byte, including `L`, `B`, and `U` from Postfix, and `macros` the name and value pairs in order |
+| `Connect { hostname, family, port, address }` | `SMFIC_CONNECT`; `family` is an `AddressFamily`, and `port` (`u16`) and `address` are `None` for `AddressFamily::Unknown` |
 | `Helo(MilterText)` | `SMFIC_HELO` |
 | `Mail(Vec<MilterText>)` | `SMFIC_MAIL` |
 | `Rcpt(Vec<MilterText>)` | `SMFIC_RCPT` |
@@ -342,7 +344,9 @@ Type-safe form of the commands the MTA sends.
 | `Quit` | `SMFIC_QUIT` |
 | `QuitNewConnection` | `SMFIC_QUIT_NC` |
 
-`Command::from_frame(frame)` checks the command code and the data format, and returns `Error::Protocol` on invalid input. An unknown command code is a protocol error. Text fields, including the hostname, header name and value, and macro names and values, are `MilterText`, so bytes that are not valid UTF-8 are kept.
+`AddressFamily`: `Unknown` (`SMFIA_UNKNOWN`), `Unix` (`SMFIA_UNIX`), `Inet` (`SMFIA_INET`), `Inet6` (`SMFIA_INET6`).
+
+`Command::from_frame(frame)` checks the command code and the data format, and returns `Error::Protocol` on invalid input: `UnknownCommand` for an unknown command code, and `Malformed` for data that does not match the format, such as a missing null terminator, a short option negotiation, a macro name without a value, or a family byte that is not an `SMFIA_*` code. Text fields, including the hostname, header name and value, and macro names and values, are `MilterText`, so bytes that are not valid UTF-8 are kept.
 
 ## Reply
 
@@ -350,7 +354,7 @@ Type-safe form of the replies the milter sends.
 
 | Variant | Reply |
 |---------|-------|
-| `OptNeg { version, actions, protocol, macros }` | `SMFIC_OPTNEG` response; `macros` is the optional symbol list per `SMFIM_*` stage |
+| `OptNeg { version, actions, protocol, macros }` | `SMFIC_OPTNEG` response; `macros` is the optional symbol list, a `Vec` of `SMFIM_*` stage and space-separated macro names |
 | `Continue` | `SMFIR_CONTINUE` |
 | `Accept` | `SMFIR_ACCEPT` |
 | `Reject` | `SMFIR_REJECT` |
@@ -361,19 +365,22 @@ Type-safe form of the replies the milter sends.
 | `Progress` | `SMFIR_PROGRESS` |
 | `Quarantine(String)` | `SMFIR_QUARANTINE` |
 | `AddHeader { name, value }` | `SMFIR_ADDHEADER` |
-| `InsertHeader { index, name, value }` | `SMFIR_INSHEADER` |
+| `InsertHeader { index, name, value }` | `SMFIR_INSHEADER`; `index` is a `u32` |
 | `ChangeHeader { index, name, value }` | `SMFIR_CHGHEADER`; an empty value deletes the header |
 | `AddRecipient(String)` | `SMFIR_ADDRCPT` |
-| `AddRecipientWithArgs { rcpt, args }` | `SMFIR_ADDRCPT_PAR` |
+| `AddRecipientWithArgs { rcpt, args }` | `SMFIR_ADDRCPT_PAR`; `args` is an `Option<String>` |
 | `DeleteRecipient(String)` | `SMFIR_DELRCPT` |
-| `ChangeFrom { from, args }` | `SMFIR_CHGFROM` |
+| `ChangeFrom { from, args }` | `SMFIR_CHGFROM`; `args` is an `Option<String>` |
 | `ReplaceBody(Bytes)` | `SMFIR_REPLBODY` |
 
 The enum has no variants for `SMFIR_SHUTDOWN`, `SMFIR_CONN_FAIL`, or `SMFIR_SETSYMLIST`: Sendmail rejects the first, neither MTA accepts the second, and the third is never sent as a packet. The macro list travels in `Reply::OptNeg`.
 
-`Reply` is the wire-level type, used by the milter client sample in `examples/` and by tests; handlers use the decision types and `ReplyCode` instead. `Reply::to_frame()` validates before encoding:
-- `ReplyCode` text: a 4xx or 5xx code, the multi-line rules from [milter-protocol.md](milter-protocol.md), and every literal `%` already written as `%%`
-- header names: no colon, no whitespace, no control characters
+Text fields are `String`: the milter writes them, so they are always valid UTF-8.
+
+`Reply` is the wire-level type, used by the milter client sample in `examples/` and by tests; handlers use the decision types and `ReplyCode` instead. `Reply::to_frame()` validates before encoding, and returns `Error::InvalidReply` on a failed check:
+- `ReplyCode` text: a 4xx or 5xx code, the multi-line rules from [milter-protocol.md](milter-protocol.md#multi-line-reply-handling), and every literal `%` already written as `%%`
+- header names: not empty, no colon, no whitespace, no control characters
+- text fields: no NUL byte, which would end the field early on the wire
 - `ReplaceBody` data: at most 65,535 bytes per frame
 
 Thread safety: `Send + Sync`.
@@ -433,6 +440,7 @@ Errors are `thiserror` enums. Every error type implements `std::error::Error`, `
 | `ConnectionClosed` | The MTA closed the connection in the middle of a frame | connection closed |
 | `ConnectionReset` | The MTA reset the connection | connection closed |
 | `FrameTooLarge { length, max }` | Packet longer than `per_connection_buffer` | connection closed |
+| `InvalidReply(ReplyError)` | `Reply::to_frame()` refused a reply that breaks a protocol or MTA rule | the reply is not sent |
 | `Config(ConfigError)` | Invalid configuration at build time | `build()` fails |
 | `Bind { addr, source }` | A listener could not bind | `run()` fails in `FailFast` mode |
 | `ResourceLimit(ResourceKind)` | `MaxConnections`, `MaxFds`, or `MaxMemory` reached | connection rejected or closed |
@@ -475,6 +483,22 @@ Errors are `thiserror` enums. Every error type implements `std::error::Error`, `
 | `VersionTooOld(u32)` | The MTA offered a protocol version below 2 |
 | `ActionsNotOffered(Actions)` | The MTA did not offer every action in `Handler::actions()` |
 
+### ReplyError
+
+| Variant | Meaning |
+|---------|---------|
+| `InvalidCode(u16)` | The reply code is not 4xx or 5xx |
+| `InvalidEnhancedCode` | The enhanced status code is not of the form `d.ddd.ddd` |
+| `EnhancedCodeMismatch` | The enhanced status code, or the text of a line without one, starts with a digit other than the reply code's first digit |
+| `LineBreak` | A line of reply text contains CR or LF |
+| `LineTooLong { length }` | A line of reply text is longer than 980 bytes |
+| `LineCount(usize)` | A reply has no lines, or more than 32 |
+| `MalformedReplyText` | `Reply::ReplyCode` text breaks the line rules: code, separator, or the same code on every line |
+| `UnescapedPercent` | `Reply::ReplyCode` text contains a `%` not written as `%%` |
+| `NulByte` | A text field contains a NUL byte |
+| `InvalidHeaderName` | A header name is empty or contains a colon, whitespace, or a control character |
+| `BodyChunkTooLarge { length }` | A `ReplaceBody` chunk is longer than 65,535 bytes |
+
 `ReloadError::Load` and `Error::Handler` box errors whose types belong to the application. They are the only boxed errors in the public API.
 
 A failed reload leaves the server running with the previous generation.
@@ -505,7 +529,7 @@ Cancellation: the library stops waiting for the MTA's next command when the shut
 | `ConfigWatch<A>` | yes | yes |
 | `ConnectionInfo` | yes | yes |
 | `SessionContext`, `MessageContext`, `EomContext` | yes | no (exclusive to one connection) |
-| `Frame`, `Command`, `Reply`, `MilterText` | yes | yes |
+| `Frame`, `Command`, `Reply`, `ReplyCode`, `MilterText` | yes | yes |
 | `Error` | yes | yes |
 
 `A` must be `Send + Sync + 'static`. `H` must be `Send + Sync + 'static`; `H::Session` and `H::Message` must be `Default + Send + 'static`.
