@@ -36,5 +36,5 @@ Scenarios for parsing and encoding Milter protocol frames. Conventions are in [R
 
 | ID | Level | Given | When | Then | Spec |
 |----|-------|-------|------|------|------|
-| FRM-060 | fuzz | Arbitrary input bytes | the input is parsed repeatedly until no frame remains | parsing never panics, and never holds more than the maximum in memory for one frame | [api: Frame](../reference/api-specification.md#frame) |
+| FRM-060 | property | Arbitrary input bytes, mixing random bytes with plausible length fields, and a maximum between 5 and 1,024 bytes | the input is parsed repeatedly until no frame remains | parsing never panics, every frame returned fits within the maximum, and an incomplete frame left in the buffer is shorter than the maximum | [api: Frame](../reference/api-specification.md#frame) |
 | FRM-061 | property | Any sequence of valid frames, split at random points into chunks | the chunks are fed to the parser one by one | the frames come out complete and in order | [api: Frame](../reference/api-specification.md#frame) |

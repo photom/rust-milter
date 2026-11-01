@@ -3,3 +3,10 @@
 //! The library runs the Milter protocol with the MTA and calls a handler for
 //! each protocol event, following libmilter's callback model. The design is
 //! documented in `docs/` of the repository.
+
+mod error;
+mod frame;
+
+pub use bytes::{Bytes, BytesMut};
+pub use error::{Error, ProtocolError, Result};
+pub use frame::Frame;
