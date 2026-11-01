@@ -135,7 +135,7 @@ spec:
 
 Notes on these settings:
 - The probes are TCP checks, because the milter protocol has no HTTP endpoint. Each probe opens and closes one connection, which rust-milter logs at DEBUG level and counts in its connection metrics.
-- After `SIGTERM`, rust-milter stops accepting at once, but Kubernetes removes the pod from the Service with a short delay. The `preStop` sleep keeps the pod accepting for those seconds. The `sleep` action needs Kubernetes 1.30 or later; on older clusters, use an `exec` hook in an image that has a `sleep` command.
+- rust-milter stops accepting as soon as it receives `SIGTERM`, but Kubernetes removes the pod from the Service with a short delay. Kubernetes runs the `preStop` hook before it sends `SIGTERM`, so the sleep keeps the pod accepting during that delay. The `sleep` action needs Kubernetes 1.30 or later; on older clusters, use an `exec` hook in an image that has a `sleep` command.
 - `terminationGracePeriodSeconds` must cover the pre-stop sleep plus rust-milter's shutdown: 5 + 5 + 30 = 40 seconds, so 45 leaves a margin. Kubernetes kills the container when this time runs out.
 
 Expose the Deployment with a Service:

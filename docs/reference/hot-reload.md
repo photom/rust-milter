@@ -18,19 +18,18 @@ Reloading the server configuration while rust-milter keeps running, triggered by
 - [Errors](#errors)
 - [Logging and metrics](#logging-and-metrics)
 - [Testing requirements](#testing-requirements)
-- [Decisions](#decisions)
 
 ## Scope
 
 rust-milter never reads a configuration file itself. The application registers a loader. On `SIGHUP` the server calls the loader, validates the result, and applies it. Why reload works this way is explained in [Configuration snapshots and reload](../explanation/configuration-and-reload.md).
 
 In scope:
-- reloading `ServerConfig` (see `docs/reference/configuration.md`)
+- reloading `ServerConfig` (see [configuration.md](configuration.md))
 - reloading the application's own configuration for its handlers, such as spam thresholds or allow lists
 - adding and removing listeners
 
 Out of scope:
-- settings fixed when the Tokio runtime starts, such as `worker_threads`. They need a restart.
+- the Tokio runtime settings, such as the number of worker threads. The application creates the runtime, so they change only with a restart.
 - replacing the handler code. That needs a new binary and a restart.
 - reloading the log filter. The application owns its `tracing` subscriber and can reload it from the same loader.
 
@@ -43,7 +42,7 @@ flowchart LR
     subgraph server["rust-milter server"]
         direction TB
         coord["Reload coordinator<br/>(one reload at a time)"]
-        loader["ConfigLoader<br/>(registered by the application)"]
+        loader["Reload loader<br/>(registered by the application)"]
         validate["Validation"]
         watch["Config channel<br/>(tokio::sync::watch,<br/>generation number)"]
         acceptor["Accept loop and listeners"]
@@ -62,7 +61,7 @@ flowchart LR
 
 Responsibilities:
 - The reload coordinator receives reload requests, runs one at a time, and reports the result.
-- The `ConfigLoader` belongs to the application. It returns a new `ServerConfig` and a new application configuration, or an error.
+- The reload loader belongs to the application. It returns a new `ServerConfig` and a new application configuration, or an error.
 - Validation runs the same checks as startup, plus the reload-specific checks below.
 - The config channel publishes each accepted configuration as an immutable `Arc` with an increasing generation number.
 - The accept loop reads the current configuration for every accepted connection. Each connection task keeps the snapshot it started with.
@@ -74,7 +73,7 @@ Responsibilities:
 sequenceDiagram
     participant Op as Operator
     participant Coord as Reload coordinator
-    participant Loader as ConfigLoader
+    participant Loader as Reload loader
     participant Acc as Accept loop
     participant Ch as Config channel
     participant Conn as Existing connections
@@ -127,9 +126,13 @@ A request that arrives while a reload is running is not lost. The coordinator re
 
 ## What each setting does on reload
 
-Every connection keeps the configuration snapshot it was accepted with until it closes. One milter connection lives for one SMTP session with Sendmail and Postfix, so every open connection picks up the new values within one SMTP session.
+Every connection keeps the configuration snapshot it was accepted with until it closes. One milter connection lives for one SMTP session with Sendmail and Postfix, so within one SMTP session of a reload, the connections on the old snapshot have closed and all traffic runs on the new values.
 
 Which settings apply at once, which apply to new connections or new listeners, and which need a restart is specified per setting in [configuration.md](configuration.md#reload-classes).
+
+A reload closes no open connection and rebinds no listener ([ADR 0005](../adr/0005-reload-closes-no-connection-and-rebinds-no-listener.md)):
+- A lowered `max_connections` closes no open connection. New connections are closed at once until the count falls below the new limit.
+- A changed `backlog` on an address that stays bound keeps its running value and is reported as `pending_restart`.
 
 A change to a setting that needs a restart does not fail the reload. The server applies everything else, keeps the running value for that setting, and lists it as `pending_restart` in the log and in the reload report.
 
@@ -143,7 +146,7 @@ The coordinator compares the old and new `bind_addresses` as sets:
 | Address only in the old set | Stop accepting on it after publishing. Open connections accepted on it keep running |
 | Address in both sets | Keep the listener as it is |
 
-A bind failure follows `bind_mode` from the new configuration (see `docs/reference/configuration.md`):
+A bind failure follows `bind_mode` from the new configuration (see [configuration.md](configuration.md#top-level)):
 - `FailFast`: close every listener this reload bound, keep the running configuration, and report the error.
 - `BestEffort`: publish the new configuration with the listeners that did bind, and report the failed addresses as a warning.
 
@@ -155,7 +158,7 @@ Handlers often need their own settings. The server carries them next to `ServerC
 
 Handlers read the application configuration through a `ConfigWatch<A>`, a thin wrapper around `tokio::sync::watch::Receiver<Arc<A>>`. `ConfigWatch::current()` returns the current `Arc<A>` and does not block.
 
-Read it once per SMTP session (at `SMFIC_CONNECT`) or once per message (at `SMFIC_MAIL`), and keep that `Arc` until the session or message ends. A message then sees one consistent configuration, even if a reload happens halfway through it.
+Read it once per SMTP session (in the `connect` callback) or once per message (in the `mail` callback), and keep that `Arc` in the handler's `Session` or `Message` value. A message then sees one consistent configuration, even if a reload happens halfway through it.
 
 The application configuration follows the same isolation rule as the rest of rust-milter: it holds settings, never data from an SMTP session.
 
@@ -174,7 +177,7 @@ The reload API (`ServerBuilder::reload_with`, `ServerHandle::reload`, `reload_wi
 
 ## Errors
 
-The reload errors are the variants of `ReloadError` in [api-specification.md](api-specification.md#reloaderror). Every one of them leaves the server running with the previous generation, and none changes the exit code.
+The reload errors are the variants of `ReloadError` in [api-specification.md](api-specification.md#reloaderror). Every one of them leaves the server running with the previous generation; none ends `Server::run()`.
 
 ## Logging and metrics
 
@@ -191,9 +194,11 @@ Logs carry the names of changed settings, never their values. A configuration ca
 
 The reload metrics are defined under "Configuration reload metrics" in [telemetry.md](telemetry.md).
 
-The health check gains two fields: `config_generation` and `pending_restart`.
+`ServerHandle::status()` reports two more fields next to the [health check](tcp-server.md#health-check) fields: `config_generation`, the current generation, and `pending_restart`, the settings that wait for a restart.
 
 ## Testing requirements
+
+The test scenarios are in [docs/testing/reload.md](../testing/reload.md), with the prefix `RLD`.
 
 Unit tests:
 - the listener set comparison for added, removed, and kept addresses
@@ -208,9 +213,3 @@ Integration tests:
 - an invalid configuration leaves the server unchanged
 - `SIGHUP` without a loader, and during shutdown
 - a handler reading `ConfigWatch` sees one value for a whole message while a reload happens
-
-## Decisions
-
-- The milter client sample has no reload. A program that uses it builds a new client to change its settings and shuts down the old one; sessions in progress finish on the old client.
-- A lowered `max_connections` closes no open connection; new connections are closed at once until the count drops below the new limit.
-- A changed `backlog` on an address that stays bound is not applied by rebinding the listener; it is reported as needing a restart.

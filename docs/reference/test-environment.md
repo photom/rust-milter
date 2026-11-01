@@ -11,6 +11,7 @@ The fixed TCP ports that rust-milter's tests listen on, how tests share them, an
 - [Environment variables](#environment-variables)
 - [Rules for tests](#rules-for-tests)
 - [Documentation check](#documentation-check)
+- [Interoperability environment](#interoperability-environment)
 - [Toolchain](#toolchain)
 
 ## Test ports
@@ -55,8 +56,8 @@ A lease does not keep the port bound. The server under test binds it after the t
 2. Bind only the leased port, and only on `127.0.0.1` or `::1`.
 3. Use the server's default `reuse_addr = true`. A test that stops a server and starts another on the same port in quick succession would otherwise fail on connections left in `TIME_WAIT`.
 4. Stop servers through `ServerHandle::shutdown()` and wait for them before the lease is dropped. Only process-level signal tests send real signals.
-5. Run timeouts on Tokio's paused clock (`tokio::time::pause`) wherever the test does not need real network delays, so that long timeouts take no real time.
-6. Tests that need IPv6 follow `RUST_MILTER_TEST_IPV6` and report a skip, not a pass, when IPv6 is unavailable.
+5. A timeout test finishes in under 10 seconds. It sets the timeout under test to a short value, such as 100 ms (`timeouts.idle` has a minimum of 1 s), or runs on Tokio's paused clock (`tokio::time::pause`) wherever it does not need real network delays.
+6. Tests that need IPv6 follow `RUST_MILTER_TEST_IPV6`. When IPv6 is unavailable and not required, they print a skip notice and return. The Rust test harness has no skipped result, so such a test counts as passed; the notice tells the reader it did not run.
 
 ## Documentation check
 
@@ -70,6 +71,64 @@ A lease does not keep the port bound. The server under test binds it after the t
 | Fragments | A fragment that cannot compile alone gets hidden setup lines, which do not appear in the rendered document |
 | Exceptions | A block that cannot compile at all, even with setup lines, is marked as not compiled, with the reason stated next to it |
 | Failure | A block that does not compile fails the test run, and with it the CI build |
+
+## Interoperability environment
+
+The interoperability scenarios (`INT`) run in a Docker Compose stack defined in `tests/interop/compose.yaml`, on every pull request ([testing ADR 0001](../testing/adr/0001-interop-tests-run-on-distro-mtas-in-compose-on-every-pr.md)).
+
+```mermaid
+flowchart LR
+    subgraph net["Compose network interop (internal, no route outside)"]
+        runner["runner<br/>INT tests, milter under test on port 8891,<br/>SMTP sink on port 2525"]
+        postfix["postfix<br/>(Debian package)"]
+        sendmail["sendmail<br/>(Debian package)"]
+        short["sendmail-short<br/>(short milter timeouts)"]
+    end
+    runner -->|"SMTP"| postfix
+    runner -->|"SMTP"| sendmail
+    runner -->|"SMTP"| short
+    postfix -->|"milter, and mail to void.invalid"| runner
+    sendmail -->|"milter, and mail to void.invalid"| runner
+    short -->|"milter, and mail to void.invalid"| runner
+```
+
+| Service | Image | Role |
+|---------|-------|------|
+| `runner` | `rust:1.89`, with the repository mounted | Runs the `INT` tests one at a time. Each test starts its own milter on port 8891 with the scenario's handler, sends mail through an MTA, and stops the milter. The runner also holds an SMTP sink on port 2525 that keeps every delivered message for the test to inspect |
+| `postfix` | The pinned Debian release with the `postfix` package | MTA under test |
+| `sendmail` | The same Debian release with the `sendmail` package | MTA under test |
+| `sendmail-short` | The `sendmail` image with the filter timeouts `T=E:3s;R:2s` | MTA for the Sendmail timeout scenario |
+
+All MTA images use one Debian release, pinned by tag. Each MTA container prints its version when it starts, and CI keeps the Compose logs, so a failure can be traced to a package upgrade.
+
+Postfix listens on several ports. Each port is an `smtpd` service in `master.cf` that overrides the settings in the table:
+
+| Port | Overrides | Used by |
+|------|-----------|---------|
+| 25 | none | most scenarios |
+| 2602, 2603, 2604 | `milter_protocol` = 2, 3, 4 | INT-002 |
+| 2625 | `milter_content_timeout = 2s` | INT-040 |
+| 2626 | `smtpd_peername_lookup = no`, so the client's hostname arrives as `[<address>]` | INT-031 |
+
+Settings common to both MTAs:
+
+| Setting | Value |
+|---------|-------|
+| Milter | `inet:8891@runner` for Sendmail; `inet:runner:8891` in Postfix's `smtpd_milters` |
+| Milter protocol | 6, except on the Postfix ports above |
+| Failure policy | tempfail: Postfix `milter_default_action = tempfail`, Sendmail filter flag `F=T` |
+| Test addresses | Only the domain `void.invalid`. Both MTAs route it to the sink on `runner` port 2525: Postfix through `transport_maps`, Sendmail through its mailertable. Sendmail accepts the unresolvable domain (`FEATURE(accept_unresolvable_domains)`) |
+| Relaying | Both MTAs accept mail for `void.invalid` from the Compose network only |
+
+Rules:
+1. The Compose network is internal. No container in it can reach the internet or the host's network, so test mail cannot leave even if an MTA routes it wrongly.
+2. Every email address in a test uses the domain `void.invalid`, which can never resolve.
+3. The `INT` tests run one at a time (`--test-threads=1`), because every MTA points at the one milter address `runner:8891`.
+4. Inside the stack the milter listens on the runner's network address, not on loopback. The loopback rule in [Rules for tests](#rules-for-tests) applies to `cargo test` only.
+5. The `INT` tests live in their own crate, `tests/interop`, and are `#[ignore]`d so that `cargo test` outside the stack skips them.
+6. A timeout scenario finishes in under 10 seconds, as in `cargo test`.
+
+How to run the stack is in [Run the tests](../how-to/run-the-tests.md#run-the-interoperability-tests).
 
 ## Toolchain
 

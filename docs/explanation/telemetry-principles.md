@@ -24,7 +24,7 @@ So every metric attribute in rust-milter takes its value from a small fixed set,
 
 ## Why the mail itself stays out
 
-A milter sees the most sensitive parts of email: who writes to whom, subject lines, message bodies, and authenticated user names. Telemetry data usually travels further than mail logs, to observability vendors and dashboards with broad access. rust-milter therefore records none of the SMTP data it sees: no envelope addresses, headers, body content, macro values, or reply text.
+A milter sees the most sensitive parts of email: who writes to whom, subject lines, message bodies, and authenticated user names. Telemetry data usually travels further than mail logs, to observability vendors and dashboards with broad access. rust-milter therefore records none of the SMTP data it sees: no envelope addresses, headers, body content, macro values, or reply text. No setting turns this on, not even for the SMTP client's address; [ADR 0003](../adr/0003-never-record-the-smtp-client-address.md) records why.
 
 Two details make this easy to get wrong. First, the peer address on a server span is the MTA's address, not the SMTP client's; the SMTP client's address arrives inside the protocol and counts as session data. Second, the queue ID is the one macro value that is recorded. It contains no personal data, and it is the key that connects a trace to the MTA's own log lines, which is what an operator needs when a specific message goes wrong.
 

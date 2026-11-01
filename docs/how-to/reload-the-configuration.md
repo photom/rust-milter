@@ -72,7 +72,7 @@ async fn load(path: PathBuf) -> Result<Reloaded<TaggerConfig>, LoadError> {
 }
 ```
 
-The loader's error type must implement `std::error::Error` and be `Send + Sync`.
+The loader's error type must implement `std::error::Error` and be `Send + Sync + 'static`.
 
 ## Register the loader
 
@@ -98,7 +98,8 @@ Take a `ConfigWatch` from the handler context. Read it once per message, in `mai
 use std::sync::Arc;
 
 use rust_milter::{
-    Actions, ConfigWatch, Decision, EomContext, Handler, HandlerContext, MessageContext, Result,
+    Actions, ConfigWatch, Decision, EomContext, Handler, HandlerContext, MessageContext, MilterText,
+    Result,
 };
 
 struct HeaderTagger {
@@ -123,8 +124,8 @@ impl Handler for HeaderTagger {
     async fn mail(
         &self,
         ctx: &mut MessageContext<Self>,
-        _sender: &str,
-        _args: &[String],
+        _sender: &MilterText,
+        _args: &[MilterText],
     ) -> Result<Decision> {
         *ctx.message() = Some(self.config.current());
         Ok(Decision::Continue)

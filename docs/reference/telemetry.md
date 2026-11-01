@@ -17,18 +17,18 @@ How rust-milter reports metrics, traces, and logs through OpenTelemetry. This do
 - [Exporting to Prometheus](#exporting-to-prometheus)
 - [Performance](#performance)
 - [Testing requirements](#testing-requirements)
-- [Open questions](#open-questions)
 
 ## Scope
 
 In scope:
-- metrics for the server (`docs/reference/tcp-server.md`) and configuration reload (`docs/reference/hot-reload.md`)
+- metrics for the server ([tcp-server.md](tcp-server.md)) and configuration reload ([hot-reload.md](hot-reload.md))
 - traces of connections, SMTP sessions, and messages
 - the bridge from rust-milter's `tracing` logs to OpenTelemetry logs
 
 Out of scope:
 - choosing or configuring an exporter, a backend, or sampling. These belong to the application.
 - a Prometheus client inside the library (see [Exporting to Prometheus](#exporting-to-prometheus))
+- a metrics collector trait or another metrics facade. Metrics come from the OpenTelemetry instruments and `ServerHandle::status()` ([ADR 0004](../adr/0004-metrics-come-from-opentelemetry-and-status.md)).
 
 ## Requirements
 
@@ -84,7 +84,9 @@ No metric attribute, span attribute, span event, or log field produced by rust-m
 
 Telemetry follows the session isolation rule (see [Connection reuse and session isolation](../explanation/connection-reuse.md)): a session span ends when its SMTP session ends, and nothing from it is attached to a later session on the same connection.
 
-A handler can add its own attributes to the current span. What it records is the application's responsibility; `logging-principles` gives the masking rules.
+No setting makes rust-milter record any of this data ([ADR 0003](../adr/0003-never-record-the-smtp-client-address.md)).
+
+A handler can add its own attributes to the current span. The rules above cover only what rust-milter records; what a handler records is the application's responsibility. [Record the SMTP client's address](../how-to/record-the-smtp-client-address.md) shows how a handler records the client's address.
 
 ## Metrics
 
@@ -196,7 +198,7 @@ The Milter protocol carries no trace context, and Sendmail and Postfix cannot se
 
 ## Logs
 
-rust-milter logs through `tracing`, with the fields from `docs/reference/tcp-server.md` and the masking rules from `logging-principles`. To send those logs over OpenTelemetry, the application adds the `opentelemetry-appender-tracing` layer. With `tracing-opentelemetry` installed as well, every log record carries the trace and span IDs of the span it was emitted in, which links logs to traces without extra work in the library.
+rust-milter logs through `tracing`, with the fields listed in [tcp-server.md](tcp-server.md#logging-specification), and its log fields follow [Data that must never be recorded](#data-that-must-never-be-recorded). To send those logs over OpenTelemetry, the application adds the `opentelemetry-appender-tracing` layer. With `tracing-opentelemetry` installed as well, every log record carries the trace and span IDs of the span it was emitted in, which links logs to traces without extra work in the library.
 
 ## Configuration and API
 
@@ -211,8 +213,6 @@ The application installs the SDK: it builds a `MeterProvider` with an exporter, 
 
 Standard `OTEL_*` environment variables, such as `OTEL_EXPORTER_OTLP_ENDPOINT`, are read by the SDK in the application, not by rust-milter.
 
-The `ServerHandle::metrics()` method listed in `docs/reference/tcp-server.md` is replaced by `status()` plus the instruments above.
-
 ## Exporting to Prometheus
 
 rust-milter does not depend on a Prometheus client. To scrape it with Prometheus, export OTLP to the OpenTelemetry Collector and use its Prometheus exporter, or install an OpenTelemetry Prometheus exporter in the application.
@@ -224,17 +224,14 @@ When OpenTelemetry metrics are converted to Prometheus, dots become underscores,
 - Counters and gauges are observable instruments that read the status atomics at collection time. Recording a connection or a command costs one atomic increment, with or without the `otel` feature.
 - Each counter attribute has a fixed set of values, so the status counters are fixed arrays of atomics indexed by the attribute enums. No map or lock sits on the hot path.
 - Histograms are synchronous and record once per connection, message, or end of message, never per header or body chunk.
-- Span creation follows the application's sampler. With `trace_commands = all`, a message with many headers produces many events; keep it for debugging.
+- Span creation follows the application's sampler. With `trace_commands` set to `all`, a message with many headers produces many events; keep it for debugging.
 
 ## Testing requirements
+
+The test scenarios are in [docs/testing/telemetry.md](../testing/telemetry.md), with the prefix `TEL`.
 
 - With the `otel` feature off, the crate builds and links no OpenTelemetry crate.
 - With an in-memory exporter from the SDK's test utilities: every metric in this document is reported with its name, unit, and attribute set, and the values match `status()`.
 - A forbidden-data test runs a session with known envelope, header, body, and macro values, and searches every exported metric, span, event, and log record for them. None may appear, apart from the queue ID on the message span.
 - Span structure: one `milter.connection`, one `milter.session` per SMTP session, and one `milter.message` per message, including after `SMFIC_QUIT_NC`, where no span from the first session is the parent of the second.
 - Cardinality: after 10,000 connections from different peers, every metric has the same number of time series as after one.
-
-## Open questions
-
-1. Should the SMTP client's address be available as an opt-in span attribute? It is useful for abuse investigations, but it is personal data under many privacy laws and is excluded by default.
-2. `docs/explanation/architecture.md` and `docs/reference/api-specification.md` list a future "metrics collector trait". Should it be dropped in favor of this design?

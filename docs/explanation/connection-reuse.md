@@ -31,7 +31,7 @@ From `ST_HELO`, libmilter treats `SMFIC_QUIT_NC` as an invalid transition and dr
 
 The client cannot ask a milter which implementation it runs, and a wrong guess costs a hung session. So the client tracks the milter's protocol state with libmilter's own rules and sends `SMFIC_QUIT_NC` only where libmilter would accept it. Anywhere else it closes the connection with `SMFIC_QUIT` and opens a new one for the next session.
 
-The result is modest. A connection is reused when the milter ended the last message with `SMFIR_CONTINUE`. A milter that ends with `SMFIR_ACCEPT` gets a new connection per session, which is exactly what Sendmail and Postfix give it today. Reuse is an optimization where it is safe, never a change in behavior where it is not.
+The result is modest. A connection is reused when the milter ended the last message with `SMFIR_CONTINUE`. A milter that ends with `SMFIR_ACCEPT` gets a new connection per session, which is what Sendmail and Postfix give it today.
 
 The client never sends an extra command to reach a reusable state. An extra `SMFIC_UNKNOWN`, for example, would make the milter run its callback for an SMTP command no client ever sent.
 
@@ -43,6 +43,8 @@ Accepting it everywhere sounds friendlier, but it pushes the hard part onto ever
 
 Closing the connection keeps the rule small. `SMFIC_QUIT_NC` is valid exactly where libmilter says it is, and anywhere else the connection closes at once, so the MTA reconnects instead of waiting for a timeout. The client's rules then work the same against libmilter and rust-milter servers.
 
+The same reasoning covers every other command that libmilter would drop while the MTA waits for a reply, such as `SMFIC_RCPT` before any `SMFIC_MAIL`: the server closes the connection. Commands that libmilter recovers from, such as `SMFIC_MAIL` in the middle of a message, recover the same way in rust-milter.
+
 The decision is recorded in [ADR 0001](../adr/0001-commands-in-wrong-state-recover-like-libmilter-or-close.md).
 
 The library enforces this rule itself. Its protocol engine runs the whole conversation, as libmilter's does, so it knows the protocol state without help from the handler ([ADR 0002](../adr/0002-library-runs-the-protocol-handlers-decide.md)). Handler authors never deal with `SMFIC_QUIT_NC` at all: when a session ends this way, the engine calls `session_end` and drops the session's state.
@@ -51,7 +53,7 @@ The library enforces this rule itself. Its protocol engine runs the whole conver
 
 A milter connection that serves one SMTP session after another carries traffic from different SMTP clients, who may be different people and organizations. The previous session's sender, recipients, authenticated user name (the `{auth_authen}` macro), headers, and replies are personal data that must not reach the next session.
 
-So the rule is blunt: when a session ends, everything learned during it is discarded, whether the connection is reused or not. Only what belongs to the connection itself survives: the socket and the options negotiated once per connection. Even the SMTP client's address from `SMFIC_CONNECT` is session data, because the next session comes from a different client.
+When a session ends, the client and the server discard everything learned during it, whether the connection is reused or not. Only what belongs to the connection itself survives: the socket and the options negotiated once per connection. Even the SMTP client's address from `SMFIC_CONNECT` is session data, because the next session comes from a different client.
 
 A rule that depends on remembering to clear each field fails the first time someone adds a field. The design makes the type system carry the rule instead: the pooled connection has no field that could hold SMTP data, and everything a session learns lives in a session object that is dropped when the session ends.
 

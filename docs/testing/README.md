@@ -12,9 +12,17 @@ Ordered as the components will be built:
 | [message.md](message.md) | `Command`, `Reply`, and `ReplyCode` | `CMD`, `RPL`, `RCD` |
 | [configuration.md](configuration.md) | Configuration validation and the serde file format | `CFG` |
 | [protocol-engine.md](protocol-engine.md) | Negotiation, callbacks, decisions, macros, state machine, session isolation | `ENG` |
+| [server.md](server.md) | Listeners, socket options, connection lifecycle and timeouts, resource limits, status | `SRV` |
+| [shutdown.md](shutdown.md) | Graceful and forced shutdown, signals, exit codes | `SHT` |
+| [reload.md](reload.md) | Configuration reload, listener changes, application configuration | `RLD` |
+| [telemetry.md](telemetry.md) | Metrics, traces, and the data rules | `TEL` |
 | [documentation.md](documentation.md) | Example code in the tutorials and how-to guides compiles in CI | `DOC` |
+| [interoperability.md](interoperability.md) | rust-milter behind real Postfix and Sendmail | `INT` |
+| [load-and-chaos.md](load-and-chaos.md) | Sustained load and failure injection | `LOD`, `CHS` |
 
-Still to come: the transport and server (`SRV`), shutdown (`SHT`), configuration reload (`RLD`), telemetry (`TEL`), interoperability with Sendmail and Postfix (`INT`), and load and chaos tests. The milter client sample is not part of the product; CI only builds it.
+Decisions about test environments, CI, and test tooling are recorded in [testing ADRs](adr/).
+
+`cargo test` runs the files up to documentation.md. The interoperability, load, and chaos scenarios run in their own environments. The milter client sample is not part of the product; CI only builds it.
 
 ## Format
 
@@ -23,7 +31,7 @@ Each file groups its scenarios into tables with these columns:
 | Column | Content |
 |--------|---------|
 | ID | `<PREFIX>-<NNN>`, unique and never reused. Gaps between numbers leave room for related scenarios |
-| Level | `unit`, `integration`, `property` (property-based test), `fuzz`, or `doctest` (code compiled from a document) |
+| Level | `unit`, `integration`, `property` (property-based test), `fuzz`, `doctest` (code compiled from a document), `interop` (behind a real MTA), `load`, or `chaos` |
 | Given | The starting state |
 | When | The single action under test |
 | Then | The observable result to check |
@@ -32,7 +40,7 @@ Each file groups its scenarios into tables with these columns:
 ## Rules
 
 1. Every MUST rule and every behavior table row in `docs/reference/` has at least one scenario.
-2. A test names its scenario ID in its function name or doc comment, so each scenario can be traced to its test.
+2. A test's function name starts with its scenario ID in lowercase, such as `frm_001_parses_one_complete_frame`, so each scenario can be traced to its test and selected with `cargo test frm_001`.
 3. A test is written from its scenario before the code that makes it pass.
 4. A case found during implementation is added here first, with a new ID, then tested.
 5. When a specification changes, the scenarios that link to it are updated in the same change.

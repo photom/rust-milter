@@ -6,7 +6,7 @@ This guide shows how to write an integration test that starts a server on a leas
 
 ## 1. Lease a port
 
-Integration tests share the helper `tests/support/ports.rs`. Take a lease at the start of the test and keep it in a variable until the end:
+Integration tests share the helper `tests/support/ports.rs`. Name the test after its scenario ID from `docs/testing/`, take a lease at the start of the test, and keep it in a variable until the end:
 
 ```rust
 mod support;
@@ -14,7 +14,7 @@ mod support;
 use support::ports::PortLease;
 
 #[tokio::test]
-async fn server_answers_option_negotiation() {
+async fn eng_001_server_answers_option_negotiation() {
     let lease = PortLease::acquire().await;
     let addr = lease.v4(); // 127.0.0.1:<leased port>
     // ...
@@ -46,7 +46,7 @@ let task = tokio::spawn(server.run());
 Connect a plain TCP stream to the leased address and exchange frames:
 
 ```rust
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 use rust_milter::protocol::{SMFIC_OPTNEG, SMFI_CURR_ACTS, SMFI_CURR_PROT};
 use rust_milter::Frame;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

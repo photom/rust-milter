@@ -1,11 +1,15 @@
 # Architecture decision records
 
-Decisions that shape rust-milter, with their context and consequences. These records sit outside the Diátaxis structure of the rest of `docs/`: each one is a dated record of a decision, kept as it was made.
+Decisions that shape rust-milter's design and specification, with their context and consequences. Decisions about testing, such as test environments and CI, are in [docs/testing/adr/](../testing/adr/). These records sit outside the Diátaxis structure of the rest of `docs/`: each one is a dated record of a decision, kept as it was made.
 
 | ADR | Title | Status |
 |-----|-------|--------|
 | [0001](0001-commands-in-wrong-state-recover-like-libmilter-or-close.md) | Commands in a wrong state recover like libmilter, or close the connection | Accepted |
 | [0002](0002-library-runs-the-protocol-handlers-decide.md) | The library runs the Milter protocol; handlers make decisions | Accepted |
+| [0003](0003-never-record-the-smtp-client-address.md) | rust-milter never records the SMTP client's address | Accepted |
+| [0004](0004-metrics-come-from-opentelemetry-and-status.md) | Metrics come from OpenTelemetry and status(), with no collector trait | Accepted |
+| [0005](0005-reload-closes-no-connection-and-rebinds-no-listener.md) | A reload closes no open connection and rebinds no listener | Accepted |
+| [0006](0006-connection-timeouts-per-frame-and-libmilter-idle-default.md) | Connection timeouts are split per frame, and the idle default follows libmilter | Accepted |
 
 Conventions:
 - One file per decision, named `NNNN-short-title.md`, numbered in order.
