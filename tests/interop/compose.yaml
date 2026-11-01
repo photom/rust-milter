@@ -1,0 +1,33 @@
+# Interoperability stack: see docs/reference/test-environment.md
+# ("Interoperability environment"). Run with:
+#   docker compose -f tests/interop/compose.yaml run --build --rm runner
+name: rust-milter-interop
+
+networks:
+  # Internal: no container can reach the internet or the host's network,
+  # so test mail cannot leave the stack.
+  interop:
+    internal: true
+
+services:
+  runner:
+    build:
+      context: ../..
+      dockerfile: tests/interop/runner/Dockerfile
+    networks: [interop]
+    depends_on: [postfix, sendmail, sendmail-short]
+
+  postfix:
+    build: ./postfix
+    networks: [interop]
+
+  sendmail:
+    build: ./sendmail
+    networks: [interop]
+
+  sendmail-short:
+    build:
+      context: ./sendmail
+      args:
+        FILTER_TIMEOUTS: "E:3s;R:2s"
+    networks: [interop]
