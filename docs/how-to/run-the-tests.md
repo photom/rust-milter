@@ -45,6 +45,19 @@ cargo nextest run
 
 `cargo-nextest` does not run doctests. Run the documentation check separately with `cargo test --doc`.
 
+## Run the CI checks before you push
+
+Run the same checks as CI, except the interoperability tests and CodeQL:
+
+```sh
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo +1.85 check -p rust-milter --lib --all-features
+cargo deny --all-features check
+```
+
+The MSRV check needs the 1.85 toolchain (`rustup toolchain install 1.85`), and the last command needs [cargo-deny](https://github.com/EmbarkStudios/cargo-deny).
+
 ## Run the interoperability tests
 
 The interoperability tests run rust-milter behind real Postfix and Sendmail, in a Docker Compose stack. You need Docker with Compose v2.
@@ -58,7 +71,7 @@ The interoperability tests run rust-milter behind real Postfix and Sendmail, in 
 2. Run one scenario, for example INT-011:
 
    ```sh
-   docker compose -f tests/interop/compose.yaml run --rm runner \
+   docker compose -f tests/interop/compose.yaml run --build --rm runner \
      cargo test -p rust-milter-interop -- --ignored --test-threads=1 int_011
    ```
 

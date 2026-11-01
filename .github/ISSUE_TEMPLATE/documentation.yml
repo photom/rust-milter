@@ -1,0 +1,36 @@
+name: Documentation fix
+description: A document is wrong, unclear, out of date, or missing.
+labels: [documentation]
+body:
+  - type: input
+    id: location
+    attributes:
+      label: Document
+      description: The file path or URL, and the section.
+      placeholder: docs/how-to/run-the-tests.md, "Run the interoperability tests"
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Problem
+      options:
+        - Wrong
+        - Unclear
+        - Out of date
+        - Missing
+        - Broken link or example
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: What the document says now, and why that is a problem.
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested fix
+      description: The text you would like to see instead, if you have it.
