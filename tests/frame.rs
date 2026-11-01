@@ -250,3 +250,33 @@ proptest! {
         prop_assert!(buf.is_empty());
     }
 }
+
+/// Input for FRM-060: random bytes, mixed with length fields small enough
+/// that the parser reads past them instead of rejecting the first frame.
+fn frm_060_input() -> impl Strategy<Value = Vec<u8>> {
+    let random = proptest::collection::vec(any::<u8>(), 0..64);
+    let plausible_length = (0u32..1_100).prop_map(|length| length.to_be_bytes().to_vec());
+    proptest::collection::vec(prop_oneof![random, plausible_length], 0..32)
+        .prop_map(|pieces| pieces.concat())
+}
+
+proptest! {
+    #[test]
+    fn frm_060_arbitrary_input_never_panics_or_exceeds_the_maximum(
+        input in frm_060_input(),
+        max in 5usize..=1_024,
+    ) {
+        let mut buf = BytesMut::from(&input[..]);
+
+        loop {
+            match Frame::parse(&mut buf, max) {
+                Ok(Some(frame)) => prop_assert!(4 + 1 + frame.data.len() <= max),
+                Ok(None) => {
+                    prop_assert!(buf.len() < max, "{} bytes left over", buf.len());
+                    break;
+                }
+                Err(_) => break,
+            }
+        }
+    }
+}
