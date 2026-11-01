@@ -71,7 +71,7 @@ The interoperability tests run rust-milter behind real Postfix and Sendmail, in 
 2. Run one scenario, for example INT-011:
 
    ```sh
-   docker compose -f tests/interop/compose.yaml run --rm runner \
+   docker compose -f tests/interop/compose.yaml run --build --rm runner \
      cargo test -p rust-milter-interop -- --ignored --test-threads=1 int_011
    ```
 
