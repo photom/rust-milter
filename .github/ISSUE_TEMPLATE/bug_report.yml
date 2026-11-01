@@ -1,0 +1,70 @@
+name: Bug report
+description: rust-milter does something wrong, crashes, or does not work with an MTA.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report security vulnerabilities here. Use "Report a security vulnerability" on the new issue page instead.
+
+        Before you paste logs or messages, remove real email addresses, hostnames, and SMTP client IP addresses. Use addresses under `void.invalid` in examples, such as `sender@void.invalid`.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What rust-milter did, including any error message.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The smallest handler and configuration that shows the bug, and the SMTP session that triggers it.
+      placeholder: |
+        1. Run a milter with this handler: ...
+        2. Send mail from sender@void.invalid to rcpt@void.invalid through Postfix
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: rust-milter version
+      placeholder: 0.1.0, or a commit SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: mta
+    attributes:
+      label: MTA
+      options:
+        - Postfix
+        - Sendmail
+        - Another MTA
+        - None (the library alone)
+    validations:
+      required: true
+  - type: input
+    id: mta-version
+    attributes:
+      label: MTA version and milter protocol version
+      placeholder: Postfix 3.10.1, milter_protocol = 6
+  - type: input
+    id: environment
+    attributes:
+      label: Rust version and operating system
+      placeholder: rustc 1.89.0, Debian 13
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: rust-milter's log and the MTA's log around the failure.
+      render: text
