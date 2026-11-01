@@ -6,7 +6,10 @@
 
 mod error;
 mod frame;
+mod message;
+pub mod protocol;
 
 pub use bytes::{Bytes, BytesMut};
-pub use error::{Error, ProtocolError, Result};
+pub use error::{Error, ProtocolError, ReplyError, Result};
 pub use frame::Frame;
+pub use message::{AddressFamily, Command, MilterText, Reply, ReplyCode};
