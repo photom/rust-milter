@@ -282,17 +282,20 @@ Every setting in [ServerConfig reference](#serverconfig-reference) has a variabl
 | Durations, enums, sizes, socket addresses | The same text as in the [file format](#mapping), for example `30s`, `best_effort`, `131072`, `0.0.0.0:8891` |
 | Booleans | `true` or `false` |
 | Lists (`bind_addresses`) | Items separated by commas; spaces around items are ignored |
-| `keepalive` | `false` turns keepalive off; the `KEEPALIVE__*` variables set its parts |
+| `keepalive` | `false` turns keepalive off; the `KEEPALIVE__*` variables set its parts, and turn keepalive on with the defaults for the other parts if it was off |
 | `Option` fields | Leave the variable unset to keep the default |
 
 ### Rules
 
 1. Only variables that start with the prefix are read. All others, such as `PATH` or `OTEL_EXPORTER_OTLP_ENDPOINT`, are ignored.
 2. A variable with the prefix that names no setting is an error (`ConfigError::UnknownEnvVariable`), so a misspelled name fails instead of being ignored.
-3. A value that cannot be parsed is an error (`ConfigError::InvalidEnvValue`) that names the variable and the reason, not the value.
-4. With `apply_env`, environment variables win over the values already in the configuration. Applying a file first and the environment second gives the order defaults, then file, then environment.
-5. The helpers check names and value formats only. The [validation rules](#validation-rules) run as usual when the configuration reaches `build()` or a reload.
-6. The process environment does not change while the process runs. A reload loader that calls `apply_env` again gets the same values, so changing an environment variable takes a restart; in Kubernetes, a rollout.
+3. A value that cannot be parsed is an error (`ConfigError::InvalidEnvValue`) that names the variable and the reason, not the value. A value that is not valid UTF-8 is such an error too.
+4. A name matches only in upper case, so `RUST_MILTER_max_connections` names no setting.
+5. `KEEPALIVE` = `false` together with a `KEEPALIVE__*` variable is an error (`InvalidEnvValue` naming `KEEPALIVE`). The variables come in no order that could decide which one wins.
+6. When any variable fails, `apply_env` and `apply_vars` leave the configuration unchanged.
+7. With `apply_env`, environment variables win over the values already in the configuration. Applying a file first and the environment second gives the order defaults, then file, then environment.
+8. The helpers check names and value formats only. The [validation rules](#validation-rules) run as usual when the configuration reaches `build()` or a reload.
+9. The process environment does not change while the process runs. A reload loader that calls `apply_env` again gets the same values, so changing an environment variable takes a restart; in Kubernetes, a rollout.
 
 How to run a milter in a container with these variables is shown in the how-to guide [Run a milter in Docker or Kubernetes](../how-to/run-a-milter-in-docker-or-kubernetes.md).
 
