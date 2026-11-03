@@ -112,7 +112,7 @@ Lowering `max_connections` below the current count closes no open connection. Ne
 | `resource_limits` | `ResourceLimitsConfig` | see below | | |
 | `telemetry` | `TelemetryConfig` | see below | | |
 
-`bind_addresses` also accepts the libmilter forms `inet:port@host` and `inet6:port@host` when parsed from text. `unix:` and `local:` addresses are rejected; rust-milter does not support Unix domain sockets.
+`bind_addresses` also accepts the libmilter forms `inet:port@host` and `inet6:port@host` when parsed from text. `ServerConfig::parse_bind_address` parses that text, and the file format and the environment variables use it. The host must be an IP address of the form's family, because no name is looked up. `unix:` and `local:` addresses are rejected; rust-milter does not support Unix domain sockets.
 
 ### TimeoutConfig
 
@@ -200,7 +200,7 @@ The application validates `A` in its loader. If the loader returns an error, the
 
 ## Validation rules
 
-The same rules run at startup and on every reload. A failure at startup makes `build()` return an error, and the server does not start. A failure on reload leaves the running generation unchanged.
+The same rules run at startup and on every reload, and `ServerConfig::validate()` runs them on demand. A failure at startup makes `build()` return an error, and the server does not start. A failure on reload leaves the running generation unchanged.
 
 1. Every field is within the range in the reference tables.
 2. `bind_addresses` is not empty and has no duplicates.
