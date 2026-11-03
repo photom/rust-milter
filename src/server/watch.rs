@@ -16,9 +16,9 @@ pub(crate) struct Publisher<A> {
 }
 
 impl<A> ConfigWatch<A> {
-    /// A watch on `app` as generation 0, and its publisher.
+    /// A watch on `app` as the first generation, and its publisher.
     pub(crate) fn new(app: A) -> (ConfigWatch<A>, Publisher<A>) {
-        let (sender, receiver) = watch::channel((0, Arc::new(app)));
+        let (sender, receiver) = watch::channel((super::FIRST_GENERATION, Arc::new(app)));
         (ConfigWatch { receiver }, Publisher { _sender: sender })
     }
 

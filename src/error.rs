@@ -53,6 +53,10 @@ pub enum Error {
     #[error("invalid configuration")]
     Config(#[from] ConfigError),
 
+    /// A resource limit was reached.
+    #[error("the {0} limit was reached")]
+    ResourceLimit(ResourceKind),
+
     /// A listener could not bind its address.
     #[error("cannot bind {addr}")]
     Bind {
@@ -92,6 +96,28 @@ impl std::fmt::Display for TimeoutKind {
             TimeoutKind::Read => "read",
             TimeoutKind::Write => "write",
             TimeoutKind::Idle => "idle",
+        })
+    }
+}
+
+/// Which resource limit was reached; see `ResourceLimitsConfig`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum ResourceKind {
+    /// `max_connections`.
+    MaxConnections,
+    /// `resource_limits.max_fds`.
+    MaxFds,
+    /// `resource_limits.max_memory`.
+    MaxMemory,
+}
+
+impl std::fmt::Display for ResourceKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            ResourceKind::MaxConnections => "max_connections",
+            ResourceKind::MaxFds => "max_fds",
+            ResourceKind::MaxMemory => "max_memory",
         })
     }
 }
