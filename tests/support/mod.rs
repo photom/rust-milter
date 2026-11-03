@@ -44,11 +44,25 @@ impl TestServer {
         H: Handler,
         F: FnOnce(&HandlerContext<()>) -> H + 'static,
     {
+        TestServer::start_with(|_| {}, factory).await
+    }
+
+    /// Starts a server on a leased port, with the configuration changed by
+    /// `configure` first.
+    pub async fn start_with<H, F>(
+        configure: impl FnOnce(&mut ServerConfig),
+        factory: F,
+    ) -> TestServer
+    where
+        H: Handler,
+        F: FnOnce(&HandlerContext<()>) -> H + 'static,
+    {
         let lease = PortLease::acquire().await;
-        let config = ServerConfig {
+        let mut config = ServerConfig {
             bind_addresses: vec![lease.v4()],
             ..ServerConfig::default()
         };
+        configure(&mut config);
         let server = Server::builder()
             .config(config)
             .handler(factory)
@@ -61,6 +75,11 @@ impl TestServer {
             task,
             lease,
         }
+    }
+
+    /// The server's address.
+    pub fn address(&self) -> std::net::SocketAddr {
+        self.lease.v4()
     }
 
     /// A new connection of the fake MTA.
