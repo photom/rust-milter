@@ -41,7 +41,8 @@ pub enum ReplyError {
     #[error("text that must be one line contains CR or LF")]
     LineBreak,
 
-    /// A line of reply text is longer than 980 bytes.
+    /// A line of reply text, with each `%` written as `%%`, is longer than 980
+    /// bytes.
     #[error("a {length}-byte line of reply text exceeds 980 bytes")]
     LineTooLong {
         /// Length of the line, in bytes.
@@ -162,12 +163,13 @@ pub enum ConfigError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum AddressError {
-    /// The text is not an address in a supported form; `unix:` and `local:`
-    /// addresses are not supported.
+    /// The text is not an address in a supported form. `unix:` and `local:`
+    /// addresses are not supported, nor is Postfix's `inet:host:port`.
     #[error("not an address of the form host:port, inet:port@host, or inet6:port@host")]
     InvalidFormat,
 
-    /// The host is not an IP address of the form's family.
+    /// The host is not an IP address of the form's family, or its scope ID is
+    /// not a number.
     #[error("the host is not an IP address")]
     InvalidHost,
 
