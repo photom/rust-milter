@@ -389,6 +389,13 @@ Thread safety: `Send + Sync`.
 
 All settings, defaults, valid ranges, and reload behavior are in [configuration.md](configuration.md). The reload procedure is in [hot-reload.md](hot-reload.md).
 
+Checks on `ServerConfig`:
+
+| Method | Returns |
+|--------|---------|
+| `ServerConfig::validate(&self)` | `Result<(), ConfigError>`: the [validation rules](configuration.md#validation-rules) that `build()` and every reload also run |
+| `ServerConfig::parse_bind_address(text)` | `Result<SocketAddr, AddressError>`: `host:port`, `[v6]:port`, `inet:port@host`, or `inet6:port@host`, with an IP address as host |
+
 Environment variable helpers on `ServerConfig` ([configuration.md](configuration.md#environment-variables)):
 
 | Method | Returns |
@@ -450,7 +457,7 @@ Errors are `thiserror` enums. Every error type implements `std::error::Error`, `
 
 | Variant | Meaning |
 |---------|---------|
-| `OutOfRange { field, value, allowed }` | A value outside its range in [configuration.md](configuration.md) |
+| `OutOfRange { field, value, allowed }` | A value outside its range in [configuration.md](configuration.md); `field` is the setting's path, such as `timeouts.connect`, `value` the value as text, and `allowed` the range |
 | `MissingBindAddress` | `bind_addresses` is empty |
 | `DuplicateBindAddress(SocketAddr)` | The same address appears twice |
 | `Address(AddressError)` | An address string could not be parsed |
@@ -459,7 +466,7 @@ Errors are `thiserror` enums. Every error type implements `std::error::Error`, `
 | `UnknownEnvVariable(String)` | An environment variable with the configured prefix names no setting |
 | `InvalidEnvValue { variable, reason }` | An environment variable's value cannot be parsed; the value itself is not included |
 
-`AddressError`: `InvalidFormat` (including `unix:` and `local:` addresses), `InvalidHost`, `InvalidPort`.
+`AddressError`: `InvalidFormat` (including `unix:` and `local:` addresses), `InvalidHost` (not an IP address of the form's family), `InvalidPort` (not 1 to 65535).
 
 ### ReloadError
 

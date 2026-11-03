@@ -25,6 +25,7 @@ Scenarios for configuration validation, address parsing, and the serde file form
 | CFG-021 | unit | `unix:/run/milter.sock` and `local:/run/milter.sock` | each is parsed | `InvalidFormat` | [configuration: Top level](../reference/configuration.md#top-level) |
 | CFG-022 | unit | Ports 0 and 70000 | each is parsed | `InvalidPort` | [configuration: Top level](../reference/configuration.md#top-level) |
 | CFG-023 | unit | `inet:8891@not a host` | it is parsed | `InvalidHost` | [api: ConfigError](../reference/api-specification.md#configerror) |
+| CFG-024 | unit | `inet:8891@::1` and `inet6:8891@127.0.0.1`, a host of the other family | each is parsed | `InvalidHost` | [configuration: Top level](../reference/configuration.md#top-level) |
 
 ## File format (serde feature)
 
