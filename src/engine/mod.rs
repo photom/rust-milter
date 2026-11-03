@@ -25,33 +25,65 @@ use crate::handler::{
     MessageContext, Negotiated, SessionContext, SessionEnd,
 };
 use crate::protocol::*;
-use crate::server::ConnectionInfo;
+use crate::server::{ConnectionInfo, Reservation};
 use crate::{
     AddressFamily, Command, Frame, MilterText, ProtocolError, Reply, Result, TimeoutConfig,
 };
 
+/// How a connection ended, when no error ended it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Closed {
+    /// The MTA closed it, or ended it with `SMFIC_QUIT`.
+    ByClient,
+    /// The server shut down.
+    ByShutdown,
+}
+
+/// What happened on a connection, for the close log.
+#[derive(Debug)]
+pub(crate) struct Report {
+    /// How the connection ended; the handler has already seen `abort` and
+    /// `session_end` for it.
+    pub(crate) outcome: Result<Closed>,
+    pub(crate) bytes_read: u64,
+    pub(crate) bytes_written: u64,
+    pub(crate) commands: u64,
+}
+
+/// The limits of one connection.
+pub(crate) struct Limits<'a> {
+    /// The longest packet accepted, `per_connection_buffer`.
+    pub(crate) max_packet: usize,
+    pub(crate) timeouts: &'a TimeoutConfig,
+    /// The connection's share of `max_memory`.
+    pub(crate) memory: Reservation,
+}
+
 /// Runs the conversation on one connection until it ends.
-///
-/// Returns the error that closed the connection, if any. The handler has
-/// already seen `abort` and `session_end` for it.
 pub(crate) async fn run<H, R, W>(
     handler: &H,
     reader: R,
     writer: W,
     connection: Arc<ConnectionInfo>,
-    max_packet: usize,
-    timeouts: &TimeoutConfig,
+    limits: Limits<'_>,
     shutdown: CancellationToken,
-) -> Result<()>
+) -> Report
 where
     H: Handler,
     R: AsyncRead + Unpin + Send,
     W: AsyncWrite + Send + Unpin + 'static,
 {
     let accepted_at = tokio::time::Instant::from_std(connection.accepted_at);
+    let timeouts = limits.timeouts;
     let mut engine = Engine {
         handler,
-        inbound: Inbound::new(reader, max_packet, timeouts.clone(), accepted_at),
+        inbound: Inbound::new(
+            reader,
+            limits.max_packet,
+            timeouts.clone(),
+            accepted_at,
+            limits.memory,
+        ),
         ctx: EomContext {
             message: MessageContext {
                 session: SessionContext::new(connection, shutdown.clone()),
@@ -65,7 +97,13 @@ where
         in_session: false,
         body_skipped: false,
     };
-    engine.serve(&shutdown).await
+    let outcome = engine.serve(&shutdown).await;
+    Report {
+        outcome,
+        bytes_read: engine.inbound.bytes_read,
+        bytes_written: engine.ctx.outbound.bytes_written,
+        commands: engine.inbound.frames,
+    }
 }
 
 /// Where a decision came from; it decides how the state moves on.
@@ -101,13 +139,13 @@ struct Engine<'h, H: Handler, R> {
 }
 
 impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
-    async fn serve(&mut self, shutdown: &CancellationToken) -> Result<()> {
+    async fn serve(&mut self, shutdown: &CancellationToken) -> Result<Closed> {
         loop {
             let frame = tokio::select! {
                 biased;
                 () = shutdown.cancelled() => {
                     self.end(SessionEnd::ServerShutdown).await;
-                    return Ok(());
+                    return Ok(Closed::ByShutdown);
                 }
                 frame = self.inbound.next_frame() => frame,
             };
@@ -115,13 +153,13 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
                 Ok(Some(frame)) => self.process(frame).await,
                 Ok(None) => {
                     self.end(SessionEnd::ConnectionClosed).await;
-                    return Ok(());
+                    return Ok(Closed::ByClient);
                 }
                 Err(error) => Err(error),
             };
             match outcome {
                 Ok(Flow::Open) => {}
-                Ok(Flow::Close) => return Ok(()),
+                Ok(Flow::Close) => return Ok(Closed::ByClient),
                 Err(error) => {
                     self.end(SessionEnd::Error).await;
                     return Err(error);
