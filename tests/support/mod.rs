@@ -11,11 +11,20 @@ use std::time::Duration;
 
 use rust_milter::{
     Handler, HandlerContext, MessageContext, Result, Server, ServerConfig, ServerHandle,
-    SessionContext, SessionEnd,
+    SessionContext, SessionEnd, ShutdownConfig,
 };
 
 use mta::{Mta, WAIT};
 use ports::PortLease;
+
+/// Shutdown timings with no grace period, so that stopping a test server
+/// does not wait out the default 5 s.
+pub fn quick_shutdown() -> ShutdownConfig {
+    ShutdownConfig {
+        grace_period: Duration::ZERO,
+        ..ShutdownConfig::default()
+    }
+}
 
 /// A handler that implements no callbacks.
 pub struct ContinueAll;
@@ -39,7 +48,8 @@ pub struct TestServer {
 }
 
 impl TestServer {
-    /// Starts a server with the default configuration on a leased port.
+    /// Starts a server with the default configuration on a leased port,
+    /// except for a grace period of zero.
     pub async fn start<H, F>(factory: F) -> TestServer
     where
         H: Handler,
@@ -63,6 +73,7 @@ impl TestServer {
             bind_addresses: vec![lease.v4()],
             ..ServerConfig::default()
         };
+        config.shutdown = quick_shutdown();
         configure(&mut config);
         let server = Server::builder()
             .config(config)
@@ -97,6 +108,16 @@ impl TestServer {
             .expect("the server task panicked")
             .expect("run() failed");
         drop(self.lease);
+    }
+
+    /// Waits for `run` to return, without starting a shutdown.
+    pub async fn join(self) -> Result<()> {
+        let result = tokio::time::timeout(WAIT, self.task)
+            .await
+            .expect("the server did not stop in time")
+            .expect("the server task panicked");
+        drop(self.lease);
+        result
     }
 }
 
