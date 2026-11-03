@@ -1,9 +1,13 @@
-//! Reading frames from the MTA and sending replies to it.
+//! Reading frames from the MTA and sending replies to it, with the
+//! connection timeouts of ADR 0006.
+
+use std::time::Duration;
 
 use bytes::BytesMut;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::time::Instant;
 
-use crate::{Error, Frame, Reply, Result};
+use crate::{Error, Frame, Reply, Result, TimeoutConfig, TimeoutKind};
 
 /// The receiving side of a connection.
 pub(crate) struct Inbound<R> {
@@ -11,30 +15,56 @@ pub(crate) struct Inbound<R> {
     buf: BytesMut,
     /// The longest packet accepted, `per_connection_buffer`.
     max: usize,
+    timeouts: TimeoutConfig,
+    /// When `accept()` returned; the connect timeout runs from there.
+    accepted_at: Instant,
+    /// No command has arrived yet.
+    first: bool,
+    /// When the first byte of the frame in `buf` arrived.
+    frame_started: Option<Instant>,
+    /// When the wait for the next command began.
+    idle_since: Option<Instant>,
 }
 
 impl<R: AsyncRead + Unpin> Inbound<R> {
-    pub(crate) fn new(reader: R, max: usize) -> Self {
+    pub(crate) fn new(
+        reader: R,
+        max: usize,
+        timeouts: TimeoutConfig,
+        accepted_at: Instant,
+    ) -> Self {
         Inbound {
             reader,
             buf: BytesMut::with_capacity(8 * 1024),
             max,
+            timeouts,
+            accepted_at,
+            first: true,
+            frame_started: None,
+            idle_since: None,
         }
     }
 
     /// The next frame, or `None` at end of file between frames.
     ///
-    /// Cancel safe: the received bytes stay in the buffer, so a cancelled
-    /// call loses nothing.
+    /// Before the first command the connect timeout applies, while waiting
+    /// for a later command the idle timeout, and from the first byte of a
+    /// frame until it is complete the read timeout.
+    ///
+    /// Cancel safe: the received bytes and the timers stay in `self`, so a
+    /// cancelled call loses nothing.
     pub(crate) async fn next_frame(&mut self) -> Result<Option<Frame>> {
         loop {
             if let Some(frame) = Frame::parse(&mut self.buf, self.max)? {
+                self.first = false;
+                self.frame_started = (!self.buf.is_empty()).then(Instant::now);
                 return Ok(Some(frame));
             }
-            let read = self
-                .reader
-                .read_buf(&mut self.buf)
+            let (deadline, kind) = self.deadline();
+            let was_empty = self.buf.is_empty();
+            let read = tokio::time::timeout_at(deadline, self.reader.read_buf(&mut self.buf))
                 .await
+                .map_err(|_| Error::Timeout(kind))?
                 .map_err(io_error)?;
             if read == 0 {
                 if self.buf.is_empty() {
@@ -42,6 +72,33 @@ impl<R: AsyncRead + Unpin> Inbound<R> {
                 }
                 return Err(Error::ConnectionClosed);
             }
+            if was_empty {
+                self.idle_since = None;
+                self.frame_started = Some(Instant::now());
+            }
+        }
+    }
+
+    /// When the current wait ends, and which timeout that is.
+    fn deadline(&mut self) -> (Instant, TimeoutKind) {
+        let connect = (
+            self.accepted_at + self.timeouts.connect,
+            TimeoutKind::Connect,
+        );
+        if self.buf.is_empty() {
+            if self.first {
+                return connect;
+            }
+            let since = *self.idle_since.get_or_insert_with(Instant::now);
+            return (since + self.timeouts.idle, TimeoutKind::Idle);
+        }
+        let started = *self.frame_started.get_or_insert_with(Instant::now);
+        let read = (started + self.timeouts.read, TimeoutKind::Read);
+        // The connect timeout lasts until the first command is complete.
+        if self.first && connect.0 < read.0 {
+            connect
+        } else {
+            read
         }
     }
 }
@@ -50,23 +107,32 @@ impl<R: AsyncRead + Unpin> Inbound<R> {
 pub(crate) struct Outbound {
     writer: Box<dyn AsyncWrite + Send + Unpin>,
     buf: BytesMut,
+    /// `timeouts.write`, for each reply.
+    timeout: Duration,
 }
 
 impl Outbound {
-    pub(crate) fn new(writer: impl AsyncWrite + Send + Unpin + 'static) -> Self {
+    pub(crate) fn new(writer: impl AsyncWrite + Send + Unpin + 'static, timeout: Duration) -> Self {
         Outbound {
             writer: Box::new(writer),
             buf: BytesMut::new(),
+            timeout,
         }
     }
 
-    /// Encodes and sends one reply.
+    /// Encodes and sends one reply within the write timeout.
     pub(crate) async fn send(&mut self, reply: &Reply) -> Result<()> {
         let frame = reply.to_frame()?;
         self.buf.clear();
         frame.write_to(&mut self.buf);
-        self.writer.write_all(&self.buf).await.map_err(io_error)?;
-        self.writer.flush().await.map_err(io_error)
+        let write = async {
+            self.writer.write_all(&self.buf).await?;
+            self.writer.flush().await
+        };
+        tokio::time::timeout(self.timeout, write)
+            .await
+            .map_err(|_| Error::Timeout(TimeoutKind::Write))?
+            .map_err(io_error)
     }
 }
 

@@ -5,6 +5,9 @@
 //! timeouts, bind modes, resource limits, status, signals, and reload are
 //! specified in `docs/reference/tcp-server.md` and `hot-reload.md`.
 
+#[cfg(feature = "test-support")]
+mod readback;
+mod socket;
 mod watch;
 
 use std::net::SocketAddr;
@@ -16,14 +19,16 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
+#[cfg(feature = "test-support")]
+pub use readback::SocketReadback;
 pub use watch::ConfigWatch;
 
-use crate::{Error, Handler, Result, ServerConfig, engine};
+use crate::{BindMode, Error, Handler, Result, ServerConfig, engine};
 
 /// The milter server, generic over the handler `H` and the application
 /// configuration `A`.
 pub struct Server<H, A = ()> {
-    config: ServerConfig,
+    config: Arc<ServerConfig>,
     handler: Arc<H>,
     handle: ServerHandle<A>,
 }
@@ -97,7 +102,7 @@ impl<H: Handler, A: Send + Sync + 'static> ServerBuilder<H, A> {
         };
         let handler = (self.factory)(&context);
         Ok(Server {
-            config: self.config,
+            config: Arc::new(self.config),
             handler: Arc::new(handler),
             handle: ServerHandle {
                 inner: Arc::new(Shared {
@@ -118,15 +123,9 @@ impl<H: Handler, A: Send + Sync + 'static> Server<H, A> {
         self.handle.clone()
     }
 
-    /// Binds the listeners and serves until shutdown.
+    /// Binds the listeners as `bind_mode` says and serves until shutdown.
     pub async fn run(self) -> Result<()> {
-        let mut listeners = Vec::new();
-        for &addr in &self.config.bind_addresses {
-            let listener = TcpListener::bind(addr)
-                .await
-                .map_err(|source| Error::Bind { addr, source })?;
-            listeners.push(listener);
-        }
+        let listeners = bind(&self.config)?;
         let shared = &self.handle.inner;
         shared.running.store(true, Ordering::SeqCst);
 
@@ -137,7 +136,7 @@ impl<H: Handler, A: Send + Sync + 'static> Server<H, A> {
             accepting.spawn(accept(
                 listener,
                 Arc::clone(&self.handler),
-                self.config.resource_limits.per_connection_buffer,
+                Arc::clone(&self.config),
                 shared.shutdown.clone(),
                 connections.clone(),
                 Arc::clone(&next_id),
@@ -154,11 +153,34 @@ impl<H: Handler, A: Send + Sync + 'static> Server<H, A> {
     }
 }
 
+/// Binds every address in `bind_addresses`. `FailFast` fails at the first
+/// address that cannot bind; `BestEffort` fails only if none binds.
+fn bind(config: &ServerConfig) -> Result<Vec<TcpListener>> {
+    let mut listeners = Vec::new();
+    let mut first_failure = None;
+    for &addr in &config.bind_addresses {
+        match socket::listen(addr, &config.socket_options, config.backlog) {
+            Ok(listener) => listeners.push(listener),
+            Err(source) => {
+                let error = Error::Bind { addr, source };
+                if config.bind_mode == BindMode::FailFast {
+                    return Err(error);
+                }
+                first_failure.get_or_insert(error);
+            }
+        }
+    }
+    match first_failure {
+        Some(error) if listeners.is_empty() => Err(error),
+        _ => Ok(listeners),
+    }
+}
+
 /// Accepts connections on one listener until shutdown.
 async fn accept<H: Handler>(
     listener: TcpListener,
     handler: Arc<H>,
-    max_packet: usize,
+    config: Arc<ServerConfig>,
     shutdown: CancellationToken,
     connections: TaskTracker,
     next_id: Arc<AtomicU64>,
@@ -168,6 +190,7 @@ async fn accept<H: Handler>(
             () = shutdown.cancelled() => return,
             accepted = listener.accept() => accepted,
         };
+        let accepted_at = Instant::now();
         let (stream, peer_addr) = match accepted {
             Ok(accepted) => accepted,
             Err(_) => {
@@ -180,18 +203,29 @@ async fn accept<H: Handler>(
         let Ok(local_addr) = stream.local_addr() else {
             continue;
         };
+        // A connection whose options cannot be set is closed before any
+        // read, as a setup error.
+        if socket::configure(&stream, &config.socket_options).is_err() {
+            continue;
+        }
+        #[cfg(feature = "test-support")]
+        let Ok(probe) = readback::Probe::new(&stream) else {
+            continue;
+        };
         let info = ConnectionInfo {
             id: next_id.fetch_add(1, Ordering::Relaxed),
             peer_addr,
             local_addr,
-            accepted_at: Instant::now(),
+            accepted_at,
             config_generation: 0,
+            #[cfg(feature = "test-support")]
+            probe,
         };
         connections.spawn(serve(
             stream,
             Arc::clone(&handler),
             info,
-            max_packet,
+            Arc::clone(&config),
             shutdown.clone(),
         ));
     }
@@ -201,7 +235,7 @@ async fn serve<H: Handler>(
     stream: TcpStream,
     handler: Arc<H>,
     info: ConnectionInfo,
-    max_packet: usize,
+    config: Arc<ServerConfig>,
     shutdown: CancellationToken,
 ) {
     let (reader, writer) = stream.into_split();
@@ -212,7 +246,8 @@ async fn serve<H: Handler>(
         reader,
         writer,
         Arc::new(info),
-        max_packet,
+        config.resource_limits.per_connection_buffer,
+        &config.timeouts,
         shutdown,
     )
     .await;
@@ -295,4 +330,9 @@ pub struct ConnectionInfo {
     pub accepted_at: Instant,
     /// The generation of the configuration the connection uses.
     pub config_generation: u64,
+    /// A duplicate handle of the socket, for reading its options in
+    /// tests. A clone of this value kept after the connection ends keeps
+    /// the socket open, so tests must not keep one.
+    #[cfg(feature = "test-support")]
+    probe: readback::Probe,
 }
