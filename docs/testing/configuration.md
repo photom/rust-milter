@@ -52,7 +52,7 @@ Scenarios for configuration validation, address parsing, and the serde file form
 
 ## Environment variables
 
-These tests use `from_vars` and `apply_vars`, so they never change the real process environment.
+These tests use `from_vars` and `apply_vars`, so they never change the real process environment. CFG-094 and CFG-095 are the exceptions: only the process environment can hold text that is not valid UTF-8, so each runs its test binary again with the variable set in the child process's environment.
 
 | ID | Level | Given | When | Then | Spec |
 |----|-------|-------|------|------|------|
@@ -70,3 +70,5 @@ These tests use `from_vars` and `apply_vars`, so they never change the real proc
 | CFG-091 | unit | The pairs `RUST_MILTER_SOCKET_OPTIONS__KEEPALIVE` = `false` and `RUST_MILTER_SOCKET_OPTIONS__KEEPALIVE__TIME` = `30s` | `from_vars` runs | `InvalidEnvValue` naming `RUST_MILTER_SOCKET_OPTIONS__KEEPALIVE`: keepalive cannot be off and set at once, and the variables have no order to decide by | [configuration: Environment variables](../reference/configuration.md#environment-variables) |
 | CFG-092 | unit | A configuration with `max_connections` 1,000, and the pairs `RUST_MILTER_MAX_CONNECTIONS` = `500` and `RUST_MILTER_BACKLOG` = `many` | `apply_vars` runs | `InvalidEnvValue`, and `max_connections` stays 1,000: a failed apply changes nothing | [configuration: Environment variables](../reference/configuration.md#environment-variables) |
 | CFG-093 | unit | The pair `RUST_MILTER_max_connections` = `500`, the setting's path in lower case | `from_vars` runs | `UnknownEnvVariable`; variable names are in upper case | [configuration: Environment variables](../reference/configuration.md#environment-variables) |
+| CFG-094 | integration | A process environment variable whose name is `CFG094_` followed by the byte `0xFF`, which is not valid UTF-8 | `from_env` runs with the prefix `CFG094_` | `UnknownEnvVariable` with the name, the invalid byte shown as U+FFFD; a name with the prefix is never skipped | [configuration: Environment variables](../reference/configuration.md#environment-variables) |
+| CFG-095 | integration | The process environment variable `CFG095_BACKLOG` with a value that is not valid UTF-8 | `from_env` runs with the prefix `CFG095_` | `InvalidEnvValue` naming `CFG095_BACKLOG` | [configuration: Environment variables](../reference/configuration.md#environment-variables) |

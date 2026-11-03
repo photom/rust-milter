@@ -288,7 +288,7 @@ Every setting in [ServerConfig reference](#serverconfig-reference) has a variabl
 ### Rules
 
 1. Only variables that start with the prefix are read. All others, such as `PATH` or `OTEL_EXPORTER_OTLP_ENDPOINT`, are ignored.
-2. A variable with the prefix that names no setting is an error (`ConfigError::UnknownEnvVariable`), so a misspelled name fails instead of being ignored.
+2. A variable with the prefix that names no setting is an error (`ConfigError::UnknownEnvVariable`), so a misspelled name fails instead of being ignored. A name with the prefix that is not valid UTF-8 is such an error too; the error shows the name with U+FFFD in place of the invalid bytes.
 3. A value that cannot be parsed is an error (`ConfigError::InvalidEnvValue`) that names the variable and the reason, not the value. A value that is not valid UTF-8 is such an error too.
 4. A name matches only in upper case, so `RUST_MILTER_max_connections` names no setting.
 5. `KEEPALIVE` = `false` together with a `KEEPALIVE__*` variable is an error (`InvalidEnvValue` naming `KEEPALIVE`). The variables come in no order that could decide which one wins.

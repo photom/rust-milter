@@ -88,12 +88,19 @@ impl ServerConfig {
     }
 }
 
-/// The process environment's variables that start with `prefix`.
+/// The process environment's variables that start with `prefix`. A name with
+/// the prefix that is not valid UTF-8 names no setting, so it is an error
+/// rather than skipped.
 fn process_vars(prefix: &str) -> Result<Vec<(String, String)>, ConfigError> {
     let mut vars = Vec::new();
     for (name, value) in std::env::vars_os() {
-        let Some(name) = name.to_str().filter(|name| name.starts_with(prefix)) else {
+        if !name.as_encoded_bytes().starts_with(prefix.as_bytes()) {
             continue;
+        }
+        let Some(name) = name.to_str() else {
+            return Err(ConfigError::UnknownEnvVariable(
+                name.to_string_lossy().into_owned(),
+            ));
         };
         let value = value
             .into_string()
