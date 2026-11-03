@@ -2,6 +2,7 @@
 //! test handlers, and a server on a leased port.
 #![allow(dead_code, reason = "each test file uses a different part")]
 
+pub mod logs;
 pub mod mta;
 pub mod ports;
 

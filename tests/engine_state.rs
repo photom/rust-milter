@@ -8,6 +8,7 @@ use rust_milter::{
     Bytes, ConnectDecision, ConnectInfo, Decision, EomContext, Events, Handler, MessageContext,
     MilterText, ReplyCode, Result, SessionContext, SessionEnd,
 };
+use support::logs::Logs;
 use support::mta::{Mta, Reach, connect_data, strings};
 use support::{Log, TestServer};
 
@@ -531,6 +532,7 @@ async fn eng_063_a_close_after_a_connect_level_reject_is_a_normal_end() {
         connect: ConnectDecision::Reject,
         ..Scripted::default()
     };
+    let (logs, _guard) = Logs::capture();
     let (server, log) = scripted.start().await;
     let mut mta = server.mta().await;
     mta.negotiate().await;
@@ -547,6 +549,11 @@ async fn eng_063_a_close_after_a_connect_level_reject_is_a_normal_end() {
     let events = log.wait_for("session_end:ConnectionClosed").await;
     assert_eq!(events, ["connect", "session_end:ConnectionClosed"]);
     server.stop().await;
+    assert_eq!(
+        logs.one("Connection closed").field("reason"),
+        Some("client_closed")
+    );
+    assert!(logs.warnings().is_empty(), "{:?}", logs.warnings());
 }
 
 #[tokio::test]
@@ -559,7 +566,7 @@ async fn eng_064_shutdown_ends_a_waiting_session() {
 
     assert_eq!(
         log.events(),
-        ["connect", "helo", "session_end:ServerShutdown"]
+        ["helo", "mail", "rcpt", "end_of_message", "session_end:Quit"].is_empty().then(|| unreachable!()).unwrap_or(["connect", "helo", "session_end:ServerShutdown"])
     );
     assert!(mta.closes().await);
 }
