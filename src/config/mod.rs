@@ -2,6 +2,8 @@
 //! validation rules from `docs/reference/configuration.md`.
 
 mod address;
+#[cfg(feature = "serde")]
+mod file_format;
 mod validate;
 
 use std::net::SocketAddr;
@@ -13,8 +15,14 @@ use std::time::Duration;
 /// with `..ServerConfig::default()`. `bind_addresses` has no useful default and
 /// must be set; [`ServerConfig::validate`] reports a configuration without one.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(default, deny_unknown_fields)
+)]
 pub struct ServerConfig {
     /// The addresses to listen on.
+    #[cfg_attr(feature = "serde", serde(with = "file_format::bind_addresses"))]
     pub bind_addresses: Vec<SocketAddr>,
     /// What to do when a listener cannot bind.
     pub bind_mode: BindMode,
@@ -52,6 +60,11 @@ impl Default for ServerConfig {
 
 /// What the server does when a listener cannot bind.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "snake_case")
+)]
 #[non_exhaustive]
 pub enum BindMode {
     /// Fail at once.
@@ -63,14 +76,23 @@ pub enum BindMode {
 
 /// Per-connection timeouts.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(default, deny_unknown_fields)
+)]
 pub struct TimeoutConfig {
     /// From `accept()` until the MTA's first command arrives.
+    #[cfg_attr(feature = "serde", serde(with = "file_format::duration"))]
     pub connect: Duration,
     /// From the first byte of a frame until the frame is complete.
+    #[cfg_attr(feature = "serde", serde(with = "file_format::duration"))]
     pub read: Duration,
     /// While one reply is being written.
+    #[cfg_attr(feature = "serde", serde(with = "file_format::duration"))]
     pub write: Duration,
     /// While the connection waits for the MTA's next command.
+    #[cfg_attr(feature = "serde", serde(with = "file_format::duration"))]
     pub idle: Duration,
 }
 
@@ -87,14 +109,22 @@ impl Default for TimeoutConfig {
 
 /// Socket options for listeners and accepted connections.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(default, deny_unknown_fields)
+)]
 pub struct SocketOptions {
     /// `TCP_NODELAY` on accepted connections.
     pub tcp_nodelay: bool,
     /// TCP keepalive on accepted connections; `None` turns it off.
+    #[cfg_attr(feature = "serde", serde(with = "file_format::keepalive"))]
     pub keepalive: Option<KeepaliveConfig>,
     /// `SO_RCVBUF`; `None` keeps the operating system's default.
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub recv_buffer_size: Option<usize>,
     /// `SO_SNDBUF`; `None` keeps the operating system's default.
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub send_buffer_size: Option<usize>,
     /// `SO_REUSEADDR` on listeners.
     pub reuse_addr: bool,
@@ -120,10 +150,17 @@ impl Default for SocketOptions {
 
 /// TCP keepalive settings.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(default, deny_unknown_fields)
+)]
 pub struct KeepaliveConfig {
     /// Idle time before the first probe.
+    #[cfg_attr(feature = "serde", serde(with = "file_format::duration"))]
     pub time: Duration,
     /// Time between probes.
+    #[cfg_attr(feature = "serde", serde(with = "file_format::duration"))]
     pub interval: Duration,
     /// Probes sent before the connection is dropped.
     pub retries: u32,
@@ -141,10 +178,17 @@ impl Default for KeepaliveConfig {
 
 /// Graceful shutdown limits.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(default, deny_unknown_fields)
+)]
 pub struct ShutdownConfig {
     /// How long new connections are still accepted after a shutdown starts.
+    #[cfg_attr(feature = "serde", serde(with = "file_format::duration"))]
     pub grace_period: Duration,
     /// How long open sessions may take to finish.
+    #[cfg_attr(feature = "serde", serde(with = "file_format::duration"))]
     pub drain_timeout: Duration,
 }
 
@@ -159,11 +203,18 @@ impl Default for ShutdownConfig {
 
 /// Limits on file descriptors and memory.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(default, deny_unknown_fields)
+)]
 pub struct ResourceLimitsConfig {
     /// The most file descriptors the server uses; `None` for the system
     /// limit.
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub max_fds: Option<usize>,
     /// The most memory for connection buffers; `None` for no limit.
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub max_memory: Option<usize>,
     /// The buffer limit per connection, and the largest packet accepted.
     pub per_connection_buffer: usize,
@@ -181,6 +232,11 @@ impl Default for ResourceLimitsConfig {
 
 /// What the server records for telemetry.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(default, deny_unknown_fields)
+)]
 pub struct TelemetryConfig {
     /// Which commands become trace events.
     pub trace_commands: TraceCommands,
@@ -188,6 +244,11 @@ pub struct TelemetryConfig {
 
 /// Which milter commands the server records as trace events.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "snake_case")
+)]
 #[non_exhaustive]
 pub enum TraceCommands {
     /// None.
