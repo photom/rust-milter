@@ -5,10 +5,13 @@
 //! documented in `docs/` of the repository.
 
 mod config;
+mod engine;
 mod error;
 mod frame;
+mod handler;
 mod message;
 pub mod protocol;
+mod server;
 
 pub use bytes::{Bytes, BytesMut};
 pub use config::{
@@ -17,4 +20,12 @@ pub use config::{
 };
 pub use error::{AddressError, ConfigError, Error, ProtocolError, ReplyError, Result};
 pub use frame::Frame;
+pub use handler::{
+    Actions, BodyDecision, ConnectDecision, ConnectInfo, Decision, EomContext, Events, Handler,
+    MessageContext, Negotiated, SessionContext, SessionEnd,
+};
 pub use message::{AddressFamily, Command, MilterText, Reply, ReplyCode};
+pub use server::{
+    ConfigWatch, ConnectionInfo, HandlerContext, Server, ServerBuilder, ServerHandle,
+};
+pub use tokio_util::sync::CancellationToken;

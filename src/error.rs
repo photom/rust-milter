@@ -1,13 +1,35 @@
 //! The library's error types.
 
+use crate::Actions;
+
 /// The library's error type.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
+    /// A socket read or write failed.
+    #[error("socket error")]
+    Io(#[source] std::io::Error),
+
     /// The MTA sent a malformed frame, an unknown command, or a command in
     /// the wrong state.
     #[error("protocol error")]
     Protocol(#[from] ProtocolError),
+
+    /// A modification method was called without its action negotiated.
+    #[error("the action {0:?} was not negotiated")]
+    ActionNotNegotiated(Actions),
+
+    /// A callback returned an error. Build it with [`Error::handler`].
+    #[error("the handler failed")]
+    Handler(#[source] Box<dyn std::error::Error + Send + Sync>),
+
+    /// The MTA closed the connection in the middle of a frame.
+    #[error("the connection closed in the middle of a frame")]
+    ConnectionClosed,
+
+    /// The MTA reset the connection.
+    #[error("the connection was reset")]
+    ConnectionReset,
 
     /// A packet is longer than `per_connection_buffer`.
     #[error("a {length}-byte packet exceeds the {max}-byte limit")]
@@ -22,6 +44,27 @@ pub enum Error {
     /// a rule that Sendmail or Postfix enforces.
     #[error("invalid reply")]
     InvalidReply(#[from] ReplyError),
+
+    /// The configuration is invalid.
+    #[error("invalid configuration")]
+    Config(#[from] ConfigError),
+
+    /// A listener could not bind its address.
+    #[error("cannot bind {addr}")]
+    Bind {
+        /// The address.
+        addr: std::net::SocketAddr,
+        /// Why the bind failed.
+        #[source]
+        source: std::io::Error,
+    },
+}
+
+impl Error {
+    /// Wraps a handler's own error as [`Error::Handler`].
+    pub fn handler(error: impl std::error::Error + Send + Sync + 'static) -> Error {
+        Error::Handler(Box::new(error))
+    }
 }
 
 /// Why a reply or reply code is invalid.
@@ -115,6 +158,21 @@ pub enum ProtocolError {
     /// An unknown command code.
     #[error("unknown command code 0x{0:02x}")]
     UnknownCommand(u8),
+
+    /// A command in a state where it closes the connection (ADR 0001).
+    #[error("command {} in a wrong state", char::from(*.command))]
+    WrongState {
+        /// The command code.
+        command: u8,
+    },
+
+    /// The MTA offered a protocol version below 2.
+    #[error("protocol version {0} is below 2")]
+    VersionTooOld(u32),
+
+    /// The MTA did not offer every action in `Handler::actions()`.
+    #[error("the MTA did not offer the actions {0:?}")]
+    ActionsNotOffered(Actions),
 }
 
 /// Why a configuration is invalid.

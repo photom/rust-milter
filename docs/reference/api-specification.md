@@ -45,7 +45,7 @@ The public API of the rust-milter server library: its types, traits, errors, and
 | `MilterText` | Handler | Text from the MTA: raw bytes, readable as UTF-8 when valid |
 | `Events` | Handler | The protocol stages a handler wants to receive |
 | `Actions` | Handler | The message modifications a handler may perform |
-| `Negotiated` | Handler | The result of option negotiation: version, actions, protocol flags |
+| `Negotiated` | Handler | The result of option negotiation: `version()`, `actions()`, `protocol()` for the flags in the milter's answer, and `mta_protocol()` for the flags the MTA offered |
 | `ConnectDecision`, `Decision`, `BodyDecision` | Handler | The decisions a callback returns, per stage |
 | `ReplyCode` | Handler | A validated custom SMTP reply |
 | `SessionEnd` | Handler | Why an SMTP session ended |
@@ -80,14 +80,14 @@ The public API of the rust-milter server library: its types, traits, errors, and
 | Method | Description |
 |--------|-------------|
 | `Server::builder()` | Start a builder |
-| `config(ServerConfig)` | Initial server configuration (required) |
-| `app_config(A)` | Initial application configuration (default `A::default()` when `A: Default`) |
-| `handler(f)` | Handler factory: a function that takes `&HandlerContext<A>` and returns the handler. It is called once at build time; all connections share the one handler |
+| `config(ServerConfig)` | Initial server configuration (required). Without it, `build()` validates the defaults, which have no bind address, and fails |
+| `app_config(A)` | Initial application configuration; without it, `A` is `()`. Call it before `handler`, because the factory receives the configuration's type |
+| `handler(f)` | Handler factory: a function that takes `&HandlerContext<A>` and returns the handler. It is called once at build time; all connections share the one handler. `build()` exists only after `handler`, so a builder without a handler does not compile |
 | `reload_with(loader)` | Reload loader: an async function that returns `Reloaded<A>` or an error. The error type must implement `std::error::Error` and be `Send + Sync + 'static` |
 | `meter_provider(provider)` | OpenTelemetry meter provider (feature `otel`) |
 | `build()` | Validate the configuration and build the server. Returns `Result<Server<H, A>>` |
 
-`HandlerContext<A>` gives the factory a `ConfigWatch<A>` and the server's `CancellationToken`, so a handler can follow reloads and shutdown from the start.
+`HandlerContext<A>` gives the factory a `ConfigWatch<A>` (`config_watch()`) and the server's `CancellationToken` (`shutdown()`), so a handler can follow reloads and shutdown from the start.
 
 ### Server
 
@@ -127,7 +127,7 @@ Lifecycle:
 | Type | Bounds | Lifetime |
 |------|--------|----------|
 | `Session` | `Default + Send + 'static` | Created by the library with `Default` when an SMTP session starts (`SMFIC_CONNECT`), dropped when it ends (`SMFIC_QUIT`, `SMFIC_QUIT_NC`, or connection close) |
-| `Message` | `Default + Send + 'static` | Created by the library with `Default` at `SMFIC_MAIL`, or at the first command of a message when the handler left `MAIL` out of `events()`; dropped after the final reply at end of message, after a decision that ends the message earlier (`Accept`, `Reject`, `TempFail`, `Reply`, or `Discard` from a message callback other than `rcpt`), on `SMFIC_ABORT`, or when the session ends |
+| `Message` | `Default + Send + 'static` | Created by the library with `Default` at `SMFIC_MAIL`, or at the first command of a message when the handler left `MAIL` out of `events()`; dropped after the final reply at end of message, after a decision that ends the message earlier (`Accept` from any message callback, or `Reject`, `TempFail`, `Reply`, or `Discard` from one other than `rcpt`, which reset the protocol state to `ST_HELO` as in libmilter), on `SMFIC_ABORT`, or when the session ends |
 
 All per-session and per-message data belongs in these types. The library drops them at the end of each session and message, which enforces the session isolation rule.
 
@@ -257,12 +257,13 @@ The library performs these protocol duties for every handler:
 | Version negotiation | Closes the connection if the MTA offers a version below 2; otherwise answers with the lower of the MTA's version and 6 |
 | Flags | Treats zero action or protocol flags from the MTA as the version 1 defaults; requests only flags the MTA offered |
 | Stage filtering | Requests `SMFIP_NO*` for the stages missing from `events()` |
-| Macros | Stores the macros of every stage byte, including `L`, `B`, and `U` from Postfix; never replies to `SMFIC_MACRO`; clears them when the session ends |
+| Macros | Stores the macros of the stage bytes `C`, `H`, `M`, `R`, `T`, `L`, `N`, `B`, `E`, and `U`, including `L`, `B`, and `U` from Postfix, and drops those of any other byte, which no lookup reaches; never replies to `SMFIC_MACRO`; clears them when the session ends. Macros sent again for a stage replace that stage's earlier ones. `macro_value` looks in the current command's stage first, then in the earlier stages in protocol order (`C`, `H`, `M`, `R`, `T`, `L`, `N`, `B`, `E`). In `unknown`, `abort`, and `session_end`, it looks in every stage, the latest first, starting with `U` |
+| Session start | A session starts with `SMFIC_CONNECT`. When the MTA leaves `SMFIC_CONNECT` out, the session starts with the first command after option negotiation, or after `SMFIC_QUIT_NC`, that is not `SMFIC_MACRO`, `SMFIC_ABORT`, or `SMFIC_QUIT` |
 | State machine | Tracks the protocol state with libmilter's transition rules; closes the connection on `SMFIC_QUIT_NC` outside `ST_ENDM` and `ST_UNKN` ([ADR 0001](../adr/0001-commands-in-wrong-state-recover-like-libmilter-or-close.md)) |
 | Commands in a wrong state | Recovers like libmilter for a command that fits from `ST_HELO` (`SMFIC_HELO`, `SMFIC_MAIL`, `SMFIC_UNKNOWN`, and later stages the handler switched off): calls `abort` if a message is open, then processes the command. Ignores `SMFIC_ABORT` and `SMFIC_QUIT`. Closes the connection with a protocol error on any other command ([ADR 0001](../adr/0001-commands-in-wrong-state-recover-like-libmilter-or-close.md)) |
 | Replies | Encodes each decision as the matching `SMFIR_*` reply; sends no reply to `SMFIC_MACRO`, `SMFIC_ABORT`, `SMFIC_QUIT`, or `SMFIC_QUIT_NC` |
-| Abort | Calls `abort` and drops the message state when a message is open; ignores `SMFIC_ABORT` outside a message |
-| Session end | Calls `session_end` and drops the session state on `SMFIC_QUIT` (`Quit`), on `SMFIC_QUIT_NC` (`QuitNewConnection`), on end of file without `SMFIC_QUIT` (`ConnectionClosed`), before closing the connection for an error or a timeout (`Error`), and when shutdown closes the connection (`ServerShutdown`) |
+| Abort | Calls `abort` and drops the message state when a message is open; ignores `SMFIC_ABORT` outside a message. A message that ends without its final reply or a decision that ends it also gets `abort`: on recovery from a wrong state, on an `SMFIC_MAIL` that starts a new message while one is open, and before `session_end` when the session ends with a message open |
+| Session end | Calls `session_end` and drops the session state on `SMFIC_QUIT` (`Quit`), on `SMFIC_QUIT_NC` (`QuitNewConnection`), on end of file between frames without `SMFIC_QUIT` (`ConnectionClosed`), before closing the connection for an error, a reset, an end of file in the middle of a frame, or a timeout (`Error`), and when shutdown closes the connection (`ServerShutdown`). A connection that closes before a session starts, or between `SMFIC_QUIT_NC` and the next session, calls no callback |
 
 `SessionEnd`: `Quit`, `QuitNewConnection`, `ConnectionClosed`, `Error`, `ServerShutdown`.
 
@@ -271,7 +272,7 @@ The library performs these protocol duties for every handler:
 | Field | Type | Description |
 |-------|------|-------------|
 | `hostname` | `MilterText` | The SMTP client's hostname as the MTA sent it; `[<ip>]` when it did not resolve |
-| `address` | `Option<SocketAddr>` | The SMTP client's address; `None` for family `SMFIA_UNKNOWN` |
+| `address` | `Option<SocketAddr>` | The SMTP client's address; `None` for families `SMFIA_UNKNOWN` and `SMFIA_UNIX`, and when the address text is not an IP address. An `IPv6:` prefix, as Sendmail can write it, is removed |
 
 ## Text from the MTA
 
