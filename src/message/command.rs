@@ -94,7 +94,9 @@ impl Command {
     /// Decodes a frame from the MTA.
     ///
     /// Fails with [`Error::Protocol`](crate::Error::Protocol) on an unknown
-    /// command code or data that does not match the command's format.
+    /// command code or data that does not match the command's format,
+    /// including bytes after the last field. An option negotiation may be
+    /// longer than its 12 bytes, as libmilter accepts.
     pub fn from_frame(frame: Frame) -> Result<Command> {
         let Frame { command, mut data } = frame;
         let malformed = || ProtocolError::Malformed { command };
@@ -111,24 +113,20 @@ impl Command {
             }
             SMFIC_MACRO => decode_macro(data).ok_or_else(|| malformed().into()),
             SMFIC_CONNECT => decode_connect(data).ok_or_else(|| malformed().into()),
-            SMFIC_HELO => Ok(Command::Helo(
-                MilterText::take(&mut data).ok_or_else(malformed)?,
-            )),
+            SMFIC_HELO => Ok(Command::Helo(only_one(data).ok_or_else(malformed)?)),
             SMFIC_MAIL => Ok(Command::Mail(strings(data).ok_or_else(malformed)?)),
             SMFIC_RCPT => Ok(Command::Rcpt(strings(data).ok_or_else(malformed)?)),
             SMFIC_DATA => Ok(Command::Data),
             SMFIC_HEADER => {
                 let name = MilterText::take(&mut data).ok_or_else(malformed)?;
-                let value = MilterText::take(&mut data).ok_or_else(malformed)?;
+                let value = only_one(data).ok_or_else(malformed)?;
                 Ok(Command::Header { name, value })
             }
             SMFIC_EOH => Ok(Command::Eoh),
             SMFIC_BODY => Ok(Command::Body(data)),
             SMFIC_BODYEOB => Ok(Command::BodyEob(data)),
             SMFIC_ABORT => Ok(Command::Abort),
-            SMFIC_UNKNOWN => Ok(Command::Unknown(
-                MilterText::take(&mut data).ok_or_else(malformed)?,
-            )),
+            SMFIC_UNKNOWN => Ok(Command::Unknown(only_one(data).ok_or_else(malformed)?)),
             SMFIC_QUIT => Ok(Command::Quit),
             SMFIC_QUIT_NC => Ok(Command::QuitNewConnection),
             other => Err(ProtocolError::UnknownCommand(other).into()),
@@ -160,6 +158,9 @@ fn decode_connect(mut data: Bytes) -> Option<Command> {
     }
     let family = match data.get_u8() {
         SMFIA_UNKNOWN => {
+            if !data.is_empty() {
+                return None;
+            }
             return Some(Command::Connect {
                 hostname,
                 family: AddressFamily::Unknown,
@@ -176,13 +177,19 @@ fn decode_connect(mut data: Bytes) -> Option<Command> {
         return None;
     }
     let port = data.get_u16();
-    let address = MilterText::take(&mut data)?;
+    let address = only_one(data)?;
     Some(Command::Connect {
         hostname,
         family,
         port: Some(port),
         address: Some(address),
     })
+}
+
+/// Reads `data` as exactly one NUL-terminated string, with nothing after it.
+fn only_one(mut data: Bytes) -> Option<MilterText> {
+    let text = MilterText::take(&mut data)?;
+    data.is_empty().then_some(text)
 }
 
 /// Splits `data` into one or more NUL-terminated strings.
