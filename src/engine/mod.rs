@@ -59,6 +59,17 @@ pub(crate) struct Limits<'a> {
     pub(crate) memory: Reservation,
 }
 
+/// The tokens that end a connection.
+#[derive(Clone)]
+pub(crate) struct Stop {
+    /// Cancelled when the shutdown grace period ends: the connection closes
+    /// when it waits for the next command.
+    pub(crate) shutdown: CancellationToken,
+    /// Cancelled to force-close: the conversation is dropped wherever it is,
+    /// and no more callbacks run.
+    pub(crate) force: CancellationToken,
+}
+
 /// Runs the conversation on one connection until it ends.
 pub(crate) async fn run<H, R, W>(
     handler: &H,
@@ -66,7 +77,7 @@ pub(crate) async fn run<H, R, W>(
     writer: W,
     connection: Arc<ConnectionInfo>,
     limits: Limits<'_>,
-    shutdown: CancellationToken,
+    stop: Stop,
 ) -> Report
 where
     H: Handler,
@@ -86,7 +97,7 @@ where
         ),
         ctx: EomContext {
             message: MessageContext {
-                session: SessionContext::new(connection, shutdown.clone()),
+                session: SessionContext::new(connection, stop.shutdown.clone()),
                 message: None,
             },
             outbound: Outbound::new(writer, timeouts.write),
@@ -97,7 +108,11 @@ where
         in_session: false,
         body_skipped: false,
     };
-    let outcome = engine.serve(&shutdown).await;
+    let outcome = tokio::select! {
+        biased;
+        () = stop.force.cancelled() => Ok(Closed::ByShutdown),
+        outcome = engine.serve(&stop.shutdown) => outcome,
+    };
     Report {
         outcome,
         bytes_read: engine.inbound.bytes_read,
@@ -141,13 +156,22 @@ struct Engine<'h, H: Handler, R> {
 impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
     async fn serve(&mut self, shutdown: &CancellationToken) -> Result<Closed> {
         loop {
-            let frame = tokio::select! {
-                biased;
-                () = shutdown.cancelled() => {
-                    self.end(SessionEnd::ServerShutdown).await;
-                    return Ok(Closed::ByShutdown);
+            let frame = if self.inbound.in_frame() {
+                // A connection finishes the command it is receiving, even
+                // after shutdown.
+                self.inbound.next_frame().await
+            } else {
+                tokio::select! {
+                    biased;
+                    () = shutdown.cancelled() => {
+                        if self.inbound.in_frame() {
+                            continue;
+                        }
+                        self.end(SessionEnd::ServerShutdown).await;
+                        return Ok(Closed::ByShutdown);
+                    }
+                    frame = self.inbound.next_frame() => frame,
                 }
-                frame = self.inbound.next_frame() => frame,
             };
             let outcome = match frame {
                 Ok(Some(frame)) => self.process(frame).await,
