@@ -16,6 +16,7 @@ Scenarios for configuration validation, address parsing, and the serde file form
 | CFG-008 | unit | `max_memory` smaller than `per_connection_buffer` | it is validated | `Inconsistent` | [configuration: Validation rules](../reference/configuration.md#validation-rules) |
 | CFG-009 | unit | `reuse_port` true on a platform without `SO_REUSEPORT` (skipped where it is supported) | it is validated | `Unsupported` naming `reuse_port` | [configuration: Validation rules](../reference/configuration.md#validation-rules) |
 | CFG-010 | integration | An invalid configuration and a leased test port | `build()` is called | an error is returned, and the port can still be bound by the test, so no socket was opened | [api: Server](../reference/api-specification.md#server) |
+| CFG-028 | unit | `0.0.0.0:8891` and `[::]:8891` with `ipv6_only` false, the same with `127.0.0.1:8891`, and both with `ipv6_only` true | each is validated | the first two fail with `Inconsistent` naming `ipv6_only`; with `ipv6_only` true they are valid, and so is `[::1]:8891` next to `127.0.0.1:8891` | [configuration: Validation rules](../reference/configuration.md#validation-rules) |
 
 ## Address parsing
 

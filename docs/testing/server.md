@@ -18,11 +18,16 @@ Scenarios for the TCP server: listeners, socket options, the connection lifecycl
 
 ## Socket options
 
+The options are applied once, right after `accept()` and before the first read, so the states before the first callback have the same options as the first callback reads. The tests read the options of the server's own accepted socket through the `test-support` feature ([test-environment.md](../reference/test-environment.md#socket-option-readback)).
+
 | ID | Level | Given | When | Then | Spec |
 |----|-------|-------|------|------|------|
 | SRV-020 | integration | Default socket options | a connection is accepted | the accepted socket has `TCP_NODELAY` on and keepalive on with 60 s time, 10 s interval, and 6 retries | [configuration: SocketOptions](../reference/configuration.md#socketoptions) |
 | SRV-021 | integration | `keepalive = None` | a connection is accepted | the accepted socket has keepalive off | [configuration: SocketOptions](../reference/configuration.md#socketoptions) |
 | SRV-022 | integration | `recv_buffer_size` and `send_buffer_size` of 64 KB | a connection is accepted | the socket's buffer sizes, read back, are at least 64 KB | [configuration: SocketOptions](../reference/configuration.md#socketoptions) |
+| SRV-023 | integration | Default socket options, and a handler that reads its accepted socket's options in every callback | a session runs through every stage: connect, HELO, MAIL, RCPT, DATA, a header, EOH, a body chunk, end of message, an unknown command, an abort of a second message, `SMFIC_QUIT_NC`, a second session's connect, and `session_end` when the server shuts down | every read shows `TCP_NODELAY` on and keepalive on with 60 s time, 10 s interval, and 6 retries: nothing in any protocol state changes the options | [configuration: SocketOptions](../reference/configuration.md#socketoptions) |
+| SRV-024 | integration | Keepalive with `time` = 30 s, `interval` = 5 s, `retries` = 3, and the same handler | the same session runs | every read shows those three values | [configuration: KeepaliveConfig](../reference/configuration.md#keepaliveconfig) |
+| SRV-025 | integration | `keepalive = None` and `tcp_nodelay` = false, and the same handler | the same session runs | every read shows keepalive off and `TCP_NODELAY` off | [configuration: SocketOptions](../reference/configuration.md#socketoptions) |
 
 ## Connection lifecycle and timeouts
 

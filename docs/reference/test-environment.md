@@ -10,6 +10,7 @@ The fixed TCP ports that rust-milter's tests listen on, how tests share them, an
 - [Port leases](#port-leases)
 - [Environment variables](#environment-variables)
 - [Rules for tests](#rules-for-tests)
+- [Socket option readback](#socket-option-readback)
 - [Documentation check](#documentation-check)
 - [Interoperability environment](#interoperability-environment)
 - [CI](#ci)
@@ -59,6 +60,12 @@ A lease does not keep the port bound. The server under test binds it after the t
 4. Stop servers through `ServerHandle::shutdown()` and wait for them before the lease is dropped. Only process-level signal tests send real signals.
 5. A timeout test finishes in under 10 seconds. It sets the timeout under test to a short value, such as 100 ms (`timeouts.idle` has a minimum of 1 s), or runs on Tokio's paused clock (`tokio::time::pause`) wherever it does not need real network delays.
 6. Tests that need IPv6 follow `RUST_MILTER_TEST_IPV6`. When IPv6 is unavailable and not required, they print a skip notice and return. The Rust test harness has no skipped result, so such a test counts as passed; the notice tells the reader it did not run.
+
+## Socket option readback
+
+The Cargo feature `test-support` is for rust-milter's own tests and is not part of the stable API. With it, `ConnectionInfo::read_socket_options()` reads the options of the accepted socket the connection runs on: `TCP_NODELAY`, keepalive with its time, interval, and retries, and the receive and send buffer sizes. A test handler calls it from `ctx.connection()` in any callback. It reads through a duplicate of the socket handle and needs no `unsafe` code.
+
+CI runs the tests with `--all-features`, so the tests that need the feature run there. `cargo test` without the feature skips them.
 
 ## Documentation check
 

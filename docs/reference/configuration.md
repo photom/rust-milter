@@ -208,11 +208,12 @@ The same rules run at startup and on every reload, and `ServerConfig::validate()
 4. If `max_fds` is set, it is at least `max_connections` + the number of listeners + 10, so the server can always accept, log, and close.
 5. If `max_memory` is set, it is at least `per_connection_buffer`.
 6. If `reuse_port` is true, the platform supports `SO_REUSEPORT`.
+7. If `ipv6_only` is false, `bind_addresses` does not hold `[::]` and an IPv4 address on the same port. A dual-stack `[::]` listener already receives the IPv4 connections on its port, so the second bind fails on Linux and behaves differently on other systems. Set `ipv6_only` to true to listen on both, or keep only `[::]`.
 
 On reload only:
 
-7. The new configuration must leave at least one listener (see [hot-reload.md](hot-reload.md)).
-8. Changes to `restart` settings are not errors. They are reported as `pending_restart`.
+8. The new configuration must leave at least one listener (see [hot-reload.md](hot-reload.md)).
+9. Changes to `restart` settings are not errors. They are reported as `pending_restart`.
 
 ## File format (serde feature)
 

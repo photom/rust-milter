@@ -69,6 +69,30 @@ impl Mta {
         }
     }
 
+    /// Connects with a 4 KB receive buffer, so the milter's writes block
+    /// soon after the fake MTA stops reading.
+    pub async fn connect_with_small_receive_buffer(addr: SocketAddr) -> Mta {
+        let deadline = tokio::time::Instant::now() + WAIT;
+        loop {
+            let socket = tokio::net::TcpSocket::new_v4().expect("cannot create a socket");
+            socket
+                .set_recv_buffer_size(4 * 1024)
+                .expect("cannot set SO_RCVBUF");
+            match socket.connect(addr).await {
+                Ok(stream) => {
+                    return Mta {
+                        stream,
+                        buf: BytesMut::new(),
+                    };
+                }
+                Err(_) if tokio::time::Instant::now() < deadline => {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                Err(error) => panic!("cannot connect to {addr}: {error}"),
+            }
+        }
+    }
+
     /// Sends one frame.
     pub async fn send(&mut self, command: u8, data: impl Into<Bytes>) {
         let mut out = BytesMut::new();
@@ -118,6 +142,12 @@ impl Mta {
             "reply to {}",
             char::from(command)
         );
+    }
+
+    /// Writes raw bytes and ignores a failure, for a milter that may have
+    /// closed the connection already.
+    pub async fn try_write_raw(&mut self, bytes: &[u8]) -> bool {
+        self.stream.write_all(bytes).await.is_ok()
     }
 
     /// Whether the milter closes the connection without sending anything

@@ -26,7 +26,9 @@ use crate::handler::{
 };
 use crate::protocol::*;
 use crate::server::ConnectionInfo;
-use crate::{AddressFamily, Command, Frame, MilterText, ProtocolError, Reply, Result};
+use crate::{
+    AddressFamily, Command, Frame, MilterText, ProtocolError, Reply, Result, TimeoutConfig,
+};
 
 /// Runs the conversation on one connection until it ends.
 ///
@@ -38,6 +40,7 @@ pub(crate) async fn run<H, R, W>(
     writer: W,
     connection: Arc<ConnectionInfo>,
     max_packet: usize,
+    timeouts: &TimeoutConfig,
     shutdown: CancellationToken,
 ) -> Result<()>
 where
@@ -45,15 +48,16 @@ where
     R: AsyncRead + Unpin + Send,
     W: AsyncWrite + Send + Unpin + 'static,
 {
+    let accepted_at = tokio::time::Instant::from_std(connection.accepted_at);
     let mut engine = Engine {
         handler,
-        inbound: Inbound::new(reader, max_packet),
+        inbound: Inbound::new(reader, max_packet, timeouts.clone(), accepted_at),
         ctx: EomContext {
             message: MessageContext {
                 session: SessionContext::new(connection, shutdown.clone()),
                 message: None,
             },
-            outbound: Outbound::new(writer),
+            outbound: Outbound::new(writer, timeouts.write),
         },
         state: State::Init,
         rules: Transitions::new(),
