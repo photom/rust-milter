@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 
 use rust_milter::protocol::*;
 use rust_milter::{
-    Bytes, Decision, EomContext, Handler, MessageContext, MilterText, Result, ServerConfig,
-    SessionContext, SessionEnd, ShutdownConfig,
+    Bytes, Decision, EomContext, Handler, MessageContext, Result, ServerConfig, SessionContext,
+    SessionEnd, ShutdownConfig,
 };
 use support::logs::Logs;
 use support::mta::{Reach, strings};
@@ -425,7 +425,7 @@ async fn sht_011_shutdown_closes_a_connection_in_every_state() {
 
 #[cfg(feature = "test-support")]
 mod sockets {
-    use rust_milter::{KeepaliveConfig, SocketReadback};
+    use rust_milter::{KeepaliveConfig, MilterText, SocketReadback};
 
     use super::*;
 
