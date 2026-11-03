@@ -566,7 +566,7 @@ async fn eng_064_shutdown_ends_a_waiting_session() {
 
     assert_eq!(
         log.events(),
-        ["helo", "mail", "rcpt", "end_of_message", "session_end:Quit"].is_empty().then(|| unreachable!()).unwrap_or(["connect", "helo", "session_end:ServerShutdown"])
+        ["connect", "helo", "session_end:ServerShutdown"]
     );
     assert!(mta.closes().await);
 }
