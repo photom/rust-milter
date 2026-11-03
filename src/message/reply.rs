@@ -195,13 +195,15 @@ impl Reply {
                 check_percent(text)?;
             }
             Reply::Quarantine(text) | Reply::AddRecipient(text) | Reply::DeleteRecipient(text) => {
-                check_text(text)?;
+                check_required(text)?;
             }
-            Reply::AddHeader { name, value }
-            | Reply::InsertHeader { name, value, .. }
-            | Reply::ChangeHeader { name, value, .. } => {
-                check_header_name(name)?;
-                check_text(value)?;
+            Reply::AddHeader { name, value } | Reply::InsertHeader { name, value, .. } => {
+                check_new_header_name(name)?;
+                check_header_value(value)?;
+            }
+            Reply::ChangeHeader { name, value, .. } => {
+                check_delivered_header_name(name)?;
+                check_header_value(value)?;
             }
             Reply::AddRecipientWithArgs {
                 rcpt: address,
@@ -211,9 +213,9 @@ impl Reply {
                 from: address,
                 args,
             } => {
-                check_text(address)?;
+                check_required(address)?;
                 if let Some(args) = args {
-                    check_text(args)?;
+                    check_single_line(args)?;
                 }
             }
             Reply::ReplaceBody(chunk) => {
@@ -243,12 +245,54 @@ fn check_text(text: &str) -> std::result::Result<(), ReplyError> {
     Ok(())
 }
 
-/// Rejects an empty name and a name with a colon, whitespace, or a control
-/// character.
-fn check_header_name(name: &str) -> std::result::Result<(), ReplyError> {
+/// Rejects a NUL byte, CR, and LF, so the text stays one field on one line.
+fn check_single_line(text: &str) -> std::result::Result<(), ReplyError> {
+    check_text(text)?;
+    if text.contains(['\r', '\n']) {
+        return Err(ReplyError::LineBreak);
+    }
+    Ok(())
+}
+
+/// Rejects an empty address or reason, as libmilter does, and anything
+/// [`check_single_line`] rejects.
+fn check_required(text: &str) -> std::result::Result<(), ReplyError> {
+    if text.is_empty() {
+        return Err(ReplyError::EmptyField);
+    }
+    check_single_line(text)
+}
+
+/// Requires the name of a new header to be printable ASCII without a colon,
+/// as RFC 5322 defines a field name: the characters 33 to 126 except 58.
+fn check_new_header_name(name: &str) -> std::result::Result<(), ReplyError> {
+    let valid = |byte: u8| (33..=126).contains(&byte) && byte != b':';
+    if name.is_empty() || !name.bytes().all(valid) {
+        return Err(ReplyError::InvalidHeaderName);
+    }
+    Ok(())
+}
+
+/// Checks the name of a header the MTA delivered. Such a name can hold
+/// non-ASCII bytes, so only an empty name, a colon, whitespace, and control
+/// characters are refused.
+fn check_delivered_header_name(name: &str) -> std::result::Result<(), ReplyError> {
     let invalid = |c: char| c == ':' || c.is_whitespace() || c.is_control();
     if name.is_empty() || name.chars().any(invalid) {
         return Err(ReplyError::InvalidHeaderName);
+    }
+    Ok(())
+}
+
+/// Allows LF only where it folds the value: each continuation line starts
+/// with a space or tab and holds more than whitespace. CR is never allowed.
+/// Anything else would start another header, or end the header block for
+/// parsers that read a blank line there.
+fn check_header_value(value: &str) -> std::result::Result<(), ReplyError> {
+    check_text(value)?;
+    let folds = |line: &str| line.starts_with([' ', '\t']) && !line.trim().is_empty();
+    if value.contains('\r') || !value.split('\n').skip(1).all(folds) {
+        return Err(ReplyError::HeaderLineBreak);
     }
     Ok(())
 }

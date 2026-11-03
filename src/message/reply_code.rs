@@ -23,11 +23,12 @@ pub struct ReplyCode {
 impl ReplyCode {
     /// Builds a one-line reply, such as `550 5.7.1 Rejected by policy`.
     ///
-    /// Fails if the code is not 4xx or 5xx, if the enhanced status code is
-    /// not of the form `d.ddd.ddd` with the code's first digit, or if the text
-    /// holds CR, LF, or NUL or is longer than 980 bytes. Without an enhanced
-    /// code, the text must not start with a digit other than the code's first
-    /// digit, because Postfix reads it as a mismatched enhanced code.
+    /// Fails if the code is not 4xx or 5xx, if the enhanced status code is not
+    /// of the form `d.ddd.ddd` with the code's first digit, or if the text
+    /// holds CR, LF, or NUL, or is longer than 980 bytes with each `%` written
+    /// as `%%`. Without an enhanced code, the text must not start with a digit
+    /// other than the code's first digit, because Postfix reads it as a
+    /// mismatched enhanced code.
     pub fn new(
         code: u16,
         enhanced_code: Option<&str>,
@@ -62,7 +63,8 @@ impl ReplyCode {
         let mut wire = String::new();
         for (index, line) in lines.iter().enumerate() {
             let line = line.as_ref();
-            check_line(line)?;
+            let escaped = line.replace('%', "%%");
+            check_line(&escaped)?;
             if enhanced_code.is_none()
                 && line
                     .as_bytes()
@@ -81,7 +83,7 @@ impl ReplyCode {
                 wire.push_str(enhanced);
                 wire.push(' ');
             }
-            wire.push_str(&line.replace('%', "%%"));
+            wire.push_str(&escaped);
         }
         Ok(ReplyCode { wire })
     }
@@ -111,16 +113,20 @@ fn check_enhanced_code(code: u16, enhanced: &str) -> Result<(), ReplyError> {
     Ok(())
 }
 
-/// Rejects NUL, CR, and LF, and text longer than 980 bytes.
-fn check_line(line: &str) -> Result<(), ReplyError> {
-    if line.contains('\0') {
+/// Rejects NUL, CR, and LF, and text longer than 980 bytes. It takes the
+/// line with each `%` already written as `%%`, the text libmilter's limit
+/// applies to; escaping changes no NUL, CR, or LF.
+fn check_line(escaped: &str) -> Result<(), ReplyError> {
+    if escaped.contains('\0') {
         return Err(ReplyError::NulByte);
     }
-    if line.contains(['\r', '\n']) {
+    if escaped.contains(['\r', '\n']) {
         return Err(ReplyError::LineBreak);
     }
-    if line.len() > MAX_LINE_LENGTH {
-        return Err(ReplyError::LineTooLong { length: line.len() });
+    if escaped.len() > MAX_LINE_LENGTH {
+        return Err(ReplyError::LineTooLong {
+            length: escaped.len(),
+        });
     }
     Ok(())
 }

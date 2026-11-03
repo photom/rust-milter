@@ -128,15 +128,19 @@ The server MUST support these TCP address types, in the libmilter (`smfi_setconn
 
 | Format | Example |
 |--------|---------|
-| `inet:port@host` | `inet:8891@localhost` |
+| `inet:port@host` | `inet:8891@127.0.0.1` |
+| `inet:port` | `inet:8891`, every IPv4 address (`0.0.0.0`) |
 | `host:port` | `127.0.0.1:8891` |
 
 ### IPv6 sockets
 
 | Format | Example |
 |--------|---------|
-| `inet6:port@host` | `inet6:8891@::1` |
-| `[host]:port` | `[::1]:8891` |
+| `inet6:port@host` | `inet6:8891@::1`, or `inet6:8891@fe80::1%2` with a scope ID |
+| `inet6:port` | `inet6:8891`, every IPv6 address (`::`) |
+| `[host]:port` | `[::1]:8891`, or `[fe80::1%2]:8891` with a scope ID |
+
+The host is always an IP address; no name is looked up. A scope ID is numeric.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -150,8 +154,8 @@ IPv6 handling:
 
 | Error | Description |
 |-------|-------------|
-| `InvalidFormat` | Address format not recognized, including `unix:` and `local:` addresses |
-| `InvalidHost` | Host name or IP address invalid |
+| `InvalidFormat` | Address format not recognized, including `unix:` and `local:` addresses and Postfix's `inet:host:port` |
+| `InvalidHost` | Not an IP address of the form's family, or a scope ID that is not a number |
 | `InvalidPort` | Port number out of range (1-65535) |
 
 ## Connection lifecycle

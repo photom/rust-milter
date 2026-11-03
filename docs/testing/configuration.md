@@ -26,6 +26,9 @@ Scenarios for configuration validation, address parsing, and the serde file form
 | CFG-022 | unit | Ports 0 and 70000 | each is parsed | `InvalidPort` | [configuration: Top level](../reference/configuration.md#top-level) |
 | CFG-023 | unit | `inet:8891@not a host` | it is parsed | `InvalidHost` | [api: ConfigError](../reference/api-specification.md#configerror) |
 | CFG-024 | unit | `inet:8891@::1` and `inet6:8891@127.0.0.1`, a host of the other family | each is parsed | `InvalidHost` | [configuration: Top level](../reference/configuration.md#top-level) |
+| CFG-025 | unit | `inet:8891` and `inet6:8891`, libmilter's forms without a host | each is parsed | `0.0.0.0:8891` and `[::]:8891`, every address of the family | [configuration: Top level](../reference/configuration.md#top-level) |
+| CFG-026 | unit | `[fe80::1%2]:8891`, an IPv6 address with a scope ID | it is parsed | the address with scope ID 2, so text written from such an address reads back | [configuration: Top level](../reference/configuration.md#top-level) |
+| CFG-027 | unit | `inet:127.0.0.1:8891`, Postfix's form, and `inet6:8891@fe80::1%2` | each is parsed | `InvalidFormat` for the first, so the error names the form rather than the port; the second gives the address with scope ID 2 | [configuration: Top level](../reference/configuration.md#top-level) |
 
 ## File format (serde feature)
 
@@ -43,6 +46,7 @@ Scenarios for configuration validation, address parsing, and the serde file form
 | CFG-049 | unit | A deserialized configuration with an invalid value, such as `backlog = 0` | it is validated | `OutOfRange`; deserializing alone does not validate | [configuration: Validation rules](../reference/configuration.md#validation-rules) |
 | CFG-050 | unit | `[socket_options]` with `keepalive = true` | it is deserialized | an error; the defaults come from leaving the key out | [configuration: Mapping](../reference/configuration.md#mapping) |
 | CFG-051 | unit | A configuration whose `timeouts.read` is 1.5 ms | it is serialized | an error, because the file format has no unit below a millisecond | [configuration: Mapping](../reference/configuration.md#mapping) |
+| CFG-052 | unit | A configuration whose bind address is `[fe80::1%2]:8891` | it is serialized to TOML and read back | the result equals the original, scope ID included | [configuration: Mapping](../reference/configuration.md#mapping) |
 
 ## Reload classes
 
