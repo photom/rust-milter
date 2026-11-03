@@ -271,6 +271,43 @@ fn cfg_008_requires_max_memory_to_hold_one_connection_buffer() {
 }
 
 #[test]
+fn cfg_028_rejects_dual_stack_wildcard_next_to_ipv4_on_the_same_port() {
+    let addresses = |list: &[&str]| -> Vec<std::net::SocketAddr> {
+        list.iter().map(|a| a.parse().unwrap()).collect()
+    };
+    let mut config = valid();
+
+    for conflict in [
+        ["0.0.0.0:8891", "[::]:8891"],
+        ["127.0.0.1:8891", "[::]:8891"],
+    ] {
+        config.bind_addresses = addresses(&conflict);
+        config.socket_options.ipv6_only = false;
+        assert!(
+            matches!(
+                config.validate(),
+                Err(ConfigError::Inconsistent {
+                    rule: "ipv6_only",
+                    ..
+                })
+            ),
+            "{conflict:?} with ipv6_only false"
+        );
+
+        config.socket_options.ipv6_only = true;
+        assert_eq!(
+            config.validate(),
+            Ok(()),
+            "{conflict:?} with ipv6_only true"
+        );
+    }
+
+    config.socket_options.ipv6_only = false;
+    config.bind_addresses = addresses(&["127.0.0.1:8891", "[::1]:8891"]);
+    assert_eq!(config.validate(), Ok(()));
+}
+
+#[test]
 fn cfg_009_rejects_reuse_port_where_the_platform_lacks_it() {
     if cfg!(any(
         target_os = "linux",

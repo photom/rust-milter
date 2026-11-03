@@ -23,6 +23,10 @@ pub enum Error {
     #[error("the handler failed")]
     Handler(#[source] Box<dyn std::error::Error + Send + Sync>),
 
+    /// A connection timeout expired.
+    #[error("the {0} timeout expired")]
+    Timeout(TimeoutKind),
+
     /// The MTA closed the connection in the middle of a frame.
     #[error("the connection closed in the middle of a frame")]
     ConnectionClosed,
@@ -64,6 +68,31 @@ impl Error {
     /// Wraps a handler's own error as [`Error::Handler`].
     pub fn handler(error: impl std::error::Error + Send + Sync + 'static) -> Error {
         Error::Handler(Box::new(error))
+    }
+}
+
+/// Which connection timeout expired; see `TimeoutConfig`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum TimeoutKind {
+    /// `timeouts.connect`: no first command after `accept()`.
+    Connect,
+    /// `timeouts.read`: a frame did not complete in time.
+    Read,
+    /// `timeouts.write`: a reply could not be written in time.
+    Write,
+    /// `timeouts.idle`: no next command in time.
+    Idle,
+}
+
+impl std::fmt::Display for TimeoutKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            TimeoutKind::Connect => "connect",
+            TimeoutKind::Read => "read",
+            TimeoutKind::Write => "write",
+            TimeoutKind::Idle => "idle",
+        })
     }
 }
 

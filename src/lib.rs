@@ -18,13 +18,16 @@ pub use config::{
     BindMode, KeepaliveConfig, ResourceLimitsConfig, ServerConfig, ShutdownConfig, SocketOptions,
     TelemetryConfig, TimeoutConfig, TraceCommands,
 };
-pub use error::{AddressError, ConfigError, Error, ProtocolError, ReplyError, Result};
+pub use error::{AddressError, ConfigError, Error, ProtocolError, ReplyError, Result, TimeoutKind};
 pub use frame::Frame;
 pub use handler::{
     Actions, BodyDecision, ConnectDecision, ConnectInfo, Decision, EomContext, Events, Handler,
     MessageContext, Negotiated, SessionContext, SessionEnd,
 };
 pub use message::{AddressFamily, Command, MilterText, Reply, ReplyCode};
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub use server::SocketReadback;
 pub use server::{
     ConfigWatch, ConnectionInfo, HandlerContext, Server, ServerBuilder, ServerHandle,
 };

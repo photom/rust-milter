@@ -34,9 +34,9 @@ const REUSE_PORT_SUPPORTED: bool = cfg!(any(
 impl ServerConfig {
     /// Checks the configuration against the validation rules in
     /// `docs/reference/configuration.md`: every value in its range,
-    /// `bind_addresses` not empty and without duplicates, `max_fds` and
-    /// `max_memory` large enough, and `reuse_port` only where the platform
-    /// supports it.
+    /// `bind_addresses` not empty and without duplicates, no IPv4 address
+    /// next to a dual-stack `[::]` on its port, `max_fds` and `max_memory`
+    /// large enough, and `reuse_port` only where the platform supports it.
     ///
     /// The server runs the same checks when it is built and on every reload.
     pub fn validate(&self) -> Result<(), ConfigError> {
@@ -45,6 +45,7 @@ impl ServerConfig {
         }
         self.check_ranges()?;
         self.check_duplicates()?;
+        self.check_dual_stack()?;
         self.check_limits()?;
         self.check_platform()
     }
@@ -151,6 +152,34 @@ impl ServerConfig {
         for address in &self.bind_addresses {
             if !seen.insert(address) {
                 return Err(ConfigError::DuplicateBindAddress(*address));
+            }
+        }
+        Ok(())
+    }
+
+    /// A dual-stack `[::]` listener takes the IPv4 connections on its port,
+    /// so an IPv4 listener on the same port cannot bind next to it.
+    fn check_dual_stack(&self) -> Result<(), ConfigError> {
+        if self.socket_options.ipv6_only {
+            return Ok(());
+        }
+        let wildcard = self
+            .bind_addresses
+            .iter()
+            .filter(|a| a.ip() == std::net::Ipv6Addr::UNSPECIFIED);
+        for v6 in wildcard {
+            let clash = self
+                .bind_addresses
+                .iter()
+                .find(|a| a.is_ipv4() && a.port() == v6.port());
+            if let Some(v4) = clash {
+                return Err(ConfigError::Inconsistent {
+                    rule: "ipv6_only",
+                    detail: format!(
+                        "{v6} also receives IPv4 connections while ipv6_only is false, \
+                         so {v4} cannot bind; set ipv6_only to true or remove {v4}"
+                    ),
+                });
             }
         }
         Ok(())
