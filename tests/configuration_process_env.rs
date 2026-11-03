@@ -15,6 +15,9 @@ use rust_milter::{ConfigError, ServerConfig};
 
 /// Runs `check` in a child process whose environment has `name` = `value`.
 /// In the child, where the variable is set, it runs `check` directly.
+///
+/// `test` must be the calling test's name. The child must run exactly that
+/// test, because a name that matches no test would run nothing and succeed.
 fn with_var(test: &str, name: &OsStr, value: &OsStr, check: impl FnOnce()) {
     if std::env::var_os(name).is_some() {
         check();
@@ -25,10 +28,11 @@ fn with_var(test: &str, name: &OsStr, value: &OsStr, check: impl FnOnce()) {
         .env(name, value)
         .output()
         .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        output.status.success(),
-        "the child process failed:\n{}",
-        String::from_utf8_lossy(&output.stdout)
+        output.status.success() && stdout.contains("test result: ok. 1 passed"),
+        "the child process did not run {test} successfully:\n{stdout}\n{}",
+        String::from_utf8_lossy(&output.stderr)
     );
 }
 
