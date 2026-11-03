@@ -36,11 +36,13 @@ pub enum ReplyError {
     #[error("the enhanced status code is not of the form d.ddd.ddd")]
     InvalidEnhancedCode,
 
-    /// A line of reply text holds CR or LF.
-    #[error("reply text contains CR or LF")]
+    /// A line of reply text, an address, ESMTP arguments, or a quarantine
+    /// reason holds CR or LF.
+    #[error("text that must be one line contains CR or LF")]
     LineBreak,
 
-    /// A line of reply text is longer than 980 bytes.
+    /// A line of reply text, with each `%` written as `%%`, is longer than 980
+    /// bytes.
     #[error("a {length}-byte line of reply text exceeds 980 bytes")]
     LineTooLong {
         /// Length of the line, in bytes.
@@ -55,10 +57,20 @@ pub enum ReplyError {
     #[error("a text field contains a NUL byte")]
     NulByte,
 
-    /// A header name is empty or holds a colon, whitespace, or a control
-    /// character.
+    /// A header name is empty or holds a colon. A new header's name must also
+    /// be printable ASCII; a delivered header's name must not hold whitespace
+    /// or control characters.
     #[error("invalid header name")]
     InvalidHeaderName,
+
+    /// A header value holds CR, or an LF that does not start a folded line of
+    /// a space or tab and more than whitespace.
+    #[error("a header value contains CR, or LF that does not fold the value")]
+    HeaderLineBreak,
+
+    /// An address or quarantine reason is empty.
+    #[error("an address or reason is empty")]
+    EmptyField,
 
     /// A body chunk is longer than one frame can carry.
     #[error("a {length}-byte body chunk exceeds 65,535 bytes")]
@@ -165,12 +177,13 @@ pub enum ConfigError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum AddressError {
-    /// The text is not an address in a supported form; `unix:` and `local:`
-    /// addresses are not supported.
+    /// The text is not an address in a supported form. `unix:` and `local:`
+    /// addresses are not supported, nor is Postfix's `inet:host:port`.
     #[error("not an address of the form host:port, inet:port@host, or inet6:port@host")]
     InvalidFormat,
 
-    /// The host is not an IP address of the form's family.
+    /// The host is not an IP address of the form's family, or its scope ID is
+    /// not a number.
     #[error("the host is not an IP address")]
     InvalidHost,
 

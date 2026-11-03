@@ -199,3 +199,17 @@ fn cfg_051_cannot_write_a_duration_finer_than_a_millisecond() {
 
     assert!(toml::to_string(&config).is_err());
 }
+
+#[test]
+fn cfg_052_round_trips_an_ipv6_scope_id() {
+    let address: std::net::SocketAddr =
+        std::net::SocketAddrV6::new("fe80::1".parse().unwrap(), 8891, 0, 2).into();
+    let config = ServerConfig {
+        bind_addresses: vec![address],
+        ..ServerConfig::default()
+    };
+
+    let text = toml::to_string(&config).unwrap();
+
+    assert_eq!(from_toml(&text).unwrap(), config, "TOML:\n{text}");
+}

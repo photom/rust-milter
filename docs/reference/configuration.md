@@ -112,7 +112,7 @@ Lowering `max_connections` below the current count closes no open connection. Ne
 | `resource_limits` | `ResourceLimitsConfig` | see below | | |
 | `telemetry` | `TelemetryConfig` | see below | | |
 
-`bind_addresses` also accepts the libmilter forms `inet:port@host` and `inet6:port@host` when parsed from text. `ServerConfig::parse_bind_address` parses that text, and the file format and the environment variables use it. The host must be an IP address of the form's family, because no name is looked up. `unix:` and `local:` addresses are rejected; rust-milter does not support Unix domain sockets.
+`bind_addresses` also accepts the libmilter forms `inet:port@host` and `inet6:port@host` when parsed from text. `ServerConfig::parse_bind_address` parses that text, and the file format and the environment variables use it. The host must be an IP address of the form's family, because no name is looked up. As in libmilter, `inet:port` and `inet6:port` without a host bind every address of the family (`0.0.0.0` and `::`). An IPv6 address may carry a scope ID, as in `[fe80::1%2]:8891`. `unix:` and `local:` addresses are rejected; rust-milter does not support Unix domain sockets.
 
 ### TimeoutConfig
 
@@ -224,7 +224,7 @@ With the optional Cargo feature `serde`, `ServerConfig` and all its parts implem
 |------------|---------------------|
 | Field names | The names in the reference tables above, such as `max_connections` |
 | Nested parts (`timeouts`, `socket_options`, `shutdown`, `resource_limits`, `telemetry`) | Nested tables or maps under the same names; `socket_options.keepalive` is a table inside `socket_options` |
-| `SocketAddr` in `bind_addresses` | Text: `"127.0.0.1:8891"`, `"[::1]:8891"`, or the libmilter forms `"inet:8891@127.0.0.1"` and `"inet6:8891@::1"` |
+| `SocketAddr` in `bind_addresses` | Text: `"127.0.0.1:8891"`, `"[::1]:8891"`, `"[fe80::1%2]:8891"`, or the libmilter forms `"inet:8891@127.0.0.1"`, `"inet6:8891@::1"`, and `"inet:8891"` for every address |
 | `Duration` | Text: a whole number and a unit, `ms`, `s`, `m`, or `h`, for example `"500ms"`, `"30s"`, `"5m"`. A bare number, or another unit, is an error |
 | Sizes in bytes | Integers, for example `131072` |
 | Enums | Lowercase text with underscores: `bind_mode` is `"fail_fast"` or `"best_effort"`; `trace_commands` is `"none"`, `"envelope"`, or `"all"` |

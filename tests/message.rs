@@ -75,7 +75,7 @@ fn texts(values: &[MilterText]) -> Vec<&[u8]> {
 
 #[test]
 fn cmd_010_decodes_macros_in_order() {
-    let data = b"C{j}\0mx.example\0{daemon_name}\0smtpd\0";
+    let data = b"C{j}\0mx.void.invalid\0{daemon_name}\0smtpd\0";
 
     let Command::Macro { stage, macros } = Command::from_frame(frame(SMFIC_MACRO, data)).unwrap()
     else {
@@ -90,7 +90,7 @@ fn cmd_010_decodes_macros_in_order() {
     assert_eq!(
         pairs,
         vec![
-            (&b"{j}"[..], &b"mx.example"[..]),
+            (&b"{j}"[..], &b"mx.void.invalid"[..]),
             (&b"{daemon_name}"[..], &b"smtpd"[..])
         ]
     );
@@ -134,7 +134,7 @@ fn connect_data(hostname: &[u8], family: u8, port_and_address: Option<(u16, &[u8
 
 #[test]
 fn cmd_020_decodes_an_ipv4_connection() {
-    let data = connect_data(b"mail.example.org", SMFIA_INET, Some((25, b"192.0.2.1")));
+    let data = connect_data(b"mail.void.invalid", SMFIA_INET, Some((25, b"192.0.2.1")));
 
     let command = Command::from_frame(frame(SMFIC_CONNECT, &data)).unwrap();
 
@@ -147,7 +147,7 @@ fn cmd_020_decodes_an_ipv4_connection() {
     else {
         panic!("not a Connect command: {command:?}");
     };
-    assert_eq!(hostname.as_bytes(), b"mail.example.org");
+    assert_eq!(hostname.as_bytes(), b"mail.void.invalid");
     assert_eq!(family, AddressFamily::Inet);
     assert_eq!(port, Some(25));
     assert_eq!(
@@ -158,7 +158,11 @@ fn cmd_020_decodes_an_ipv4_connection() {
 
 #[test]
 fn cmd_021_decodes_an_ipv6_connection() {
-    let data = connect_data(b"mail.example.org", SMFIA_INET6, Some((25, b"2001:db8::1")));
+    let data = connect_data(
+        b"mail.void.invalid",
+        SMFIA_INET6,
+        Some((25, b"2001:db8::1")),
+    );
 
     let command = Command::from_frame(frame(SMFIC_CONNECT, &data)).unwrap();
 
@@ -220,7 +224,7 @@ fn cmd_023_decodes_a_local_client() {
 
 #[test]
 fn cmd_024_rejects_an_ipv4_connection_without_port_and_address() {
-    let data = connect_data(b"mail.example.org", SMFIA_INET, None);
+    let data = connect_data(b"mail.void.invalid", SMFIA_INET, None);
 
     assert_malformed(
         Command::from_frame(frame(SMFIC_CONNECT, &data)),
@@ -230,7 +234,7 @@ fn cmd_024_rejects_an_ipv4_connection_without_port_and_address() {
 
 #[test]
 fn cmd_025_rejects_an_unknown_family_byte() {
-    let data = connect_data(b"mail.example.org", b'X', Some((25, b"192.0.2.1")));
+    let data = connect_data(b"mail.void.invalid", b'X', Some((25, b"192.0.2.1")));
 
     assert_malformed(
         Command::from_frame(frame(SMFIC_CONNECT, &data)),
@@ -242,12 +246,12 @@ fn cmd_025_rejects_an_unknown_family_byte() {
 
 #[test]
 fn cmd_030_decodes_helo() {
-    let command = Command::from_frame(frame(SMFIC_HELO, b"client.example.org\0")).unwrap();
+    let command = Command::from_frame(frame(SMFIC_HELO, b"client.void.invalid\0")).unwrap();
 
     let Command::Helo(name) = command else {
         panic!("not a Helo command: {command:?}");
     };
-    assert_eq!(name.as_bytes(), b"client.example.org");
+    assert_eq!(name.as_bytes(), b"client.void.invalid");
 }
 
 #[test]
@@ -352,7 +356,7 @@ fn cmd_040_rejects_an_unknown_command_code() {
 #[test]
 fn cmd_041_rejects_a_string_without_a_null_terminator() {
     assert_malformed(
-        Command::from_frame(frame(SMFIC_HELO, b"client.example.org")),
+        Command::from_frame(frame(SMFIC_HELO, b"client.void.invalid")),
         SMFIC_HELO,
     );
 }
@@ -737,4 +741,100 @@ fn rcd_013_rejects_text_that_starts_with_another_digit_without_an_enhanced_code(
         Err(ReplyError::EnhancedCodeMismatch)
     );
     assert!(ReplyCode::new(550, None, "5 messages").is_ok());
+}
+
+#[test]
+fn cmd_044_rejects_bytes_after_the_last_field() {
+    let cases: [(u8, &[u8]); 4] = [
+        (SMFIC_HELO, b"client.void.invalid\0junk"),
+        (SMFIC_UNKNOWN, b"XFOO bar\0junk"),
+        (SMFIC_HEADER, b"Subject\0hi\0junk"),
+        (
+            SMFIC_CONNECT,
+            b"mail.void.invalid\x004\x00\x19192.0.2.1\0junk",
+        ),
+    ];
+    for (code, data) in cases {
+        assert_malformed(Command::from_frame(frame(code, data)), code);
+    }
+
+    let longer = [&be32(&[6, 0x1FF, 0x1F_FFFF])[..], &[0, 0, 0, 0]].concat();
+    assert_eq!(
+        Command::from_frame(frame(SMFIC_OPTNEG, &longer)).unwrap(),
+        Command::OptNeg {
+            version: 6,
+            actions: 0x1FF,
+            protocol: 0x1F_FFFF
+        }
+    );
+}
+
+#[test]
+fn rpl_014_rejects_header_values_that_would_add_header_lines() {
+    for value in ["ok\nBcc: x@void.invalid", "a\rb", "a\n ", "a\n\t\nb"] {
+        assert_invalid(Reply::AddHeader {
+            name: "X-Test".to_owned(),
+            value: value.to_owned(),
+        });
+    }
+    encode(Reply::AddHeader {
+        name: "X-Test".to_owned(),
+        value: "first\n\tsecond".to_owned(),
+    });
+}
+
+#[test]
+fn rpl_015_rejects_empty_addresses_and_reasons() {
+    for reply in [
+        Reply::Quarantine(String::new()),
+        Reply::AddRecipient(String::new()),
+        Reply::DeleteRecipient(String::new()),
+        Reply::ChangeFrom {
+            from: String::new(),
+            args: None,
+        },
+    ] {
+        assert_invalid(reply);
+    }
+}
+
+#[test]
+fn rpl_016_rejects_a_new_header_name_that_is_not_printable_ascii() {
+    assert_invalid(Reply::AddHeader {
+        name: "X-Prüfung".to_owned(),
+        value: "1".to_owned(),
+    });
+    assert_invalid(Reply::InsertHeader {
+        index: 0,
+        name: "X-Prüfung".to_owned(),
+        value: "1".to_owned(),
+    });
+    encode(Reply::ChangeHeader {
+        index: 1,
+        name: "X-Prüfung".to_owned(),
+        value: String::new(),
+    });
+}
+
+#[test]
+fn rpl_017_rejects_line_breaks_in_envelope_fields() {
+    for reply in [
+        Reply::AddRecipient("<a@void.invalid>\r\nRCPT TO:<b@void.invalid>".to_owned()),
+        Reply::ChangeFrom {
+            from: "<a@void.invalid>".to_owned(),
+            args: Some("SIZE=1\nX".to_owned()),
+        },
+        Reply::Quarantine("held\rfor review".to_owned()),
+    ] {
+        assert_invalid(reply);
+    }
+}
+
+#[test]
+fn rcd_014_counts_the_line_limit_after_doubling_percent() {
+    assert!(ReplyCode::new(550, None, &"%".repeat(490)).is_ok());
+    assert_eq!(
+        ReplyCode::new(550, None, &"%".repeat(491)),
+        Err(ReplyError::LineTooLong { length: 982 })
+    );
 }

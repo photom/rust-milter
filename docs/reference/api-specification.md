@@ -243,7 +243,7 @@ The variants mean what libmilter's `SMFIS_*` codes mean:
 - the code is 4xx or 5xx
 - the enhanced status code, if given, has the form `d.ddd.ddd` and the same first digit as the code
 - without an enhanced status code, no line starts with a digit other than the code's first digit, which Postfix would reject as a mismatched enhanced status code
-- no line contains CR, LF, or NUL, and no line is longer than 980 bytes
+- no line contains CR, LF, or NUL, and no line is longer than 980 bytes with each `%` written as `%%`, the text libmilter's limit applies to
 - a multi-line reply has at most 32 lines
 
 The text is taken literally. The library writes each `%` as `%%` on the wire, so a reply shows on both MTAs exactly as written. `Reply::from(reply_code)` gives the `Reply::ReplyCode` that carries it.
@@ -346,7 +346,7 @@ Type-safe form of the commands the MTA sends.
 
 `AddressFamily`: `Unknown` (`SMFIA_UNKNOWN`), `Unix` (`SMFIA_UNIX`), `Inet` (`SMFIA_INET`), `Inet6` (`SMFIA_INET6`).
 
-`Command::from_frame(frame)` checks the command code and the data format, and returns `Error::Protocol` on invalid input: `UnknownCommand` for an unknown command code, and `Malformed` for data that does not match the format, such as a missing null terminator, a short option negotiation, a macro name without a value, or a family byte that is not an `SMFIA_*` code. Text fields, including the hostname, header name and value, and macro names and values, are `MilterText`, so bytes that are not valid UTF-8 are kept.
+`Command::from_frame(frame)` checks the command code and the data format, and returns `Error::Protocol` on invalid input: `UnknownCommand` for an unknown command code, and `Malformed` for data that does not match the format, such as a missing null terminator, bytes after the last field, a short option negotiation, a macro name without a value, or a family byte that is not an `SMFIA_*` code. An option negotiation longer than 12 bytes is read from its first 12, as libmilter does. Text fields, including the hostname, header name and value, and macro names and values, are `MilterText`, so bytes that are not valid UTF-8 are kept.
 
 ## Reply
 
@@ -379,7 +379,9 @@ Text fields are `String`: the milter writes them, so they are always valid UTF-8
 
 `Reply` is the wire-level type, used by the milter client sample in `examples/` and by tests; handlers use the decision types and `ReplyCode` instead. `Reply::to_frame()` validates before encoding, and returns `Error::InvalidReply` on a failed check:
 - `ReplyCode` text: a 4xx or 5xx code, the multi-line rules from [milter-protocol.md](milter-protocol.md#multi-line-reply-handling), and every literal `%` already written as `%%`
-- header names: not empty, no colon, no whitespace, no control characters
+- header names in `AddHeader` and `InsertHeader`: not empty, printable ASCII (33 to 126), and no colon, as RFC 5322 defines a field name. `ChangeHeader` names a header the MTA delivered, which can hold non-ASCII bytes, so its name only must not be empty or hold a colon, whitespace, or control characters
+- header values: no CR, and LF only to fold the value, followed by a space or tab and more than whitespace; any other line break would start another header or end the header block
+- addresses, ESMTP arguments, and the quarantine reason: no CR or LF, and addresses and the reason not empty, as libmilter's `smfi_addrcpt`, `smfi_delrcpt`, `smfi_chgfrom`, and `smfi_quarantine` require
 - text fields: no NUL byte, which would end the field early on the wire
 - `ReplaceBody` data: at most 65,535 bytes per frame
 
@@ -394,7 +396,7 @@ Checks on `ServerConfig`:
 | Method | Returns |
 |--------|---------|
 | `ServerConfig::validate(&self)` | `Result<(), ConfigError>`: the [validation rules](configuration.md#validation-rules) that `build()` and every reload also run |
-| `ServerConfig::parse_bind_address(text)` | `Result<SocketAddr, AddressError>`: `host:port`, `[v6]:port`, `inet:port@host`, or `inet6:port@host`, with an IP address as host |
+| `ServerConfig::parse_bind_address(text)` | `Result<SocketAddr, AddressError>`: `host:port`, `[v6]:port`, `inet:port@host`, `inet6:port@host`, `inet:port`, or `inet6:port`. The host is an IP address, and an IPv6 host may carry a numeric `%scope`; without a host, the address is every address of the family |
 
 Environment variable helpers on `ServerConfig` ([configuration.md](configuration.md#environment-variables)):
 
@@ -466,7 +468,7 @@ Errors are `thiserror` enums. Every error type implements `std::error::Error`, `
 | `UnknownEnvVariable(String)` | An environment variable with the configured prefix names no setting |
 | `InvalidEnvValue { variable, reason }` | An environment variable's value cannot be parsed; the value itself is not included |
 
-`AddressError`: `InvalidFormat` (including `unix:` and `local:` addresses), `InvalidHost` (not an IP address of the form's family), `InvalidPort` (not 1 to 65535).
+`AddressError`: `InvalidFormat` (including `unix:` and `local:` addresses and Postfix's `inet:host:port`), `InvalidHost` (not an IP address of the form's family, or a scope ID that is not a number), `InvalidPort` (not 1 to 65535).
 
 ### ReloadError
 
@@ -497,13 +499,15 @@ Errors are `thiserror` enums. Every error type implements `std::error::Error`, `
 | `InvalidCode(u16)` | The reply code is not 4xx or 5xx |
 | `InvalidEnhancedCode` | The enhanced status code is not of the form `d.ddd.ddd` |
 | `EnhancedCodeMismatch` | The enhanced status code, or the text of a line without one, starts with a digit other than the reply code's first digit |
-| `LineBreak` | A line of reply text contains CR or LF |
-| `LineTooLong { length }` | A line of reply text is longer than 980 bytes |
+| `LineBreak` | A line of reply text, an address, ESMTP arguments, or a quarantine reason contains CR or LF |
+| `LineTooLong { length }` | A line of reply text is longer than 980 bytes with each `%` written as `%%` |
 | `LineCount(usize)` | A reply has no lines, or more than 32 |
 | `MalformedReplyText` | `Reply::ReplyCode` text breaks the line rules: code, separator, or the same code on every line |
 | `UnescapedPercent` | `Reply::ReplyCode` text contains a `%` not written as `%%` |
 | `NulByte` | A text field contains a NUL byte |
-| `InvalidHeaderName` | A header name is empty or contains a colon, whitespace, or a control character |
+| `InvalidHeaderName` | A header name is empty or contains a colon; a new header's name is also not printable ASCII, or a delivered header's name contains whitespace or a control character |
+| `HeaderLineBreak` | A header value contains CR, or an LF that does not start a folded line of a space or tab and more than whitespace |
+| `EmptyField` | An address or quarantine reason is empty |
 | `BodyChunkTooLarge { length }` | A `ReplaceBody` chunk is longer than 65,535 bytes |
 
 `ReloadError::Load` and `Error::Handler` box errors whose types belong to the application. They are the only boxed errors in the public API.
