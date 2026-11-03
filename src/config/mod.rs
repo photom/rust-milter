@@ -2,8 +2,10 @@
 //! validation rules from `docs/reference/configuration.md`.
 
 mod address;
+mod env;
 #[cfg(feature = "serde")]
 mod file_format;
+mod text;
 mod validate;
 
 use std::net::SocketAddr;
