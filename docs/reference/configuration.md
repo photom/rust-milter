@@ -225,10 +225,10 @@ With the optional Cargo feature `serde`, `ServerConfig` and all its parts implem
 | Field names | The names in the reference tables above, such as `max_connections` |
 | Nested parts (`timeouts`, `socket_options`, `shutdown`, `resource_limits`, `telemetry`) | Nested tables or maps under the same names; `socket_options.keepalive` is a table inside `socket_options` |
 | `SocketAddr` in `bind_addresses` | Text: `"127.0.0.1:8891"`, `"[::1]:8891"`, or the libmilter forms `"inet:8891@127.0.0.1"` and `"inet6:8891@::1"` |
-| `Duration` | Text with a unit: `ms`, `s`, `m`, or `h`, for example `"500ms"`, `"30s"`, `"5m"` |
+| `Duration` | Text: a whole number and a unit, `ms`, `s`, `m`, or `h`, for example `"500ms"`, `"30s"`, `"5m"`. A bare number, or another unit, is an error |
 | Sizes in bytes | Integers, for example `131072` |
 | Enums | Lowercase text with underscores: `bind_mode` is `"fail_fast"` or `"best_effort"`; `trace_commands` is `"none"`, `"envelope"`, or `"all"` |
-| `Option` fields | Leave the key out for `None`. `keepalive` also accepts `false` to turn keepalive off |
+| `Option` fields | Leave the key out for `None`. `keepalive` also accepts `false` to turn keepalive off; `true` is an error, because leaving the key out already gives the defaults |
 
 ### Compatibility rules
 
@@ -240,7 +240,11 @@ These rules apply across rust-milter versions (see [Why the file rules are stric
 4. Removing a field, or changing its type or meaning, is a major-version change.
 5. The text format of durations and enum values never changes within a major version.
 
-`Serialize` writes every field, including defaults, so a serialized configuration shows exactly what the server runs with.
+`Serialize` writes every field, including defaults, so a serialized configuration shows exactly what the server runs with. Two exceptions follow from the formats having no null:
+- an `Option` field that is `None` is left out, which reads back as `None`
+- `keepalive` off is written as `false`, because a missing key would read back as the default, keepalive on
+
+Durations are written in the largest unit that holds them exactly, such as `"5m"` for 300 seconds. A duration with a fraction of a millisecond cannot be written, and serializing it fails.
 
 ## Environment variables
 
