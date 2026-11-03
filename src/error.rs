@@ -157,6 +157,20 @@ pub enum ConfigError {
         /// Why the platform cannot apply it.
         reason: &'static str,
     },
+
+    /// An environment variable with the configured prefix names no setting.
+    #[error("{0} names no setting")]
+    UnknownEnvVariable(String),
+
+    /// An environment variable's value cannot be parsed. The error names the
+    /// variable and the reason but never repeats the value.
+    #[error("{variable}: {reason}")]
+    InvalidEnvValue {
+        /// The variable's name.
+        variable: String,
+        /// Why the value was rejected.
+        reason: String,
+    },
 }
 
 /// Why a bind address could not be parsed.

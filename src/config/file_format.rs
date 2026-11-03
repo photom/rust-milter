@@ -10,57 +10,21 @@ pub(super) mod duration {
     use serde::ser::Error as _;
     use serde::{Deserialize, Deserializer, Serializer};
 
+    use crate::config::text;
+
     pub(crate) fn serialize<S: Serializer>(
         value: &Duration,
         serializer: S,
     ) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&format(*value).map_err(S::Error::custom)?)
+        serializer.serialize_str(&text::format_duration(*value).map_err(S::Error::custom)?)
     }
 
     pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Duration, D::Error> {
-        let text = String::deserialize(deserializer)?;
-        parse(&text).map_err(D::Error::custom)
-    }
-
-    /// Reads a whole number followed by `ms`, `s`, `m`, or `h`.
-    pub(crate) fn parse(text: &str) -> Result<Duration, String> {
-        let digits = text.len() - text.trim_start_matches(|c: char| c.is_ascii_digit()).len();
-        let (number, unit) = text.split_at(digits);
-        let invalid =
-            || format!("invalid duration {text:?}: write a whole number and ms, s, m, or h");
-        let number: u64 = number.parse().map_err(|_| invalid())?;
-        let seconds_per_unit = match unit {
-            "ms" => return Ok(Duration::from_millis(number)),
-            "s" => 1,
-            "m" => 60,
-            "h" => 3_600,
-            _ => return Err(invalid()),
-        };
-        number
-            .checked_mul(seconds_per_unit)
-            .map(Duration::from_secs)
-            .ok_or_else(invalid)
-    }
-
-    /// Writes the duration in the largest unit that represents it exactly.
-    pub(crate) fn format(value: Duration) -> Result<String, String> {
-        if value.subsec_nanos() % 1_000_000 != 0 {
-            return Err(format!(
-                "{value:?} has a fraction of a millisecond, which the file format cannot hold"
-            ));
-        }
-        if value.subsec_millis() != 0 {
-            return Ok(format!("{}ms", value.as_millis()));
-        }
-        let seconds = value.as_secs();
-        Ok(match seconds {
-            0 => "0s".to_owned(),
-            s if s % 3_600 == 0 => format!("{}h", s / 3_600),
-            s if s % 60 == 0 => format!("{}m", s / 60),
-            s => format!("{s}s"),
-        })
+        let value = String::deserialize(deserializer)?;
+        text::parse_duration(&value)
+            .map_err(|reason| D::Error::custom(format!("invalid duration {value:?}: {reason}")))
     }
 }
 
