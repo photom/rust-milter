@@ -363,3 +363,42 @@ fn cfg_024_rejects_a_host_of_the_other_family() {
         );
     }
 }
+
+#[test]
+fn cfg_025_reads_the_libmilter_forms_without_a_host() {
+    let cases = [("inet:8891", "0.0.0.0:8891"), ("inet6:8891", "[::]:8891")];
+
+    for (text, expected) in cases {
+        let expected: SocketAddr = expected.parse().unwrap();
+        assert_eq!(
+            ServerConfig::parse_bind_address(text),
+            Ok(expected),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn cfg_026_reads_an_ipv6_scope_id() {
+    let parsed = ServerConfig::parse_bind_address("[fe80::1%2]:8891").unwrap();
+
+    let SocketAddr::V6(v6) = parsed else {
+        panic!("not IPv6: {parsed}");
+    };
+    assert_eq!(v6.scope_id(), 2);
+    assert_eq!(v6.port(), 8891);
+}
+
+#[test]
+fn cfg_027_names_the_form_for_postfix_text_and_reads_an_inet6_scope_id() {
+    assert_eq!(
+        ServerConfig::parse_bind_address("inet:127.0.0.1:8891"),
+        Err(AddressError::InvalidFormat)
+    );
+
+    let parsed = ServerConfig::parse_bind_address("inet6:8891@fe80::1%2").unwrap();
+    let SocketAddr::V6(v6) = parsed else {
+        panic!("not IPv6: {parsed}");
+    };
+    assert_eq!((v6.port(), v6.scope_id()), (8891, 2));
+}
