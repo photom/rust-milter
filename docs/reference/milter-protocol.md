@@ -190,11 +190,11 @@ Postfix checks every line. Each line must:
 - be at least 4 characters long
 - start with `4` or `5` followed by two digits
 - continue with `-` on a non-final line and a space on the final line
-- if an enhanced status code follows, start it with the same digit as the reply code
+- if the character after the `-` or space is a digit, match the reply code's first digit. Postfix applies this to any digit, so a line without an enhanced status code must not start its text with a different digit: `550 100 messages` is rejected
 
-Non-final lines end in CRLF. The final line has no line terminator, and the reply must contain no NUL byte except the terminating one.
+Postfix development snapshots also require the same code on every line. Non-final lines end in CRLF. The final line has no line terminator, and the reply must contain no NUL byte except the terminating one.
 
-libmilter's `smfi_setmlreply()` builds replies in this format, with at most 32 lines of at most 980 characters each.
+libmilter's `smfi_setmlreply()` builds replies in this format, with at most 32 lines of at most 980 bytes of text each.
 
 ## Protocol architecture
 
