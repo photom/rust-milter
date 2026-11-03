@@ -105,5 +105,65 @@ pub enum ProtocolError {
     UnknownCommand(u8),
 }
 
+/// Why a configuration is invalid.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum ConfigError {
+    /// `bind_addresses` is empty.
+    #[error("bind_addresses is empty")]
+    MissingBindAddress,
+
+    /// A value is outside its range in `docs/reference/configuration.md`.
+    #[error("{field} is {value}; allowed: {allowed}")]
+    OutOfRange {
+        /// The setting's path, such as `timeouts.connect`.
+        field: &'static str,
+        /// The rejected value, as text.
+        value: String,
+        /// The allowed range.
+        allowed: &'static str,
+    },
+
+    /// The same address appears twice in `bind_addresses`.
+    #[error("{0} appears twice in bind_addresses")]
+    DuplicateBindAddress(std::net::SocketAddr),
+
+    /// A rule across several settings failed.
+    #[error("{rule}: {detail}")]
+    Inconsistent {
+        /// The rule, such as `max_fds`.
+        rule: &'static str,
+        /// What the values are and what the rule needs.
+        detail: String,
+    },
+
+    /// The platform does not support a setting.
+    #[error("{field} is not supported: {reason}")]
+    Unsupported {
+        /// The setting's path.
+        field: &'static str,
+        /// Why the platform cannot apply it.
+        reason: &'static str,
+    },
+}
+
+/// Why a bind address could not be parsed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum AddressError {
+    /// The text is not an address in a supported form; `unix:` and `local:`
+    /// addresses are not supported.
+    #[error("not an address of the form host:port, inet:port@host, or inet6:port@host")]
+    InvalidFormat,
+
+    /// The host is not an IP address of the form's family.
+    #[error("the host is not an IP address")]
+    InvalidHost,
+
+    /// The port is not a number from 1 to 65535.
+    #[error("the port is not a number from 1 to 65535")]
+    InvalidPort,
+}
+
 /// `std::result::Result` with the library's [`Error`].
 pub type Result<T> = std::result::Result<T, Error>;
