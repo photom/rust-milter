@@ -329,6 +329,8 @@ As the server approaches its resource limits:
 1. When `max_connections` is reached, the server accepts each new connection and closes it at once. The MTA sees the connection close during option negotiation and applies its own failure policy (Sendmail `F=` flags, Postfix `milter_default_action`). A TCP server cannot answer an incoming connection with `ECONNREFUSED`; only a port with no listener does that.
 2. When `max_memory` is set and the connection buffers would exceed it, the server closes new connections at once, as at `max_connections`, and closes a connection whose buffer would have to grow past the limit (`Error::ResourceLimit`).
 
+`max_memory` counts the read buffers of the open connections. Each connection reserves 4 KB when it is accepted, and grows its reservation to the length of a frame as soon as the frame's length field arrives, before the data. The reservation falls back to 4 KB once the frame is complete. Replies and the values a handler keeps are not counted.
+
 ## Error handling
 
 The error types and their variants are specified in [api-specification.md](api-specification.md#errors). This section covers how the server reacts to operating system errors.
@@ -339,6 +341,7 @@ The error types and their variants are specified in [api-specification.md](api-s
 |-------|-------|-----------------|
 | `EMFILE` (too many open files) | `accept()` | Log, then back off: stop accepting on that listener for 100 ms, doubling after each consecutive error up to 1 s. A successful accept resets the back-off |
 | `ENFILE` (system file table full) | `accept()` | Same back-off as `EMFILE` |
+| any other `accept()` error | `accept()` | Same back-off as `EMFILE`, so a failing listener never spins |
 | `ECONNABORTED` | `accept()` | The client gave up before `accept()` returned. Log at debug level and keep accepting |
 | `ECONNRESET` | connection | Log at debug level, close connection |
 | `ETIMEDOUT` | connection | Close connection, log |
@@ -390,6 +393,8 @@ In `BestEffort` mode the server:
 | Connection timeout | DEBUG | `conn_id`, `timeout_type`, `timeout_value` |
 | Connection rejected (limit) | WARN | `conn_id`, `remote_addr`, `max_connections` |
 
+The close log is the error form, at WARN, only for the reason `error`: a protocol error, a failed callback, an end of file in the middle of a frame, a frame longer than `per_connection_buffer`, or a socket error other than a reset. A close for the reasons `client_closed`, `server_shutdown`, `timeout`, `reset`, and `limit_reached` (a buffer that would pass `max_memory`) is the normal form at DEBUG, with `error` added for a timeout, a reset, and a limit. MTAs close idle milter connections and reset connections in normal operation, so neither is a warning.
+
 Fields of the "connection accepted" log:
 
 | Field | Type | Description |
@@ -419,7 +424,7 @@ Fields of the "connection closed" log:
 | Server starting | INFO | `version`, `bind_addresses` |
 | Server started | INFO | `bind_addresses`, `pid` |
 | Listener bound | INFO | `address`, `backlog` |
-| Listener bind failed | ERROR | `address`, `error` |
+| Listener bind failed | ERROR in `FailFast` mode, WARN in `BestEffort` mode | `address`, `error` |
 | Shutdown signal received | INFO | `signal`, `signal_name`, `reason` |
 | Second shutdown signal received | WARN | `signal`, `signal_name`, `action` (force shutdown) |
 | Shutdown grace period started | INFO | `grace_period_ms` |
@@ -469,7 +474,7 @@ Listener status:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `address` | String | Listener address |
+| `address` | SocketAddr | Listener address |
 | `bound` | bool | Successfully bound |
 | `accepting` | bool | Currently accepting connections |
 

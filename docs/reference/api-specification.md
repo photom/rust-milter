@@ -118,6 +118,23 @@ Lifecycle:
 | `config_watch()` | A `ConfigWatch<A>` for the application configuration |
 | `config_generation()` | Current generation number |
 
+`Status` is a snapshot; reading it takes no lock on the connection path. It is `#[non_exhaustive]`, so counters can be added.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `accepting` | `bool` | The server is accepting connections: `run()` has bound and no shutdown has started |
+| `connections` | `usize` | Open connections |
+| `uptime` | `Duration` | Time since `run()` bound the listeners; zero before |
+| `last_error` | `Option<String>` | The last listener error, such as a failed bind in `BestEffort` mode |
+| `shutting_down` | `bool` | A shutdown has started |
+| `listeners` | `Vec<ListenerStatus>` | One entry per address in `bind_addresses`: `address` (`SocketAddr`), `bound`, and `accepting` |
+| `config_generation` | `u64` | The current configuration generation, starting at 1 |
+| `pending_restart` | `Vec<&'static str>` | Settings that wait for a restart ([hot-reload.md](hot-reload.md#logging-and-metrics)) |
+| `connections_accepted` | `u64` | Connections accepted since `run()` started, rejected ones included |
+| `connections_rejected` | `u64` | Connections closed at once because `max_connections` or `max_memory` was reached |
+
+The other status counters behind the metrics in [telemetry.md](telemetry.md#metrics) are added with the telemetry.
+
 ## Handler trait
 
 `Handler` is the trait the user implements. It follows libmilter's callback model: the library runs the protocol, and the handler answers one callback per event with a decision. A handler type must be `Send + Sync + 'static`. One handler value serves all connections, so its fields hold only data shared by all sessions, such as a `ConfigWatch`.

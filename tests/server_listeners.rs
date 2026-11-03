@@ -1,6 +1,5 @@
 //! Listener scenarios (SRV-001 to SRV-009) from `docs/testing/server.md`,
-//! and CFG-010 from `docs/testing/configuration.md`. The status and log
-//! checks of these scenarios come with `status()` and the logs.
+//! and CFG-010 from `docs/testing/configuration.md`.
 
 mod support;
 
@@ -9,6 +8,7 @@ use std::time::Duration;
 
 use rust_milter::{BindMode, Error, Server, ServerConfig};
 use support::ContinueAll;
+use support::logs::Logs;
 use support::mta::{Mta, WAIT};
 use support::ports::PortLease;
 
@@ -112,6 +112,13 @@ async fn srv_003_serves_every_listener() {
         let mut mta = Mta::connect(addr).await;
         assert_eq!(mta.negotiate().await.version, 6, "{addr}");
     }
+
+    let listeners = server.handle.status().listeners;
+    assert_eq!(listeners.len(), 2);
+    for (listener, addr) in listeners.iter().zip([first.v4(), second.v4()]) {
+        assert_eq!(listener.address, addr);
+        assert!(listener.bound && listener.accepting, "{listener:?}");
+    }
     server.stop().await;
 }
 
@@ -151,11 +158,23 @@ async fn srv_007_best_effort_serves_the_addresses_that_bound() {
     let _blocker = TcpListener::bind(blocked.v4()).unwrap();
     let mut both = config(vec![free.v4(), blocked.v4()]);
     both.bind_mode = BindMode::BestEffort;
+    let (logs, _guard) = Logs::capture();
     let server = Running::start(both);
 
     let mut mta = Mta::connect(free.v4()).await;
 
     assert_eq!(mta.negotiate().await.version, 6);
+    let status = server.handle.status();
+    let blocked_status = &status.listeners[1];
+    assert_eq!(blocked_status.address, blocked.v4());
+    assert!(!blocked_status.bound && !blocked_status.accepting);
+    assert!(status.last_error.is_some());
+    let warning = logs.one("Listener bind failed");
+    assert_eq!(warning.level, tracing::Level::WARN);
+    assert_eq!(
+        warning.field("address"),
+        Some(blocked.v4().to_string().as_str())
+    );
     server.stop().await;
 }
 

@@ -1,7 +1,5 @@
 //! Connection lifecycle and timeout scenarios (SRV-030 to SRV-040) from
-//! `docs/testing/server.md`. The error kinds in their logs and close
-//! reasons are checked with the logs; here the tests check when and how the
-//! connection closes, and what the handler sees.
+//! `docs/testing/server.md`.
 
 mod support;
 
@@ -12,6 +10,7 @@ use rust_milter::{
     Actions, Bytes, Decision, EomContext, Error, Handler, MessageContext, MilterText, Result,
     ServerConfig, TimeoutKind,
 };
+use support::logs::Logs;
 use support::mta::{Mta, Reach, strings};
 use support::{Log, Recorder, TestServer};
 
@@ -42,6 +41,7 @@ async fn recording(configure: impl FnOnce(&mut ServerConfig)) -> (TestServer, Lo
 
 #[tokio::test]
 async fn srv_030_closes_a_connection_that_sends_no_command() {
+    let (logs, _guard) = Logs::capture();
     let (server, _) = recording(timeouts(200, 30_000, 30_000, 60_000)).await;
     let mut mta = server.mta().await;
     let accepted = Instant::now();
@@ -53,6 +53,16 @@ async fn srv_030_closes_a_connection_that_sends_no_command() {
         "{after:?}"
     );
     server.stop().await;
+    let timeout = logs.one("Connection timeout");
+    assert_eq!(timeout.level, tracing::Level::DEBUG);
+    assert_eq!(timeout.field("timeout_type"), Some("connect"));
+    let closed = logs.one("Connection closed");
+    assert_eq!(closed.level, tracing::Level::DEBUG);
+    assert_eq!(closed.field("reason"), Some("timeout"));
+    assert_eq!(
+        closed.field("error"),
+        Some(Error::Timeout(TimeoutKind::Connect).to_string().as_str())
+    );
 }
 
 #[tokio::test]
@@ -258,6 +268,7 @@ async fn srv_039_end_of_file_halfway_through_a_frame_ends_the_session_with_an_er
 
 #[tokio::test]
 async fn srv_040_a_reset_ends_the_session_with_an_error() {
+    let (logs, _guard) = Logs::capture();
     let (server, log) = recording(|_| {}).await;
     let mut mta = server.mta().await;
     mta.reach(Reach::Helo).await;
@@ -267,4 +278,8 @@ async fn srv_040_a_reset_ends_the_session_with_an_error() {
     let events = log.wait_for("session_end:Error").await;
     assert_eq!(events.last().unwrap(), "session_end:Error");
     server.stop().await;
+    let closed = logs.one("Connection closed");
+    assert_eq!(closed.level, tracing::Level::DEBUG);
+    assert_eq!(closed.field("reason"), Some("reset"));
+    assert!(logs.warnings().is_empty(), "{:?}", logs.warnings());
 }

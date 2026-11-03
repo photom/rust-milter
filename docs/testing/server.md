@@ -45,6 +45,7 @@ The options are applied once, right after `accept()` and before the first read, 
 | SRV-039 | integration | A session open after HELO | the fake MTA closes its socket halfway through a frame | the connection closes with `Error::ConnectionClosed`, and the handler's `session_end` gets `SessionEnd::Error` | [api: Error](../reference/api-specification.md#error) |
 | SRV-040 | integration | A session open after HELO | the fake MTA resets the connection (`SO_LINGER` 0, then close) | the connection closes with close reason `reset`, logged at DEBUG, not WARN | [tcp-server: Error recovery](../reference/tcp-server.md#error-recovery) |
 | SRV-041 | integration | 100 connections, opened one after another | each is accepted | every `ConnectionInfo.id` is unique and larger than the one before, and matches the `conn_id` in the "Connection accepted" log | [tcp-server: Connection identifier](../reference/tcp-server.md#connection-identifier) |
+| SRV-042 | integration | A session open after HELO | the fake MTA sends a frame with an unknown command code | the "Connection closed" log is WARN, with `reason` = `error` and an `error` field; a close for any other reason is DEBUG | [tcp-server: Connection lifecycle logs](../reference/tcp-server.md#connection-lifecycle-logs) |
 
 ## Resource limits
 
@@ -56,6 +57,7 @@ The options are applied once, right after `accept()` and before the first read, 
 | SRV-053 | unit | An accept loop over a fake listener that fails with `EMFILE` four times, then accepts, then fails once more, on the paused clock | the loop runs | it pauses 100, 200, 400, and 800 ms, accepts, then pauses 100 ms; each failure logs WARN "Accept error" with `consecutive_errors` | [tcp-server: Error recovery](../reference/tcp-server.md#error-recovery) |
 | SRV-054 | unit | The same fake listener failing with `ENFILE` ten times in a row | the loop runs | the pause doubles from 100 ms and stays at 1 s once it reaches it | [tcp-server: Error recovery](../reference/tcp-server.md#error-recovery) |
 | SRV-055 | unit | A fake listener that fails with `ECONNABORTED`, then accepts | the loop runs | it retries without a pause and logs at DEBUG | [tcp-server: Error recovery](../reference/tcp-server.md#error-recovery) |
+| SRV-056 | integration | `per_connection_buffer` = 65,540, `max_memory` = 65,540, and connection A holding a 62,000-byte header frame in its buffer | connection B is accepted | B is closed at once without sending data, because its 4 KB reservation does not fit; a WARN log "Resource limit reached" has `limit_type` = `max_memory`; A keeps working | [tcp-server: Backpressure](../reference/tcp-server.md#backpressure) |
 
 ## Concurrency
 
@@ -68,6 +70,7 @@ The options are applied once, right after `accept()` and before the first read, 
 
 | ID | Level | Given | When | Then | Spec |
 |----|-------|-------|------|------|------|
-| SRV-070 | integration | A built server | `status()` is read before `run()`, after `run()` has bound, and with two connections open | `accepting` is false, then true; `connections` is 0, then 2; `uptime` grows; `shutting_down` is false | [tcp-server: Health check](../reference/tcp-server.md#health-check) |
+| SRV-070 | integration | A built server | `status()` is read before `run()`, after `run()` has bound, and with two connections open | `accepting` is false, then true; `connections` is 0, then 2; `uptime` grows; `shutting_down` is false; `config_generation` is 1 | [tcp-server: Health check](../reference/tcp-server.md#health-check) |
 | SRV-071 | integration | A server and a fake MTA that runs one session and sends `SMFIC_QUIT` | the connection closes | the "Connection accepted" log has `conn_id`, `remote_addr`, `local_addr`, and `listener`; the "Connection closed" log has `duration_ms`, `bytes_read`, `bytes_written`, and `reason` = `client_closed`; both are DEBUG | [tcp-server: Connection lifecycle logs](../reference/tcp-server.md#connection-lifecycle-logs) |
 | SRV-072 | integration | A server starting with two listeners | `run()` binds them | INFO logs "Server starting", "Listener bound" for each address with `backlog`, and "Server started" | [tcp-server: Server lifecycle logs](../reference/tcp-server.md#server-lifecycle-logs) |
+| SRV-073 | integration | `max_connections` = 1 and one open connection | two more connections arrive and are closed at once | `status()` shows `connections_accepted` = 3 and `connections_rejected` = 2 | [api: ServerHandle](../reference/api-specification.md#serverhandle) |
