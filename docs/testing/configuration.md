@@ -39,8 +39,10 @@ Scenarios for configuration validation, address parsing, and the serde file form
 | CFG-045 | unit | `trace_commands = "all"` inside `[telemetry]` | it is deserialized | `TraceCommands::All` | [configuration: Mapping](../reference/configuration.md#mapping) |
 | CFG-046 | unit | `[socket_options]` with `keepalive = false`, and with a `[socket_options.keepalive]` table | each is deserialized | `None`, and `Some` with the table's values and defaults for the rest | [configuration: Mapping](../reference/configuration.md#mapping) |
 | CFG-047 | unit | Nested tables `[timeouts]`, `[shutdown]`, `[resource_limits]` | they are deserialized | the values land in the matching parts | [configuration: Mapping](../reference/configuration.md#mapping) |
-| CFG-048 | unit | A valid configuration with non-default values | it is serialized to TOML and read back | the result equals the original, and the TOML lists every field, defaults included | [configuration: File format](../reference/configuration.md#file-format-serde-feature) |
+| CFG-048 | unit | A valid configuration with non-default values and keepalive off, and one with the defaults and keepalive on | each is serialized to TOML and read back | the result equals the original, and the TOML lists every field, defaults included; keepalive off is written as `false` | [configuration: File format](../reference/configuration.md#file-format-serde-feature) |
 | CFG-049 | unit | A deserialized configuration with an invalid value, such as `backlog = 0` | it is validated | `OutOfRange`; deserializing alone does not validate | [configuration: Validation rules](../reference/configuration.md#validation-rules) |
+| CFG-050 | unit | `[socket_options]` with `keepalive = true` | it is deserialized | an error; the defaults come from leaving the key out | [configuration: Mapping](../reference/configuration.md#mapping) |
+| CFG-051 | unit | A configuration whose `timeouts.read` is 1.5 ms | it is serialized | an error, because the file format has no unit below a millisecond | [configuration: Mapping](../reference/configuration.md#mapping) |
 
 ## Reload classes
 
