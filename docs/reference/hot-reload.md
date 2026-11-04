@@ -1,7 +1,5 @@
 # Configuration hot reload specification
 
-Status: design, not implemented.
-
 Reloading the server configuration while rust-milter keeps running, triggered by `SIGHUP` or by an API call, without dropping MTA connections.
 
 ## Contents
@@ -120,7 +118,9 @@ stateDiagram-v2
     Stopped --> [*]
 ```
 
-A request that arrives while a reload is running is not lost. The coordinator records it, and when the current reload ends it runs one more reload. Any number of requests that arrive in the meantime cause one extra reload only, which then picks up the latest configuration.
+A request that arrives while a reload is running is not lost. The coordinator records it, and when the current reload ends it runs one more reload. Any number of requests that arrive in the meantime cause one extra reload only, which then picks up the latest configuration. Every caller whose request was folded into that reload gets its result. Only requests for the loader are folded: a `reload_with_config()` request carries its own configuration and runs on its own, in the order it arrived.
+
+The coordinator starts when `run()` has bound the listeners. A request made before that waits, and runs then.
 
 `Applying` is not interrupted by shutdown.
 
@@ -134,11 +134,11 @@ A reload closes no open connection and rebinds no listener ([ADR 0005](../adr/00
 - A lowered `max_connections` closes no open connection. New connections are closed at once until the count falls below the new limit.
 - A changed `backlog` on an address that stays bound keeps its running value and is reported as `pending_restart`.
 
-A change to a setting that needs a restart does not fail the reload. The server applies everything else, keeps the running value for that setting, and lists it as `pending_restart` in the log and in the reload report.
+A change to a setting that needs a restart does not fail the reload. The server applies everything else, keeps the running value for that setting, and lists it as `pending_restart` in the log and in the reload report. The list holds every setting whose new value a kept listener does not use, whether this reload changed it or an earlier one did, so each report and `status()` show everything that still waits for a restart.
 
 ## Listener changes
 
-The coordinator compares the old and new `bind_addresses` as sets:
+The coordinator compares the addresses it has listeners on with the new `bind_addresses`, as sets:
 
 | Case | Action |
 |------|--------|
@@ -151,6 +151,8 @@ A bind failure follows `bind_mode` from the new configuration (see [configuratio
 - `BestEffort`: publish the new configuration with the listeners that did bind, and report the failed addresses as a warning.
 
 A reload never leaves the server with no listener. If the new set would bind nothing, the reload fails.
+
+An address that failed to bind in `BestEffort` mode has no listener, so the next reload that keeps it in `bind_addresses` tries to bind it again.
 
 ## Application configuration
 
