@@ -221,86 +221,104 @@ async fn rld_012_a_lower_limit_closes_no_open_connection() {
 }
 
 #[tokio::test]
-async fn rld_013_a_backlog_change_on_a_kept_address_waits_for_a_restart() {
+async fn rld_013_a_backlog_change_fails_and_applies_nothing() {
     let (logs, _guard) = Logs::capture();
     let lease = PortLease::acquire().await;
-    let config = on(&[lease.v4()]);
+    let config = ServerConfig {
+        max_connections: 2,
+        ..on(&[lease.v4()])
+    };
     let new = ServerConfig {
         backlog: 2048,
         max_connections: 1,
         ..config.clone()
     };
-    let later = ServerConfig {
-        max_connections: 2,
-        ..new.clone()
+    let server = start(config, (), Some(script(vec![plain(new)])), ContinueAll::new).await;
+
+    let error = server.handle.reload().await.unwrap_err();
+
+    let ReloadError::RestartRequired { settings } = &error else {
+        panic!("{error:?}");
     };
-    let server = start(
-        config,
-        (),
-        Some(script(vec![plain(new), plain(later)])),
-        ContinueAll::new,
-    )
-    .await;
-
-    let report = server.handle.reload().await.unwrap();
-
-    assert_eq!(report.changed, ["backlog", "max_connections"]);
-    assert_eq!(report.pending_restart, ["backlog"]);
-    assert_eq!(server.handle.status().pending_restart, ["backlog"]);
-    let warning = logs.one("Setting needs restart");
-    assert_eq!(warning.field("setting"), Some("backlog"));
+    assert_eq!(settings, &["backlog"]);
+    let message = "changing backlog requires a restart; nothing was applied";
+    assert_eq!(error.to_string(), message);
+    let failed = logs.one("Reload failed");
+    assert_eq!(failed.level, tracing::Level::ERROR);
+    assert_eq!(failed.field("error"), Some(message));
+    assert_eq!(server.handle.config_generation(), 1);
     let mut first = Mta::connect(lease.v4()).await;
     first.negotiate().await;
     let mut second = Mta::connect(lease.v4()).await;
-    assert!(second.closes().await, "the new max_connections applies");
-    let later = server.handle.reload().await.unwrap();
-    assert_eq!(later.changed, ["max_connections"]);
-    assert_eq!(later.pending_restart, ["backlog"]);
+    second.negotiate().await;
     server.stop().await;
 }
 
 #[tokio::test]
-async fn rld_014_a_reuse_port_change_on_a_kept_address_waits_for_a_restart() {
-    let lease = PortLease::acquire().await;
-    let config = on(&[lease.v4()]);
-    let mut new = config.clone();
+async fn rld_014_a_reuse_port_change_fails_even_with_an_added_address() {
+    let (a, b) = (PortLease::acquire().await, PortLease::acquire().await);
+    let config = on(&[a.v4()]);
+    let mut new = on(&[a.v4(), b.v4()]);
     new.socket_options.reuse_port = true;
     let server = start(config, (), Some(script(vec![plain(new)])), ContinueAll::new).await;
 
-    let report = server.handle.reload().await.unwrap();
+    let error = server.handle.reload().await.unwrap_err();
 
-    assert_eq!(report.pending_restart, ["socket_options.reuse_port"]);
+    assert!(
+        matches!(&error, ReloadError::RestartRequired { settings }
+            if settings == &["socket_options.reuse_port"]),
+        "{error:?}"
+    );
+    assert!(!accepts(b.v4()).await, "B was bound");
+    let listeners: Vec<SocketAddr> = server
+        .handle
+        .status()
+        .listeners
+        .iter()
+        .map(|listener| listener.address)
+        .collect();
+    assert_eq!(listeners, [a.v4()]);
     server.stop().await;
 }
 
 #[tokio::test]
-async fn rld_015_moving_away_and_back_applies_the_backlog() {
-    let (a, b) = (PortLease::acquire().await, PortLease::acquire().await);
-    let config = on(&[a.v4()]);
-    let with_backlog = |addr| ServerConfig {
+async fn rld_015_restart_settings_are_named_in_document_order() {
+    let lease = PortLease::acquire().await;
+    let config = on(&[lease.v4()]);
+    let mut changed = ServerConfig {
         backlog: 2048,
-        ..on(&[addr])
+        max_connections: 500,
+        ..config.clone()
+    };
+    changed.socket_options.reuse_addr = false;
+    changed.socket_options.reuse_port = true;
+    changed.socket_options.ipv6_only = true;
+    let reverted = ServerConfig {
+        max_connections: 500,
+        ..config.clone()
     };
     let server = start(
         config,
         (),
-        Some(script(vec![
-            plain(with_backlog(a.v4())),
-            plain(with_backlog(b.v4())),
-            plain(with_backlog(a.v4())),
-        ])),
+        Some(script(vec![plain(changed), plain(reverted)])),
         ContinueAll::new,
     )
     .await;
-    let pending = server.handle.reload().await.unwrap();
-    assert_eq!(pending.pending_restart, ["backlog"]);
 
-    let moved = server.handle.reload().await.unwrap();
-    let back = server.handle.reload().await.unwrap();
+    let error = server.handle.reload().await.unwrap_err();
+    let report = server.handle.reload().await.unwrap();
 
-    assert!(moved.pending_restart.is_empty(), "{moved:?}");
-    assert!(back.pending_restart.is_empty(), "{back:?}");
-    assert!(server.handle.status().pending_restart.is_empty());
+    assert!(
+        matches!(&error, ReloadError::RestartRequired { settings } if settings == &[
+            "backlog",
+            "socket_options.reuse_addr",
+            "socket_options.reuse_port",
+            "socket_options.ipv6_only",
+        ]),
+        "{error:?}"
+    );
+    assert_eq!(report.generation, 2);
+    assert_eq!(report.changed, ["max_connections"]);
     server.stop().await;
 }
 
