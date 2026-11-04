@@ -54,6 +54,14 @@ jobs:
       image: ${{ matrix.image }}
       # Docker may disable IPv6 in the container; the IPv6 tests need ::1.
       options: --sysctl net.ipv6.conf.all.disable_ipv6=0
+      # The Rocky Linux image sets no PATH, so a directory added through
+      # GITHUB_PATH would replace the system directories and the next step
+      # could not find bash. Cargo and rustup go to fixed directories that
+      # PATH names from the start.
+      env:
+        CARGO_HOME: /usr/local/cargo
+        RUSTUP_HOME: /usr/local/rustup
+        PATH: /usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     env:
       # CI must have IPv6: fail instead of skipping the IPv6 tests.
       RUST_MILTER_TEST_IPV6: "on"
@@ -69,9 +77,7 @@ jobs:
       # rustup installs the toolchain that rust-toolchain.toml selects.
       - run: |
           curl --proto '=https' --tlsv1.2 --retry 5 --retry-connrefused -sSfL -o /tmp/rustup-init.sh https://sh.rustup.rs
-          sh /tmp/rustup-init.sh -y --profile minimal --default-toolchain none
-          "$HOME/.cargo/bin/rustup" --version
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          sh /tmp/rustup-init.sh -y --no-modify-path --profile minimal --default-toolchain none
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
