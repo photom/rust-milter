@@ -1,5 +1,6 @@
-//! The shutdown signals. See "Signal handling requirements" in
-//! `docs/reference/tcp-server.md`.
+//! The shutdown signals and `SIGHUP`. See "Signal handling requirements"
+//! in `docs/reference/tcp-server.md` and "Concurrency rules" in
+//! `docs/reference/hot-reload.md`.
 
 use std::io;
 use std::sync::Arc;
@@ -7,12 +8,14 @@ use std::sync::Arc;
 use tokio::signal::unix::{Signal, SignalKind, signal};
 
 use super::Shared;
+use super::reload::Request;
 
-/// The handlers for `SIGTERM`, `SIGINT`, and `SIGQUIT`.
+/// The handlers for `SIGTERM`, `SIGINT`, `SIGQUIT`, and `SIGHUP`.
 pub(super) struct Signals {
     term: Signal,
     int: Signal,
     quit: Signal,
+    hup: Signal,
 }
 
 impl Signals {
@@ -23,17 +26,22 @@ impl Signals {
             term: signal(SignalKind::terminate())?,
             int: signal(SignalKind::interrupt())?,
             quit: signal(SignalKind::quit())?,
+            hup: signal(SignalKind::hangup())?,
         })
     }
 
-    /// Starts a graceful shutdown at the first signal, and forces it at the
-    /// next one.
+    /// Starts a graceful shutdown at the first shutdown signal, and forces
+    /// it at the next one. `SIGHUP` requests a reload.
     pub(super) async fn watch<A>(mut self, shared: Arc<Shared<A>>) {
         loop {
             let (kind, name) = tokio::select! {
                 Some(()) = self.term.recv() => (SignalKind::terminate(), "SIGTERM"),
                 Some(()) = self.int.recv() => (SignalKind::interrupt(), "SIGINT"),
                 Some(()) = self.quit.recv() => (SignalKind::quit(), "SIGQUIT"),
+                Some(()) = self.hup.recv() => {
+                    reload(&shared);
+                    continue;
+                }
                 else => return,
             };
             let number = kind.as_raw_value();
@@ -56,4 +64,24 @@ impl Signals {
             }
         }
     }
+}
+
+/// Requests a reload through the loader, without waiting for its result;
+/// the coordinator logs it.
+fn reload<A>(shared: &Shared<A>) {
+    let reason = if shared.stop.is_cancelled() {
+        "shutting_down"
+    } else if !shared.has_loader {
+        "no_loader"
+    } else {
+        tracing::info!(
+            source = "sighup",
+            generation = shared.watch.generation(),
+            "Reload requested"
+        );
+        // A coordinator that has stopped drops the request.
+        let _ = shared.requests.send(Request::Load(None));
+        return;
+    };
+    tracing::warn!(reason, "SIGHUP ignored");
 }

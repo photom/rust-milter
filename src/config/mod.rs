@@ -5,6 +5,7 @@ mod address;
 mod env;
 #[cfg(feature = "serde")]
 mod file_format;
+pub(crate) mod reload;
 mod text;
 mod validate;
 

@@ -19,7 +19,8 @@ pub use config::{
     TelemetryConfig, TimeoutConfig, TraceCommands,
 };
 pub use error::{
-    AddressError, ConfigError, Error, ProtocolError, ReplyError, ResourceKind, Result, TimeoutKind,
+    AddressError, ConfigError, Error, ProtocolError, ReloadError, ReplyError, ResourceKind, Result,
+    TimeoutKind,
 };
 pub use frame::Frame;
 pub use handler::{
@@ -31,7 +32,7 @@ pub use message::{AddressFamily, Command, MilterText, Reply, ReplyCode};
 #[doc(hidden)]
 pub use server::SocketReadback;
 pub use server::{
-    ConfigWatch, ConnectionInfo, HandlerContext, ListenerStatus, Server, ServerBuilder,
-    ServerHandle, Status,
+    ConfigWatch, ConnectionInfo, HandlerContext, ListenerStatus, ReloadReport, Reloaded, Server,
+    ServerBuilder, ServerHandle, Status,
 };
 pub use tokio_util::sync::CancellationToken;

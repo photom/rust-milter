@@ -25,18 +25,18 @@ A connection takes the current snapshot when it is accepted and keeps it until i
 The reload classes follow from when each setting is used:
 - Settings read for every decision, such as `max_connections` or the shutdown timings, take effect as soon as the new snapshot is published.
 - Settings applied when a connection starts, such as timeouts and socket options, take effect for new connections.
-- Settings applied when a listener is created, such as `backlog` and `reuse_port`, take effect for listeners the reload creates.
-- Settings fixed before anything runs need a restart. The application builds the Tokio runtime once, with its thread count, before the server exists. The handler, the reload loader, and the meter provider are fixed when the server is built. Cargo features are fixed at compile time.
+- Settings applied when a listener is created, such as `backlog` and `reuse_port`, need a restart. A listener that is already running cannot take a new value.
+- Settings fixed before anything runs need a restart too. The application builds the Tokio runtime once, with its thread count, before the server exists. The handler, the reload loader, and the meter provider are fixed when the server is built. Cargo features are fixed at compile time.
 
-A reload that changes a restart-only setting does not fail. Failing would block the other, valid changes for no benefit. The server applies what it can and reports the rest as pending a restart.
+A reload that changes a setting that requires a restart fails, and applies none of its changes. The server could apply the rest and report the setting as waiting for a restart, and an earlier design did. The reload then counted as applied while the server ran something other than what the loader returned, and an operator who missed the warning would believe the file was in effect. When the whole reload fails instead, every applied reload leaves the server running exactly the loaded configuration. The error names the settings, so the operator knows to restart, or to set them back and reload. [ADR 0007](../adr/0007-a-reload-that-changes-a-restart-setting-fails.md) records the decision.
 
 ## Why a lower connection limit closes nothing
 
 When a reload lowers `max_connections` below the number of open connections, the server could close connections until it meets the new limit. It does not. A milter connection that looks idle is usually waiting for the next command of an SMTP session in progress. Closing it would make the MTA apply its failure policy to that session, which interrupts mail the same way a restart would. Instead, open connections finish normally, and new connections are closed at once until the count falls below the limit. The window is short because SMTP sessions are short. The decision is recorded in [ADR 0005](../adr/0005-reload-closes-no-connection-and-rebinds-no-listener.md).
 
-## Why a changed backlog waits for a restart
+## Why a changed backlog needs a restart
 
-The backlog is the kernel's queue of connections that are established but not yet accepted, and it is set once, when the listener starts listening. Applying a new value to an address that stays in use would need a second listener on the same port, opened with `SO_REUSEPORT`, before the old one closes. Connections still waiting in the old queue would be dropped, the behavior differs between Linux and the BSDs, and it depends on `reuse_port` being available. A backlog change is rare, so the reload reports it as needing a restart instead. [ADR 0005](../adr/0005-reload-closes-no-connection-and-rebinds-no-listener.md) records the options that were weighed.
+The backlog is the kernel's queue of connections that are established but not yet accepted, and it is set once, when the listener starts listening. Applying a new value to an address that stays in use would need a second listener on the same port, opened with `SO_REUSEPORT`, before the old one closes. Connections still waiting in the old queue would be dropped, the behavior differs between Linux and the BSDs, and it depends on `reuse_port` being available. A backlog change is rare, so it takes a restart instead. [ADR 0005](../adr/0005-reload-closes-no-connection-and-rebinds-no-listener.md) records the options that were weighed, and [ADR 0007](../adr/0007-a-reload-that-changes-a-restart-setting-fails.md) why a reload that changes it fails.
 
 ## Why the reload binds before it publishes
 

@@ -1,6 +1,6 @@
 # ADR 0005: A reload closes no open connection and rebinds no listener
 
-- Status: Accepted
+- Status: Accepted; the `backlog` decision is superseded by [ADR 0007](0007-a-reload-that-changes-a-restart-setting-fails.md)
 - Date: 2026-11-01 (recorded; decided during the hot-reload design)
 - Affects: configuration reload, server
 

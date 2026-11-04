@@ -148,7 +148,7 @@ Who reads what:
 | Shutdown coordinator | `shutdown.*` | when a shutdown starts |
 | Handler | application configuration via `ConfigWatch` | once per session or per message |
 
-What a changed setting does on reload, and which settings need a restart, is specified in [configuration.md](../reference/configuration.md#reload-classes). In short: the listener set, `max_connections`, the shutdown timings, `max_fds`, and `max_memory` apply at once; timeouts, socket options, `per_connection_buffer`, and `trace_commands` apply to new connections; socket options on an address that stays bound and everything set only on the builder need a restart.
+What a changed setting does on reload, and which settings need a restart, is specified in [configuration.md](../reference/configuration.md#reload-classes). In short: the listener set, `max_connections`, the shutdown timings, `max_fds`, and `max_memory` apply at once; timeouts, socket options, `per_connection_buffer`, and `trace_commands` apply to new connections; `backlog`, `reuse_addr`, `reuse_port`, `ipv6_only`, and everything set only on the builder require a restart, and a reload that changes one of those settings fails.
 
 ### 8. Reload coordinator
 
@@ -157,7 +157,7 @@ Responsibilities:
 - run one reload at a time, and fold requests that arrive meanwhile into one more reload
 - call the application's loader, validate, bind added listeners, publish, then stop removed listeners
 - roll back added listeners when a bind fails in `FailFast` mode
-- report changed settings and settings pending a restart
+- report changed settings, and reject a reload that changes a setting that requires a restart
 
 It is the only component that changes the listener set after startup. The procedure is specified in [hot-reload.md](../reference/hot-reload.md).
 
@@ -295,7 +295,7 @@ sequenceDiagram
     Reload->>Server: stop removed listeners
     Note over Old: keep the generation N snapshot until they close
     Server->>New: accept with the generation N+1 snapshot
-    Reload-->>Op: report (changed, pending_restart)
+    Reload-->>Op: report (changed, listeners added and removed)
 ```
 
 A failed load, validation, or bind leaves generation N in place; see [hot-reload.md](../reference/hot-reload.md).
@@ -403,7 +403,7 @@ Fatal for startup:
 - a bind failure in `FailFast` mode, returned by `run()`
 
 Not fatal on reload:
-- a failed load, invalid configuration, or bind failure leaves the running configuration in place and is reported as a `ReloadError`
+- a failed load, an invalid configuration, a changed setting that requires a restart, or a bind failure leaves the running configuration in place and is reported as a `ReloadError`
 
 ### Propagation
 
