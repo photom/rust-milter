@@ -57,6 +57,10 @@ jobs:
     env:
       # CI must have IPv6: fail instead of skipping the IPv6 tests.
       RUST_MILTER_TEST_IPV6: "on"
+    defaults:
+      run:
+        # bash runs with -e and pipefail, so a failed command fails its step.
+        shell: bash
     steps:
       # git lets actions/checkout clone. kill, which the signal tests run,
       # is in util-linux on Rocky Linux and in procps on Debian.
@@ -64,7 +68,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # rustup installs the toolchain that rust-toolchain.toml selects.
       - run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+          curl --proto '=https' --tlsv1.2 --retry 5 --retry-connrefused -sSfL -o /tmp/rustup-init.sh https://sh.rustup.rs
+          sh /tmp/rustup-init.sh -y --profile minimal --default-toolchain none
+          "$HOME/.cargo/bin/rustup" --version
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
