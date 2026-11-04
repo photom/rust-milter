@@ -652,6 +652,37 @@ async fn rld_032_an_application_check_failure_keeps_both_configurations() {
 }
 
 #[tokio::test]
+async fn rld_033_a_rejected_reload_publishes_no_application_configuration() {
+    let lease = PortLease::acquire().await;
+    let config = on(&[lease.v4()]);
+    let rejected = Reloaded {
+        server: ServerConfig {
+            backlog: 2048,
+            ..config.clone()
+        },
+        app: 2_u32,
+    };
+    let server = start(config, 1_u32, Some(script(vec![Ok(rejected)])), |_| {
+        ContinueAll
+    })
+    .await;
+    let mut watch = server.handle.config_watch();
+    let waiting = tokio::spawn(async move { watch.changed().await });
+
+    let error = server.handle.reload().await.unwrap_err();
+
+    assert!(
+        matches!(error, ReloadError::RestartRequired { .. }),
+        "{error:?}"
+    );
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(!waiting.is_finished(), "changed() completed");
+    assert_eq!(*server.handle.config_watch().current(), 1);
+    waiting.abort();
+    server.stop().await;
+}
+
+#[tokio::test]
 async fn rld_040_an_invalid_configuration_is_rejected() {
     let (logs, _guard) = Logs::capture();
     let lease = PortLease::acquire().await;
