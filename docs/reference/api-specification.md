@@ -81,7 +81,7 @@ The public API of the rust-milter server library: its types, traits, errors, and
 |--------|-------------|
 | `Server::builder()` | Start a builder |
 | `config(ServerConfig)` | Initial server configuration (required). Without it, `build()` validates the defaults, which have no bind address, and fails |
-| `app_config(A)` | Initial application configuration; without it, `A` is `()`. Call it before `handler`, because the factory receives the configuration's type |
+| `app_config(A)` | Initial application configuration; without it, `A` is `()`. Call it before `handler` and `reload_with`: the factory receives the configuration's type, and the loader returns it |
 | `handler(f)` | Handler factory: a function that takes `&HandlerContext<A>` and returns the handler. It is called once at build time; all connections share the one handler. `build()` exists only after `handler`, so a builder without a handler does not compile |
 | `reload_with(loader)` | Reload loader: an async function that returns `Reloaded<A>` or an error. The error type must implement `std::error::Error` and be `Send + Sync + 'static` |
 | `meter_provider(provider)` | OpenTelemetry meter provider (feature `otel`) |
@@ -111,8 +111,8 @@ Lifecycle:
 | `force_shutdown()` | Shut down without the grace period or the drain: close every connection at once. Also ends a graceful shutdown in progress |
 | `wait()` | Wait until the server has stopped |
 | `is_running()` | Whether the server is running |
-| `status()` | In-process `Status` snapshot: the health check fields in [tcp-server.md](tcp-server.md#health-check), `config_generation` and `pending_restart` from [hot-reload.md](hot-reload.md#logging-and-metrics), and the status counters behind the metrics in [telemetry.md](telemetry.md#metrics) |
-| `reload()` | Run the registered loader, as `SIGHUP` does. Returns `Result<ReloadReport, ReloadError>` |
+| `status()` | In-process `Status` snapshot: the health check fields in [tcp-server.md](tcp-server.md#health-check), `config_generation` from [hot-reload.md](hot-reload.md#logging-and-metrics), and the status counters behind the metrics in [telemetry.md](telemetry.md#metrics) |
+| `reload()` | Run the registered loader, as `SIGHUP` does. Returns `Result<ReloadReport, ReloadError>`. Called before `run()`, it waits until `run()` has bound the listeners |
 | `reload_with_config(Reloaded<A>)` | Apply a configuration the caller built. Returns `Result<ReloadReport, ReloadError>` |
 | `config()` | Current `Arc<ServerConfig>` |
 | `config_watch()` | A `ConfigWatch<A>` for the application configuration |
@@ -129,7 +129,6 @@ Lifecycle:
 | `shutting_down` | `bool` | A shutdown has started |
 | `listeners` | `Vec<ListenerStatus>` | One entry per address in `bind_addresses`: `address` (`SocketAddr`), `bound`, and `accepting` |
 | `config_generation` | `u64` | The current configuration generation, starting at 1 |
-| `pending_restart` | `Vec<&'static str>` | Settings that wait for a restart ([hot-reload.md](hot-reload.md#logging-and-metrics)) |
 | `connections_accepted` | `u64` | Connections accepted since `run()` started, rejected ones included |
 | `connections_rejected` | `u64` | Connections closed at once because `max_connections` or `max_memory` was reached |
 
@@ -446,7 +445,6 @@ Environment variable helpers on `ServerConfig` ([configuration.md](configuration
 |-------|------|-------------|
 | `generation` | `u64` | Generation after the reload |
 | `changed` | `Vec<&'static str>` | Names of changed settings |
-| `pending_restart` | `Vec<&'static str>` | Changed settings that need a restart |
 | `listeners_added` | `Vec<SocketAddr>` | Listeners bound by the reload |
 | `listeners_removed` | `Vec<SocketAddr>` | Listeners stopped by the reload |
 | `bind_failures` | `Vec<(SocketAddr, String)>` | Failed binds (`BestEffort` only) |
@@ -470,7 +468,7 @@ Errors are `thiserror` enums. Every error type implements `std::error::Error`, `
 | `InvalidReply(ReplyError)` | `Reply::to_frame()` refused a reply that breaks a protocol or MTA rule | the reply is not sent |
 | `Config(ConfigError)` | Invalid configuration at build time | `build()` fails |
 | `Bind { addr, source }` | A listener could not bind | `run()` fails in `FailFast` mode |
-| `Signals(std::io::Error)` | `run()` could not register the handlers for `SIGTERM`, `SIGINT`, and `SIGQUIT` | `run()` fails |
+| `Signals(std::io::Error)` | `run()` could not register the handlers for `SIGTERM`, `SIGINT`, `SIGQUIT`, and `SIGHUP` | `run()` fails |
 | `ResourceLimit(ResourceKind)` | `MaxConnections`, `MaxFds`, or `MaxMemory` reached | connection rejected or closed |
 | `ShuttingDown` | The operation is not allowed during shutdown | none |
 
@@ -496,6 +494,7 @@ Errors are `thiserror` enums. Every error type implements `std::error::Error`, `
 | `NoLoader` | `reload()` was called without a registered loader |
 | `Load(Box<dyn std::error::Error + Send + Sync>)` | The application's loader failed; its error is kept as the source |
 | `Validation(ConfigError)` | The new configuration is invalid |
+| `RestartRequired { settings }` | The new configuration changes settings that require a restart; `settings` (`Vec<&'static str>`) names them, in the order of [configuration.md](configuration.md#serverconfig-reference), and the message lists them. Nothing was applied |
 | `Bind { addr, source }` | A new listener failed to bind in `FailFast` mode; the reload was rolled back |
 | `NoListener` | The new configuration would leave no listener |
 | `ShuttingDown` | Shutdown has started |

@@ -51,25 +51,24 @@ Each valid configuration is published once as an immutable value with a generati
 
 ## Reload classes
 
-Every setting belongs to one of four classes.
+Every setting belongs to one of three classes.
 
 | Class | When a changed value takes effect |
 |-------|-----------------------------------|
 | `immediate` | As soon as the new generation is published, for every decision the server makes from then on |
 | `new_connections` | For connections accepted after the reload. Open connections keep the snapshot they were accepted with until they close |
-| `new_listeners` | For listeners the reload binds. A listener that stays bound keeps its old value |
-| `restart` | Only after the process restarts. A reload keeps the running value, applies the other changes, and reports the setting as `pending_restart` |
+| `restart` | Only after the process restarts. A reload that changes it fails with `RestartRequired` and applies nothing |
 
 With Sendmail and Postfix one milter connection lasts one SMTP session, so a `new_connections` change reaches all traffic within one SMTP session of the reload.
 
-A `new_listeners` change on an address that stays in `bind_addresses` cannot reach that listener without closing it, so the reload reports it as `pending_restart` for that address. Removing the address in one reload and adding it back in the next applies the change without a restart.
+The four `ServerConfig` settings of class `restart` are read only when a listener is created, and a running listener cannot take a new value. A reload that changes one of them fails even if it also adds or removes addresses, and `RestartRequired` names every such setting that changed ([ADR 0007](../adr/0007-a-reload-that-changes-a-restart-setting-fails.md)). To apply the file, restart the process, or revert those settings and reload.
 
 ## Settings that need a restart
 
 | Setting | Fixed when |
 |---------|------------|
-| `backlog` on an address that stays bound | the listener starts listening |
-| `socket_options.reuse_addr`, `reuse_port`, `ipv6_only` on an address that stays bound | the listener is bound |
+| `backlog` | the listener starts listening |
+| `socket_options.reuse_addr`, `reuse_port`, `ipv6_only` | the listener is bound |
 | Builder-only settings (handler, reload loader, meter provider, runtime settings) | the server is built; see [Builder-only settings](#builder-only-settings) |
 | Cargo features (`otel`, `serde`) | the crate is compiled |
 
@@ -82,8 +81,6 @@ The reasons behind the reload classes are explained in [Configuration snapshots 
 | `bind_addresses` | `immediate`: added addresses get new listeners, removed addresses stop accepting |
 | `bind_mode` | `immediate`: the reload that changes it already uses the new value |
 | `max_connections` | `immediate` |
-| `backlog` for an added address | `new_listeners` |
-| `socket_options.reuse_addr`, `reuse_port`, `ipv6_only` for an added address | `new_listeners` |
 | `timeouts.connect`, `timeouts.read`, `timeouts.write`, `timeouts.idle` | `new_connections` |
 | `socket_options.tcp_nodelay`, `keepalive`, `recv_buffer_size`, `send_buffer_size` | `new_connections` |
 | `shutdown.grace_period`, `shutdown.drain_timeout` | `immediate` (read when a shutdown starts) |
@@ -104,7 +101,7 @@ Lowering `max_connections` below the current count closes no open connection. Ne
 |-------|------|---------|--------------|--------------|
 | `bind_addresses` | `Vec<SocketAddr>` | none (required) | 1 or more, no duplicates; ports 1 to 65535 | `immediate` |
 | `bind_mode` | `BindMode` | `FailFast` | `FailFast`, `BestEffort` | `immediate` |
-| `backlog` | `u32` | 1024 | 1 to 65535 | `new_listeners` |
+| `backlog` | `u32` | 1024 | 1 to 65535 | `restart` |
 | `max_connections` | `usize` | 10000 | 1 to 1,000,000 | `immediate` |
 | `timeouts` | `TimeoutConfig` | see below | | |
 | `socket_options` | `SocketOptions` | see below | | |
@@ -139,9 +136,9 @@ Time a handler spends in a callback counts against none of them; the MTA's own m
 | `keepalive` | `Option<KeepaliveConfig>` | `Some` with the defaults below | | `new_connections` |
 | `recv_buffer_size` | `Option<usize>` | `None` (OS default) | 1 KB to 64 MB | `new_connections` |
 | `send_buffer_size` | `Option<usize>` | `None` (OS default) | 1 KB to 64 MB | `new_connections` |
-| `reuse_addr` | `bool` | `true` | | `new_listeners` |
-| `reuse_port` | `bool` | `false` | Linux 3.9 and later, BSD | `new_listeners` |
-| `ipv6_only` | `bool` | `false` | | `new_listeners` |
+| `reuse_addr` | `bool` | `true` | | `restart` |
+| `reuse_port` | `bool` | `false` | Linux 3.9 and later, BSD | `restart` |
+| `ipv6_only` | `bool` | `false` | | `restart` |
 
 ### KeepaliveConfig
 
@@ -213,7 +210,7 @@ The same rules run at startup and on every reload, and `ServerConfig::validate()
 On reload only:
 
 8. The new configuration must leave at least one listener (see [hot-reload.md](hot-reload.md)).
-9. Changes to `restart` settings are not errors. They are reported as `pending_restart`.
+9. No `restart` setting differs from the running configuration. Otherwise the reload fails with `RestartRequired`, which names each one that does.
 
 ## File format (serde feature)
 

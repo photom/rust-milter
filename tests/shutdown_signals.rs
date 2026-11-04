@@ -1,24 +1,26 @@
-//! Signal and exit code scenarios (SHT-020 to SHT-024, SHT-026, SHT-027)
-//! from `docs/testing/shutdown.md`. SHT-025 needs a reload loader and comes
-//! with reload.
+//! Signal and exit code scenarios SHT-020 to SHT-027 from
+//! `docs/testing/shutdown.md`, and the `SIGHUP` scenarios RLD-043 and
+//! RLD-044 from `docs/testing/reload.md`.
 //!
 //! Each test runs this test binary again as a child process that serves on
-//! a leased port. The child prints `READY` once it accepts connections,
-//! prints its log events when `run()` returns, and exits with the code the
-//! specification recommends: 0 after a shutdown, 1 when `run()` fails, and
-//! 2 when `build()` fails. Only the parent sends signals, with `kill`.
+//! a leased port. The child prints `READY` once it accepts connections and
+//! `GENERATION n` for each configuration it publishes, prints its log
+//! events when `run()` returns, and exits with the code the specification
+//! recommends: 0 after a shutdown, 1 when `run()` fails, and 2 when
+//! `build()` fails. Only the parent sends signals, with `kill`.
 #![cfg(unix)]
 
 mod support;
 
-use std::io::{BufRead, BufReader};
+use std::io::{self, BufRead, BufReader};
 use std::net::{SocketAddr, TcpListener};
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use rust_milter::protocol::*;
-use rust_milter::{Bytes, Decision, EomContext, Handler, Result, Server, ServerConfig};
+use rust_milter::{Bytes, Decision, EomContext, Handler, Reloaded, Result, Server, ServerConfig};
 use support::logs::Logs;
 use support::mta::{Mta, Reach};
 use support::ports::PortLease;
@@ -27,6 +29,9 @@ use support::ports::PortLease;
 const PORT: &str = "RUST_MILTER_SHT_CHILD_PORT";
 /// Which server the child runs.
 const SETUP: &str = "RUST_MILTER_SHT_CHILD_SETUP";
+/// The file the child's reload loader reads `max_connections` from; set
+/// only for a child with a loader.
+const FILE: &str = "RUST_MILTER_SHT_CHILD_FILE";
 
 /// Held by each test for its whole run. A parallel test could start a
 /// process while `PortLease` checks a port with a listening socket, and the
@@ -86,17 +91,11 @@ async fn child_main() {
     if setup == "invalid" {
         config.backlog = 0;
     }
+    let file = std::env::var(FILE).ok().map(PathBuf::from);
     let code = if setup == "slow_eom" {
-        serve(
-            Server::builder()
-                .config(config)
-                .handler(|_| SlowEom)
-                .build(),
-        )
-        .await
+        serve(build(config, file, SlowEom)).await
     } else {
-        let handler = support::ContinueAll::new;
-        serve(Server::builder().config(config).handler(handler).build()).await
+        serve(build(config, file, support::ContinueAll)).await
     };
     for event in logs.all() {
         let fields: Vec<String> = event
@@ -114,16 +113,48 @@ async fn child_main() {
     std::process::exit(code);
 }
 
+/// Builds the child's server, with a loader that reads `file` when there
+/// is one.
+fn build<H: Handler>(config: ServerConfig, file: Option<PathBuf>, handler: H) -> Result<Server<H>> {
+    let builder = Server::builder().config(config.clone());
+    let builder = match file {
+        Some(path) => builder.reload_with(move || load(path.clone(), config.clone())),
+        None => builder,
+    };
+    builder.handler(move |_| handler).build()
+}
+
+/// `base` with the `max_connections` that `path` holds.
+async fn load(path: PathBuf, base: ServerConfig) -> io::Result<Reloaded<()>> {
+    tracing::info!("Loader called");
+    let text = std::fs::read_to_string(path)?;
+    let max_connections = text.trim().parse().map_err(io::Error::other)?;
+    Ok(Reloaded {
+        server: ServerConfig {
+            max_connections,
+            ..base
+        },
+        app: (),
+    })
+}
+
 /// Runs a built server and returns the exit code for the result.
 async fn serve<H: Handler>(built: Result<Server<H>>) -> i32 {
     let Ok(server) = built else {
         return 2;
     };
     let handle = server.handle();
+    let mut watch = handle.config_watch();
     let task = tokio::spawn(server.run());
     while !handle.status().accepting && !task.is_finished() {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
+    tokio::spawn(async move {
+        loop {
+            watch.changed().await;
+            println!("\nGENERATION {}", watch.generation());
+        }
+    });
     println!("\nREADY");
     match task.await.unwrap() {
         Ok(()) => 0,
@@ -147,10 +178,24 @@ struct Child {
 impl Child {
     /// Starts the child for `test` with `setup`, on `port`.
     fn start(test: &str, setup: Setup, port: u16) -> Child {
-        let mut process = Command::new(std::env::current_exe().unwrap())
+        Child::spawn(test, setup, port, None)
+    }
+
+    /// Starts the child with a reload loader that reads `file`.
+    fn start_reloading(test: &str, setup: Setup, port: u16, file: &Path) -> Child {
+        Child::spawn(test, setup, port, Some(file))
+    }
+
+    fn spawn(test: &str, setup: Setup, port: u16, file: Option<&Path>) -> Child {
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
             .args([test, "--exact", "--nocapture", "--test-threads=1"])
             .env(PORT, port.to_string())
-            .env(SETUP, setup.name())
+            .env(SETUP, setup.name());
+        if let Some(file) = file {
+            command.env(FILE, file);
+        }
+        let mut process = command
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
@@ -170,14 +215,27 @@ impl Child {
 
     /// Waits until the child accepts connections.
     fn ready(&self) {
+        self.prints("READY");
+    }
+
+    /// Waits until the child prints a line that contains `text`.
+    fn prints(&self, text: &str) {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
-            let line = self.lines.recv_timeout(left).expect("the child is ready");
-            if line.contains("READY") {
+            let line = self
+                .lines
+                .recv_timeout(left)
+                .unwrap_or_else(|_| panic!("the child prints {text:?}"));
+            if line.contains(text) {
                 return;
             }
         }
+    }
+
+    /// Whether the child is still running.
+    fn running(&mut self) -> bool {
+        self.process.try_wait().unwrap().is_none()
     }
 
     fn signal(&self, name: &str) {
@@ -326,6 +384,113 @@ async fn sht_024_any_second_shutdown_signal_forces_the_shutdown() {
         "INT",
     )
     .await;
+}
+
+/// A file for a child's loader, removed when dropped.
+struct LoaderFile(PathBuf);
+
+impl LoaderFile {
+    fn new(test: &str, max_connections: usize) -> LoaderFile {
+        let path = std::env::temp_dir().join(format!("rust-milter-{test}-{}", std::process::id()));
+        let file = LoaderFile(path);
+        file.write(max_connections);
+        file
+    }
+
+    fn write(&self, max_connections: usize) {
+        std::fs::write(&self.0, max_connections.to_string()).unwrap();
+    }
+}
+
+impl Drop for LoaderFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// Whether one of `event`'s fields is `field`.
+fn has(event: &Event, field: &str) -> bool {
+    event.fields.iter().any(|f| f == field)
+}
+
+#[tokio::test]
+async fn sht_025_sighup_during_a_drain_is_ignored() {
+    const TEST: &str = "sht_025_sighup_during_a_drain_is_ignored";
+    child_main().await;
+    let _serial = SERIAL.lock().await;
+    let lease = PortLease::acquire().await;
+    let file = LoaderFile::new(TEST, 100);
+    let child = Child::start_reloading(TEST, Setup::SlowEom, lease.v4().port(), &file.0);
+    child.ready();
+    let mut mta = Mta::connect(lease.v4()).await;
+    mta.reach(Reach::Body).await;
+    mta.send(SMFIC_BODYEOB, Bytes::new()).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    child.signal("TERM");
+    // Past the 100 ms grace period, in the drain.
+    tokio::time::sleep(Duration::from_millis(400)).await;
+
+    child.signal("HUP");
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    child.signal("TERM");
+
+    let (code, events) = child.exit(Duration::from_secs(5));
+    assert_eq!(code, Some(0));
+    let ignored = one(&events, "SIGHUP ignored");
+    assert_eq!(ignored.level, "WARN");
+    assert!(has(ignored, "reason=shutting_down"));
+    assert!(events.iter().all(|e| e.message != "Loader called"));
+    assert!(events.iter().all(|e| e.message != "Reload requested"));
+}
+
+#[tokio::test]
+async fn rld_043_sighup_reloads_through_the_loader() {
+    const TEST: &str = "rld_043_sighup_reloads_through_the_loader";
+    child_main().await;
+    let _serial = SERIAL.lock().await;
+    let lease = PortLease::acquire().await;
+    let file = LoaderFile::new(TEST, 100);
+    let child = Child::start_reloading(TEST, Setup::Idle, lease.v4().port(), &file.0);
+    child.ready();
+
+    file.write(200);
+    child.signal("HUP");
+
+    child.prints("GENERATION 2");
+    child.signal("TERM");
+    let (code, events) = child.exit(Duration::from_secs(5));
+    assert_eq!(code, Some(0));
+    let requested = one(&events, "Reload requested");
+    assert!(has(requested, "source=sighup"));
+    assert!(has(requested, "generation=1"));
+    let applied = one(&events, "Reload applied");
+    assert!(has(applied, "generation=2"));
+    assert!(has(applied, r#"changed=["max_connections"]"#));
+}
+
+#[tokio::test]
+async fn rld_044_sighup_without_a_loader_is_ignored() {
+    child_main().await;
+    let _serial = SERIAL.lock().await;
+    let lease = PortLease::acquire().await;
+    let mut child = Child::start(
+        "rld_044_sighup_without_a_loader_is_ignored",
+        Setup::Idle,
+        lease.v4().port(),
+    );
+    child.ready();
+
+    child.signal("HUP");
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(child.running(), "SIGHUP does not end the child");
+    Mta::connect(lease.v4()).await.negotiate().await;
+    child.signal("TERM");
+    let (code, events) = child.exit(Duration::from_secs(5));
+    assert_eq!(code, Some(0));
+    let ignored = one(&events, "SIGHUP ignored");
+    assert_eq!(ignored.level, "WARN");
+    assert!(has(ignored, "reason=no_loader"));
 }
 
 #[tokio::test]

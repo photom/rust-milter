@@ -1,7 +1,5 @@
 # Configuration hot reload specification
 
-Status: design, not implemented.
-
 Reloading the server configuration while rust-milter keeps running, triggered by `SIGHUP` or by an API call, without dropping MTA connections.
 
 ## Contents
@@ -62,7 +60,7 @@ flowchart LR
 Responsibilities:
 - The reload coordinator receives reload requests, runs one at a time, and reports the result.
 - The reload loader belongs to the application. It returns a new `ServerConfig` and a new application configuration, or an error.
-- Validation runs the same checks as startup, plus the reload-specific checks below.
+- Validation runs the same checks as startup, plus the reload-specific checks below, including that no setting that requires a restart has changed.
 - The config channel publishes each accepted configuration as an immutable `Arc` with an increasing generation number.
 - The accept loop reads the current configuration for every accepted connection. Each connection task keeps the snapshot it started with.
 - Handlers read the current application configuration when a new SMTP session or message starts.
@@ -120,7 +118,9 @@ stateDiagram-v2
     Stopped --> [*]
 ```
 
-A request that arrives while a reload is running is not lost. The coordinator records it, and when the current reload ends it runs one more reload. Any number of requests that arrive in the meantime cause one extra reload only, which then picks up the latest configuration.
+A request that arrives while a reload is running is not lost. The coordinator records it, and when the current reload ends it runs one more reload. Any number of requests that arrive in the meantime cause one extra reload only, which then picks up the latest configuration. Every caller whose request was folded into that reload gets its result. Only requests for the loader are folded: a `reload_with_config()` request carries its own configuration and runs on its own, in the order it arrived.
+
+The coordinator starts when `run()` has bound the listeners. A request made before that waits, and runs then.
 
 `Applying` is not interrupted by shutdown.
 
@@ -128,17 +128,15 @@ A request that arrives while a reload is running is not lost. The coordinator re
 
 Every connection keeps the configuration snapshot it was accepted with until it closes. One milter connection lives for one SMTP session with Sendmail and Postfix, so within one SMTP session of a reload, the connections on the old snapshot have closed and all traffic runs on the new values.
 
-Which settings apply at once, which apply to new connections or new listeners, and which need a restart is specified per setting in [configuration.md](configuration.md#reload-classes).
+Which settings apply at once, which apply to new connections, and which require a restart is specified per setting in [configuration.md](configuration.md#reload-classes).
 
-A reload closes no open connection and rebinds no listener ([ADR 0005](../adr/0005-reload-closes-no-connection-and-rebinds-no-listener.md)):
-- A lowered `max_connections` closes no open connection. New connections are closed at once until the count falls below the new limit.
-- A changed `backlog` on an address that stays bound keeps its running value and is reported as `pending_restart`.
+A reload closes no open connection and rebinds no listener ([ADR 0005](../adr/0005-reload-closes-no-connection-and-rebinds-no-listener.md)). A lowered `max_connections` closes no open connection. New connections are closed at once until the count falls below the new limit.
 
-A change to a setting that needs a restart does not fail the reload. The server applies everything else, keeps the running value for that setting, and lists it as `pending_restart` in the log and in the reload report.
+A reload that changes a setting that requires a restart fails with `RestartRequired` and applies nothing, even if it changes other settings too ([ADR 0007](../adr/0007-a-reload-that-changes-a-restart-setting-fails.md)). The error names every such setting that changed, and the server keeps running with the previous generation. After every applied reload, the server runs exactly the configuration the loader returned.
 
 ## Listener changes
 
-The coordinator compares the old and new `bind_addresses` as sets:
+The coordinator compares the addresses it has listeners on with the new `bind_addresses`, as sets:
 
 | Case | Action |
 |------|--------|
@@ -151,6 +149,8 @@ A bind failure follows `bind_mode` from the new configuration (see [configuratio
 - `BestEffort`: publish the new configuration with the listeners that did bind, and report the failed addresses as a warning.
 
 A reload never leaves the server with no listener. If the new set would bind nothing, the reload fails.
+
+An address that failed to bind in `BestEffort` mode has no listener, so the next reload that keeps it in `bind_addresses` tries to bind it again.
 
 ## Application configuration
 
@@ -185,16 +185,15 @@ The reload errors are the variants of `ReloadError` in [api-specification.md](ap
 |-------|-------|--------|
 | Reload requested | INFO | `source` (`sighup` or `api`), `generation` |
 | Reload coalesced | DEBUG | `pending_requests` |
-| Reload applied | INFO | `generation`, `changed`, `pending_restart`, `listeners_added`, `listeners_removed` |
+| Reload applied | INFO | `generation`, `changed`, `listeners_added`, `listeners_removed` |
 | Reload failed | ERROR | `generation`, `error` |
-| Setting needs restart | WARN | `setting` |
 | SIGHUP ignored | WARN | `reason` (`no_loader` or `shutting_down`) |
 
 Logs carry the names of changed settings, never their values. A configuration can contain secrets, and the application configuration is opaque to the library.
 
 The reload metrics are defined under "Configuration reload metrics" in [telemetry.md](telemetry.md).
 
-`ServerHandle::status()` reports two more fields next to the [health check](tcp-server.md#health-check) fields: `config_generation`, the current generation, and `pending_restart`, the settings that wait for a restart.
+`ServerHandle::status()` reports one more field next to the [health check](tcp-server.md#health-check) fields: `config_generation`, the current generation.
 
 ## Testing requirements
 
@@ -202,7 +201,7 @@ The test scenarios are in [docs/testing/reload.md](../testing/reload.md), with t
 
 Unit tests:
 - the listener set comparison for added, removed, and kept addresses
-- classification of every `ServerConfig` field (at once, new connections, new listeners, restart)
+- classification of every `ServerConfig` field (at once, new connections, restart)
 - coalescing: several requests during one reload cause exactly one more reload
 - generation numbering on success and failure
 
@@ -210,6 +209,6 @@ Integration tests:
 - a reload during an open SMTP session: the session finishes with its old timeouts, and the next connection uses the new ones
 - moving the listen address: no moment without a listener, and connections on the old address finish
 - a bind failure in `FailFast` mode rolls back; in `BestEffort` mode it applies the rest
-- an invalid configuration leaves the server unchanged
+- an invalid configuration, or one that changes a setting that requires a restart, leaves the server unchanged
 - `SIGHUP` without a loader, and during shutdown
 - a handler reading `ConfigWatch` sees one value for a whole message while a reload happens

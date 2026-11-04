@@ -4,26 +4,36 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+/// `max` when there is no limit.
+const UNLIMITED: usize = usize::MAX;
+
 /// What every connection reserves when it is accepted.
 pub(crate) const BASE: usize = 4 * 1024;
 
-/// The bytes reserved by all connections, against `max_memory`.
+/// The bytes reserved by all connections, against `max_memory`. A reload
+/// can change the limit; reservations already made stay.
 #[derive(Debug)]
 pub(crate) struct Budget {
-    max: Option<usize>,
+    /// `max_memory`, or [`UNLIMITED`]. No limit and a limit of
+    /// `usize::MAX` bytes behave the same.
+    max: AtomicUsize,
     used: AtomicUsize,
 }
 
 impl Budget {
     pub(crate) fn new(max: Option<usize>) -> Arc<Budget> {
         Arc::new(Budget {
-            max,
+            max: AtomicUsize::new(max.unwrap_or(UNLIMITED)),
             used: AtomicUsize::new(0),
         })
     }
 
     pub(crate) fn max(&self) -> Option<usize> {
-        self.max
+        Some(self.max.load(Ordering::Relaxed)).filter(|&max| max != UNLIMITED)
+    }
+
+    pub(crate) fn set_max(&self, max: Option<usize>) {
+        self.max.store(max.unwrap_or(UNLIMITED), Ordering::Relaxed);
     }
 
     pub(crate) fn used(&self) -> usize {
@@ -32,9 +42,11 @@ impl Budget {
 
     /// Takes `bytes` if they fit under `max_memory`.
     fn take(&self, bytes: usize) -> bool {
-        let fits = |used: usize| match self.max {
-            Some(max) => used.checked_add(bytes).filter(|&total| total <= max),
-            None => Some(used.saturating_add(bytes)),
+        let max = self.max.load(Ordering::Relaxed);
+        // A sum that saturates fits only without a limit.
+        let fits = |used: usize| {
+            let total = used.saturating_add(bytes);
+            (total <= max).then_some(total)
         };
         self.used
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, fits)
