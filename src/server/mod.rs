@@ -5,35 +5,42 @@
 //! signals, and reload are specified there and in `hot-reload.md`.
 
 mod accept;
+mod listeners;
 mod memory;
 #[cfg(feature = "test-support")]
 mod readback;
+mod reload;
 #[cfg(unix)]
 mod signals;
 mod socket;
 mod status;
 mod watch;
 
+use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;
 
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
 pub(crate) use memory::Reservation;
 #[cfg(feature = "test-support")]
 pub use readback::SocketReadback;
+pub use reload::{ReloadReport, Reloaded};
 pub use status::{ListenerStatus, Status};
 pub use watch::ConfigWatch;
 
+use listeners::Listeners;
 use memory::Budget;
+use reload::{Coordinator, Loader, Outcome, Request};
 use status::Counters;
 
 use crate::engine::{self, Closed, Limits, Report, Stop};
-use crate::{BindMode, Error, Handler, Result, ServerConfig};
+use crate::{BindMode, Error, Handler, ReloadError, Result, ServerConfig};
 
 /// The generation of the configuration a server is built with.
 const FIRST_GENERATION: u64 = 1;
@@ -41,9 +48,10 @@ const FIRST_GENERATION: u64 = 1;
 /// The milter server, generic over the handler `H` and the application
 /// configuration `A`.
 pub struct Server<H, A = ()> {
-    config: Arc<ServerConfig>,
     handler: Arc<H>,
     handle: ServerHandle<A>,
+    loader: Option<Loader<A>>,
+    requests: mpsc::UnboundedReceiver<Request<A>>,
 }
 
 impl Server<(), ()> {
@@ -53,18 +61,21 @@ impl Server<(), ()> {
             config: ServerConfig::default(),
             app: (),
             factory: Box::new(|_| ()),
+            loader: None,
         }
     }
 }
 
 /// Builds a [`Server`].
 ///
-/// Set the application configuration with `app_config` before `handler`,
-/// because the handler factory receives it. Without `app_config` it is `()`.
+/// Set the application configuration with `app_config` before `handler`
+/// and `reload_with`: the handler factory receives it, and the loader
+/// returns it. Without `app_config` it is `()`.
 pub struct ServerBuilder<H, A = ()> {
     config: ServerConfig,
     app: A,
     factory: Factory<H, A>,
+    loader: Option<Loader<A>>,
 }
 
 /// The handler factory, called once in `build`.
@@ -77,15 +88,34 @@ impl<H, A> ServerBuilder<H, A> {
         self.config = config;
         self
     }
+
+    /// The reload loader, which `SIGHUP` and [`ServerHandle::reload`] run.
+    /// It returns the new server and application configurations, or an
+    /// error that fails the reload.
+    pub fn reload_with<F, Fut, E>(mut self, loader: F) -> Self
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = std::result::Result<Reloaded<A>, E>> + Send + 'static,
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        self.loader = Some(Box::new(move || {
+            let loading = loader();
+            Box::pin(async move { loading.await.map_err(|error| Box::new(error) as _) })
+        }));
+        self
+    }
 }
 
 impl<A> ServerBuilder<(), A> {
-    /// The initial application configuration.
+    /// The initial application configuration. Call it before
+    /// `reload_with`: a loader registered earlier returns the old type, so
+    /// it is dropped.
     pub fn app_config<B>(self, app: B) -> ServerBuilder<(), B> {
         ServerBuilder {
             config: self.config,
             app,
             factory: Box::new(|_| ()),
+            loader: None,
         }
     }
 
@@ -99,6 +129,7 @@ impl<A> ServerBuilder<(), A> {
             config: self.config,
             app: self.app,
             factory: Box::new(factory),
+            loader: self.loader,
         }
     }
 }
@@ -108,13 +139,14 @@ impl<H: Handler, A: Send + Sync + 'static> ServerBuilder<H, A> {
     pub fn build(self) -> Result<Server<H, A>> {
         self.config.validate()?;
         let shutdown = CancellationToken::new();
-        let (watch, publisher) = ConfigWatch::new(self.app);
+        let counters = Counters::new(&self.config.bind_addresses);
+        let (watch, publisher) = ConfigWatch::new(self.config, self.app);
         let context = HandlerContext {
             watch: watch.clone(),
             shutdown: shutdown.clone(),
         };
         let handler = (self.factory)(&context);
-        let counters = Counters::new(&self.config.bind_addresses);
+        let (requests, receiver) = mpsc::unbounded_channel();
         Ok(Server {
             handle: ServerHandle {
                 inner: Arc::new(Shared {
@@ -125,11 +157,14 @@ impl<H: Handler, A: Send + Sync + 'static> ServerBuilder<H, A> {
                     running: AtomicBool::new(false),
                     counters,
                     watch,
-                    _publisher: publisher,
+                    publisher,
+                    requests,
+                    has_loader: self.loader.is_some(),
                 }),
             },
-            config: Arc::new(self.config),
             handler: Arc::new(handler),
+            loader: self.loader,
+            requests: receiver,
         })
     }
 }
@@ -141,17 +176,18 @@ impl<H: Handler, A: Send + Sync + 'static> Server<H, A> {
     }
 
     /// Binds the listeners as `bind_mode` says, registers the handlers for
-    /// `SIGTERM`, `SIGINT`, and `SIGQUIT` on Unix, and serves until
-    /// shutdown. Once registered, these signals no longer end the process,
-    /// even after `run()` returns.
+    /// `SIGTERM`, `SIGINT`, `SIGQUIT`, and `SIGHUP` on Unix, and serves
+    /// until shutdown. Once registered, these signals no longer end the
+    /// process, even after `run()` returns.
     pub async fn run(self) -> Result<()> {
         let shared = &self.handle.inner;
+        let (generation, config) = shared.watch.server();
         tracing::info!(
             version = env!("CARGO_PKG_VERSION"),
-            bind_addresses = ?self.config.bind_addresses,
+            bind_addresses = ?config.bind_addresses,
             "Server starting"
         );
-        let listeners = bind(&self.config, &shared.counters)?;
+        let listeners = bind(&config, &shared.counters)?;
         // Registered after the binds, so a failed bind leaves the signals
         // alone, and before any listener accepts.
         #[cfg(unix)]
@@ -167,30 +203,33 @@ impl<H: Handler, A: Send + Sync + 'static> Server<H, A> {
 
         let server = Arc::new(Accepting {
             handler: Arc::clone(&self.handler),
-            config: Arc::clone(&self.config),
             shared: Arc::clone(shared),
-            budget: Budget::new(self.config.resource_limits.max_memory),
+            budget: Budget::new(config.resource_limits.max_memory),
             connections: TaskTracker::new(),
             next_id: AtomicU64::new(1),
         });
         #[cfg(unix)]
         let _signals = AbortOnDrop(tokio::spawn(signals.watch(Arc::clone(shared))));
         let accepting = TaskTracker::new();
+        let mut set = Listeners::new(Arc::clone(&server), accepting.clone());
         for (address, listener) in listeners {
-            let server = Arc::clone(&server);
-            accepting.spawn(async move {
-                let stop = server.shared.stop.clone();
-                accept::accept_loop(listener, address, &stop, |stream, peer| {
-                    server.connection(stream, peer, address);
-                })
-                .await;
-            });
+            set.start(address, listener);
+        }
+        let coordinator = Coordinator::new(self.loader, set, generation, shared.stop.clone());
+        let coordinating = tokio::spawn(coordinator.run(self.requests));
+
+        shared.stop.cancelled().await;
+        // A reload that is applying finishes before the drain starts.
+        if let Err(error) = coordinating.await {
+            if error.is_panic() {
+                std::panic::resume_unwind(error.into_panic());
+            }
         }
         accepting.close();
         accepting.wait().await;
         shared.counters.set_accepting(false);
         server.connections.close();
-        drain(&self.config, shared, &server.connections).await;
+        drain(shared, &server.connections).await;
 
         let counters = &shared.counters;
         tracing::info!(
@@ -219,8 +258,10 @@ impl Drop for AbortOnDrop {
 
 /// Steps 4 to 7 of the shutdown sequence, once the listeners are closed:
 /// the grace period, then the drain, then the forced close of what is left.
-/// A forced shutdown skips the first two.
-async fn drain<A>(config: &ServerConfig, shared: &Shared<A>, connections: &TaskTracker) {
+/// A forced shutdown skips the first two. The timings are those of the
+/// current generation.
+async fn drain<A>(shared: &Shared<A>, connections: &TaskTracker) {
+    let (_, config) = shared.watch.server();
     let timings = &config.shutdown;
     let force = &shared.force;
     if !force.is_cancelled() {
@@ -294,7 +335,6 @@ fn bind(config: &ServerConfig, counters: &Counters) -> Result<Vec<(SocketAddr, T
 /// What the accept loops share while the server runs.
 struct Accepting<H, A> {
     handler: Arc<H>,
-    config: Arc<ServerConfig>,
     shared: Arc<Shared<A>>,
     budget: Arc<Budget>,
     connections: TaskTracker,
@@ -302,15 +342,16 @@ struct Accepting<H, A> {
 }
 
 impl<H: Handler, A: Send + Sync + 'static> Accepting<H, A> {
-    /// Takes on an accepted connection, or closes it at once when a limit
-    /// is reached.
+    /// Takes on an accepted connection with the current configuration, or
+    /// closes it at once when a limit is reached.
     fn connection(&self, stream: TcpStream, peer_addr: SocketAddr, listener: SocketAddr) {
         let accepted_at = Instant::now();
+        let (generation, config) = self.shared.watch.server();
         let counters = &self.shared.counters;
         counters.accepted.fetch_add(1, Ordering::Relaxed);
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
 
-        let max_connections = self.config.max_connections;
+        let max_connections = config.max_connections;
         if counters.connections.load(Ordering::SeqCst) >= max_connections {
             counters.rejected.fetch_add(1, Ordering::Relaxed);
             tracing::warn!(
@@ -336,7 +377,7 @@ impl<H: Handler, A: Send + Sync + 'static> Accepting<H, A> {
         };
         // A connection whose options cannot be set is closed before any
         // read, as a setup error.
-        if let Err(error) = socket::configure(&stream, &self.config.socket_options) {
+        if let Err(error) = socket::configure(&stream, &config.socket_options) {
             tracing::debug!(conn_id = id, error = %error, "Socket setup failed");
             return;
         }
@@ -349,7 +390,7 @@ impl<H: Handler, A: Send + Sync + 'static> Accepting<H, A> {
             peer_addr,
             local_addr,
             accepted_at,
-            config_generation: FIRST_GENERATION,
+            config_generation: generation,
             #[cfg(feature = "test-support")]
             probe,
         };
@@ -365,7 +406,7 @@ impl<H: Handler, A: Send + Sync + 'static> Accepting<H, A> {
             stream,
             Arc::clone(&self.handler),
             info,
-            Arc::clone(&self.config),
+            config,
             memory,
             open,
         ));
@@ -517,7 +558,10 @@ struct Shared<A> {
     running: AtomicBool,
     counters: Counters,
     watch: ConfigWatch<A>,
-    _publisher: watch::Publisher<A>,
+    publisher: watch::Publisher<A>,
+    /// The reload coordinator's requests.
+    requests: mpsc::UnboundedSender<Request<A>>,
+    has_loader: bool,
 }
 
 impl<A> ServerHandle<A> {
@@ -562,6 +606,65 @@ impl<A> ServerHandle<A> {
     pub fn config_watch(&self) -> ConfigWatch<A> {
         self.inner.watch.clone()
     }
+
+    /// The current server configuration.
+    pub fn config(&self) -> Arc<ServerConfig> {
+        self.inner.watch.server().1
+    }
+
+    /// The current configuration generation.
+    pub fn config_generation(&self) -> u64 {
+        self.inner.watch.generation()
+    }
+
+    /// Runs the registered loader and applies its result, as `SIGHUP`
+    /// does. Requests made while a reload runs are folded into one more
+    /// reload. Called before `run()`, it waits until `run()` has bound the
+    /// listeners.
+    pub async fn reload(&self) -> std::result::Result<ReloadReport, ReloadError> {
+        if self.inner.stop.is_cancelled() {
+            return Err(ReloadError::ShuttingDown);
+        }
+        if !self.inner.has_loader {
+            return Err(ReloadError::NoLoader);
+        }
+        tracing::info!(
+            source = "api",
+            generation = self.config_generation(),
+            "Reload requested"
+        );
+        let (reply, outcome) = oneshot::channel();
+        self.request(Request::Load(Some(reply)), outcome).await
+    }
+
+    /// Applies a configuration the caller built, with the same checks as a
+    /// reload through the loader.
+    pub async fn reload_with_config(
+        &self,
+        new: Reloaded<A>,
+    ) -> std::result::Result<ReloadReport, ReloadError> {
+        if self.inner.stop.is_cancelled() {
+            return Err(ReloadError::ShuttingDown);
+        }
+        tracing::info!(
+            source = "api",
+            generation = self.config_generation(),
+            "Reload requested"
+        );
+        let (reply, outcome) = oneshot::channel();
+        self.request(Request::Apply(Box::new(new), reply), outcome)
+            .await
+    }
+
+    /// Sends a request to the coordinator and waits for its outcome. A
+    /// coordinator that has stopped, or a server dropped without running,
+    /// answers `ShuttingDown`.
+    async fn request(&self, request: Request<A>, outcome: oneshot::Receiver<Outcome>) -> Outcome {
+        if self.inner.requests.send(request).is_err() {
+            return Err(ReloadError::ShuttingDown);
+        }
+        outcome.await.unwrap_or(Err(ReloadError::ShuttingDown))
+    }
 }
 
 impl<A> Shared<A> {
@@ -586,8 +689,8 @@ pub struct HandlerContext<A> {
 
 impl<A> HandlerContext<A> {
     /// Read access to the application configuration.
-    pub fn config_watch(&self) -> &ConfigWatch<A> {
-        &self.watch
+    pub fn config_watch(&self) -> ConfigWatch<A> {
+        self.watch.clone()
     }
 
     /// The server's shutdown token.

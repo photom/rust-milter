@@ -8,8 +8,9 @@ Decisions that shape rust-milter's design and specification, with their context 
 | [0002](0002-library-runs-the-protocol-handlers-decide.md) | The library runs the Milter protocol; handlers make decisions | Accepted |
 | [0003](0003-never-record-the-smtp-client-address.md) | rust-milter never records the SMTP client's address | Accepted |
 | [0004](0004-metrics-come-from-opentelemetry-and-status.md) | Metrics come from OpenTelemetry and status(), with no collector trait | Accepted |
-| [0005](0005-reload-closes-no-connection-and-rebinds-no-listener.md) | A reload closes no open connection and rebinds no listener | Accepted |
+| [0005](0005-reload-closes-no-connection-and-rebinds-no-listener.md) | A reload closes no open connection and rebinds no listener | Accepted; the `backlog` decision is superseded by ADR 0007 |
 | [0006](0006-connection-timeouts-per-frame-and-libmilter-idle-default.md) | Connection timeouts are split per frame, and the idle default follows libmilter | Accepted |
+| [0007](0007-a-reload-that-changes-a-restart-setting-fails.md) | A reload that changes a setting that requires a restart fails | Accepted |
 
 Conventions:
 - One file per decision, named `NNNN-short-title.md`, numbered in order.

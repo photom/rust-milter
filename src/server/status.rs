@@ -24,8 +24,6 @@ pub struct Status {
     pub listeners: Vec<ListenerStatus>,
     /// The current configuration generation, starting at 1.
     pub config_generation: u64,
-    /// Settings that wait for a restart.
-    pub pending_restart: Vec<&'static str>,
     /// Connections accepted since `run()` started, rejected ones included.
     pub connections_accepted: u64,
     /// Connections closed at once because `max_connections` or
@@ -90,8 +88,33 @@ impl Counters {
             listener.bound = bound;
         }
         if let Some(error) = error {
-            *lock(&self.last_error) = Some(error);
+            self.listener_error(error);
         }
+    }
+
+    /// Records a listener error, such as a failed bind.
+    pub(crate) fn listener_error(&self, error: String) {
+        *lock(&self.last_error) = Some(error);
+    }
+
+    /// Replaces the listener entries after a reload: one per address in the
+    /// new `bind_addresses`, with whether it is bound.
+    pub(crate) fn replace_listeners(
+        &self,
+        listeners: impl IntoIterator<Item = (SocketAddr, bool)>,
+    ) {
+        let mut entries = lock(&self.listeners);
+        // Read under the lock, so that a shutdown starting now is seen
+        // either here or by `begin_shutdown` after the replacement.
+        let accepting = !self.shutting_down.load(Ordering::SeqCst);
+        *entries = listeners
+            .into_iter()
+            .map(|(address, bound)| ListenerStatus {
+                address,
+                bound,
+                accepting: accepting && bound,
+            })
+            .collect();
     }
 
     /// The bound listeners start or stop accepting.
@@ -105,8 +128,9 @@ impl Counters {
     }
 
     pub(crate) fn begin_shutdown(&self) {
+        let mut listeners = lock(&self.listeners);
         self.shutting_down.store(true, Ordering::SeqCst);
-        for listener in lock(&self.listeners).iter_mut() {
+        for listener in listeners.iter_mut() {
             listener.accepting = false;
         }
     }
@@ -127,7 +151,6 @@ impl Counters {
             shutting_down,
             listeners,
             config_generation,
-            pending_restart: Vec::new(),
             connections_accepted: self.accepted.load(Ordering::SeqCst),
             connections_rejected: self.rejected.load(Ordering::SeqCst),
         }

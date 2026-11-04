@@ -57,7 +57,8 @@ pub enum Error {
     #[error("the {0} limit was reached")]
     ResourceLimit(ResourceKind),
 
-    /// `run()` could not register the handlers for the shutdown signals.
+    /// `run()` could not register the handlers for the shutdown signals and
+    /// `SIGHUP`.
     #[error("cannot register the signal handlers")]
     Signals(#[source] std::io::Error),
 
@@ -288,6 +289,52 @@ pub enum ConfigError {
         /// Why the value was rejected.
         reason: String,
     },
+}
+
+/// Why a reload failed. Every variant leaves the server running with the
+/// previous configuration generation.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum ReloadError {
+    /// `reload()` was called without a registered loader.
+    #[error("no reload loader is registered")]
+    NoLoader,
+
+    /// The application's loader failed.
+    #[error("the reload loader failed")]
+    Load(#[source] Box<dyn std::error::Error + Send + Sync>),
+
+    /// The new configuration is invalid.
+    #[error("invalid configuration")]
+    Validation(#[source] ConfigError),
+
+    /// The new configuration changes settings that require a restart;
+    /// nothing was applied.
+    #[error("changing {} requires a restart; nothing was applied", .settings.join(", "))]
+    RestartRequired {
+        /// The changed settings, in the order of the configuration
+        /// reference.
+        settings: Vec<&'static str>,
+    },
+
+    /// A new listener could not bind in `FailFast` mode; the reload was
+    /// rolled back.
+    #[error("cannot bind {addr}")]
+    Bind {
+        /// The address.
+        addr: std::net::SocketAddr,
+        /// Why the bind failed.
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// The new configuration would leave no listener.
+    #[error("the new configuration leaves no listener")]
+    NoListener,
+
+    /// A shutdown has started.
+    #[error("the server is shutting down")]
+    ShuttingDown,
 }
 
 /// Why a bind address could not be parsed.
