@@ -24,8 +24,6 @@ pub struct Status {
     pub listeners: Vec<ListenerStatus>,
     /// The current configuration generation, starting at 1.
     pub config_generation: u64,
-    /// Settings that wait for a restart.
-    pub pending_restart: Vec<&'static str>,
     /// Connections accepted since `run()` started, rejected ones included.
     pub connections_accepted: u64,
     /// Connections closed at once because `max_connections` or
@@ -58,7 +56,6 @@ pub(crate) struct Counters {
     pub(crate) bytes_written: AtomicU64,
     last_error: Mutex<Option<String>>,
     listeners: Mutex<Vec<ListenerStatus>>,
-    pending_restart: Mutex<Vec<&'static str>>,
 }
 
 impl Counters {
@@ -81,7 +78,6 @@ impl Counters {
             bytes_written: AtomicU64::new(0),
             last_error: Mutex::new(None),
             listeners: Mutex::new(listeners),
-            pending_restart: Mutex::new(Vec::new()),
         }
     }
 
@@ -121,11 +117,6 @@ impl Counters {
             .collect();
     }
 
-    /// The settings that wait for a restart.
-    pub(crate) fn set_pending_restart(&self, settings: Vec<&'static str>) {
-        *lock(&self.pending_restart) = settings;
-    }
-
     /// The bound listeners start or stop accepting.
     pub(crate) fn set_accepting(&self, accepting: bool) {
         if accepting {
@@ -160,7 +151,6 @@ impl Counters {
             shutting_down,
             listeners,
             config_generation,
-            pending_restart: lock(&self.pending_restart).clone(),
             connections_accepted: self.accepted.load(Ordering::SeqCst),
             connections_rejected: self.rejected.load(Ordering::SeqCst),
         }

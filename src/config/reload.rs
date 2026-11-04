@@ -11,8 +11,8 @@ pub(crate) enum ReloadClass {
     Immediate,
     /// For connections accepted after the reload.
     NewConnections,
-    /// For listeners the reload binds; a kept listener needs a restart.
-    NewListeners,
+    /// Only after a restart; a reload that changes it fails.
+    Restart,
 }
 
 impl ReloadClass {
@@ -22,7 +22,7 @@ impl ReloadClass {
         match self {
             ReloadClass::Immediate => "immediate",
             ReloadClass::NewConnections => "new_connections",
-            ReloadClass::NewListeners => "new_listeners",
+            ReloadClass::Restart => "restart",
         }
     }
 }
@@ -83,7 +83,7 @@ macro_rules! keepalive {
 pub(crate) static SETTINGS: &[Setting] = &[
     setting!("bind_addresses", Immediate, |c| &c.bind_addresses),
     setting!("bind_mode", Immediate, |c| c.bind_mode),
-    setting!("backlog", NewListeners, |c| c.backlog),
+    setting!("backlog", Restart, |c| c.backlog),
     setting!("max_connections", Immediate, |c| c.max_connections),
     setting!("timeouts.connect", NewConnections, |c| c.timeouts.connect),
     setting!("timeouts.read", NewConnections, |c| c.timeouts.read),
@@ -101,13 +101,13 @@ pub(crate) static SETTINGS: &[Setting] = &[
     setting!("socket_options.send_buffer_size", NewConnections, |c| {
         c.socket_options.send_buffer_size
     }),
-    setting!("socket_options.reuse_addr", NewListeners, |c| {
+    setting!("socket_options.reuse_addr", Restart, |c| {
         c.socket_options.reuse_addr
     }),
-    setting!("socket_options.reuse_port", NewListeners, |c| {
+    setting!("socket_options.reuse_port", Restart, |c| {
         c.socket_options.reuse_port
     }),
-    setting!("socket_options.ipv6_only", NewListeners, |c| {
+    setting!("socket_options.ipv6_only", Restart, |c| {
         c.socket_options.ipv6_only
     }),
     keepalive!("socket_options.keepalive.time", |k| k.time),
@@ -140,6 +140,16 @@ pub(crate) fn changed(old: &ServerConfig, new: &ServerConfig) -> Vec<&'static st
     SETTINGS
         .iter()
         .filter(|setting| setting.differs(old, new))
+        .map(|setting| setting.name)
+        .collect()
+}
+
+/// The names of the settings that require a restart and in which `new`
+/// differs from `old`.
+pub(crate) fn requires_restart(old: &ServerConfig, new: &ServerConfig) -> Vec<&'static str> {
+    SETTINGS
+        .iter()
+        .filter(|setting| setting.class == ReloadClass::Restart && setting.differs(old, new))
         .map(|setting| setting.name)
         .collect()
 }

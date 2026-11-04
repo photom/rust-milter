@@ -213,7 +213,7 @@ impl<H: Handler, A: Send + Sync + 'static> Server<H, A> {
         let accepting = TaskTracker::new();
         let mut set = Listeners::new(Arc::clone(&server), accepting.clone());
         for (address, listener) in listeners {
-            set.start(address, listener, Arc::clone(&config));
+            set.start(address, listener);
         }
         let coordinator = Coordinator::new(self.loader, set, generation, shared.stop.clone());
         let coordinating = tokio::spawn(coordinator.run(self.requests));

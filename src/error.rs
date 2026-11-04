@@ -308,6 +308,15 @@ pub enum ReloadError {
     #[error("invalid configuration")]
     Validation(#[source] ConfigError),
 
+    /// The new configuration changes settings that require a restart;
+    /// nothing was applied.
+    #[error("changing {} requires a restart; nothing was applied", .settings.join(", "))]
+    RestartRequired {
+        /// The changed settings, in the order of the configuration
+        /// reference.
+        settings: Vec<&'static str>,
+    },
+
     /// A new listener could not bind in `FailFast` mode; the reload was
     /// rolled back.
     #[error("cannot bind {addr}")]

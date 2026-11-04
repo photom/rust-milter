@@ -29,9 +29,6 @@ pub struct ReloadReport {
     pub generation: u64,
     /// The names of the changed settings.
     pub changed: Vec<&'static str>,
-    /// The settings that wait for a restart, changed by this reload or an
-    /// earlier one.
-    pub pending_restart: Vec<&'static str>,
     /// The listeners the reload bound.
     pub listeners_added: Vec<SocketAddr>,
     /// The listeners the reload stopped.
@@ -157,13 +154,9 @@ impl<A: Send + 'static, T: Target<A>> Coordinator<A, T> {
         match self.target.apply(next, new).await {
             Ok(report) => {
                 self.generation = next;
-                for setting in &report.pending_restart {
-                    tracing::warn!(setting, "Setting needs restart");
-                }
                 tracing::info!(
                     generation = report.generation,
                     changed = ?report.changed,
-                    pending_restart = ?report.pending_restart,
                     listeners_added = ?report.listeners_added,
                     listeners_removed = ?report.listeners_removed,
                     "Reload applied"
@@ -205,6 +198,9 @@ fn copy(outcome: &Outcome) -> Outcome {
         ReloadError::NoLoader => ReloadError::NoLoader,
         ReloadError::Load(source) => ReloadError::Load(Box::new(Copied::of(&**source))),
         ReloadError::Validation(source) => ReloadError::Validation(source.clone()),
+        ReloadError::RestartRequired { settings } => ReloadError::RestartRequired {
+            settings: settings.clone(),
+        },
         ReloadError::Bind { addr, source } => ReloadError::Bind {
             addr: *addr,
             source: std::io::Error::new(source.kind(), Copied::of(source)),

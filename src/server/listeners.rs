@@ -10,8 +10,8 @@ use tokio_util::task::TaskTracker;
 
 use super::reload::{Outcome, ReloadReport, Reloaded, Target};
 use super::{Accepting, accept, error_chain, socket};
-use crate::config::reload::{ReloadClass, SETTINGS, changed};
-use crate::{BindMode, Handler, ReloadError, ServerConfig};
+use crate::config::reload::{changed, requires_restart};
+use crate::{BindMode, Handler, ReloadError};
 
 /// How a reload changes the set of listen addresses.
 #[derive(Debug, PartialEq, Eq)]
@@ -38,8 +38,6 @@ struct Listener {
     address: SocketAddr,
     /// Stops this listener's accept loop; a child of the server's `stop`.
     stop: CancellationToken,
-    /// The configuration it was bound with.
-    config: Arc<ServerConfig>,
 }
 
 /// The listener set. Only the reload coordinator changes it once the
@@ -60,13 +58,8 @@ impl<H: Handler, A: Send + Sync + 'static> Listeners<H, A> {
         }
     }
 
-    /// Starts accepting on a listener bound with `config`.
-    pub(super) fn start(
-        &mut self,
-        address: SocketAddr,
-        listener: TcpListener,
-        config: Arc<ServerConfig>,
-    ) {
+    /// Starts accepting on `listener`.
+    pub(super) fn start(&mut self, address: SocketAddr, listener: TcpListener) {
         let stop = self.server.shared.stop.child_token();
         let server = Arc::clone(&self.server);
         let token = stop.clone();
@@ -76,32 +69,14 @@ impl<H: Handler, A: Send + Sync + 'static> Listeners<H, A> {
             })
             .await;
         });
-        self.open.push(Listener {
-            address,
-            stop,
-            config,
-        });
-    }
-
-    /// The settings of class `new_listeners` in which `new` differs from
-    /// what a listener that stays was bound with.
-    fn pending_restart(&self, new: &ServerConfig) -> Vec<&'static str> {
-        SETTINGS
-            .iter()
-            .filter(|setting| setting.class == ReloadClass::NewListeners)
-            .filter(|setting| {
-                self.open
-                    .iter()
-                    .any(|listener| setting.differs(&listener.config, new))
-            })
-            .map(|setting| setting.name)
-            .collect()
+        self.open.push(Listener { address, stop });
     }
 }
 
 impl<H: Handler, A: Send + Sync + 'static> Target<A> for Listeners<H, A> {
-    /// Binds the added addresses, publishes, then stops the removed ones,
-    /// so some listener accepts at every moment.
+    /// Fails without a change if `new` changes a setting that requires a
+    /// restart. Otherwise binds the added addresses, publishes, then stops
+    /// the removed ones, so some listener accepts at every moment.
     async fn apply(&mut self, generation: u64, new: Reloaded<A>) -> Outcome {
         let Reloaded {
             server: config,
@@ -110,6 +85,11 @@ impl<H: Handler, A: Send + Sync + 'static> Target<A> for Listeners<H, A> {
         let config = Arc::new(config);
         let server = Arc::clone(&self.server);
         let counters = &server.shared.counters;
+        let (_, old) = server.shared.watch.server();
+        let settings = requires_restart(&old, &config);
+        if !settings.is_empty() {
+            return Err(ReloadError::RestartRequired { settings });
+        }
         let open: Vec<SocketAddr> = self.open.iter().map(|l| l.address).collect();
         let changes = compare(&open, &config.bind_addresses);
 
@@ -136,7 +116,6 @@ impl<H: Handler, A: Send + Sync + 'static> Target<A> for Listeners<H, A> {
             return Err(ReloadError::NoListener);
         }
 
-        let (_, old) = server.shared.watch.server();
         server.budget.set_max(config.resource_limits.max_memory);
         server
             .shared
@@ -146,7 +125,7 @@ impl<H: Handler, A: Send + Sync + 'static> Target<A> for Listeners<H, A> {
         let listeners_added: Vec<SocketAddr> = bound.iter().map(|(addr, _)| *addr).collect();
         for (addr, listener) in bound {
             tracing::info!(address = %addr, backlog = config.backlog, "Listener bound");
-            self.start(addr, listener, Arc::clone(&config));
+            self.start(addr, listener);
         }
         self.open.retain(|listener| {
             let removed = changes.removed.contains(&listener.address);
@@ -156,16 +135,13 @@ impl<H: Handler, A: Send + Sync + 'static> Target<A> for Listeners<H, A> {
             !removed
         });
 
-        let pending_restart = self.pending_restart(&config);
         counters.replace_listeners(config.bind_addresses.iter().map(|&address| {
             let bound = self.open.iter().any(|l| l.address == address);
             (address, bound)
         }));
-        counters.set_pending_restart(pending_restart.clone());
         Ok(ReloadReport {
             generation,
             changed: changed(&old, &config),
-            pending_restart,
             listeners_added,
             listeners_removed: changes.removed,
             bind_failures,
