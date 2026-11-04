@@ -78,6 +78,25 @@ impl Error {
     pub fn handler(error: impl std::error::Error + Send + Sync + 'static) -> Error {
         Error::Handler(Box::new(error))
     }
+
+    /// The variant's name, the value of the `error.type` attribute.
+    pub(crate) fn variant(&self) -> &'static str {
+        match self {
+            Error::Io(_) => "Io",
+            Error::Protocol(_) => "Protocol",
+            Error::ActionNotNegotiated(_) => "ActionNotNegotiated",
+            Error::Handler(_) => "Handler",
+            Error::Timeout(_) => "Timeout",
+            Error::ConnectionClosed => "ConnectionClosed",
+            Error::ConnectionReset => "ConnectionReset",
+            Error::FrameTooLarge { .. } => "FrameTooLarge",
+            Error::InvalidReply(_) => "InvalidReply",
+            Error::Config(_) => "Config",
+            Error::ResourceLimit(_) => "ResourceLimit",
+            Error::Signals(_) => "Signals",
+            Error::Bind { .. } => "Bind",
+        }
+    }
 }
 
 /// Which connection timeout expired; see `TimeoutConfig`.
