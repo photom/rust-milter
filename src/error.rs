@@ -57,6 +57,10 @@ pub enum Error {
     #[error("the {0} limit was reached")]
     ResourceLimit(ResourceKind),
 
+    /// `run()` could not register the handlers for the shutdown signals.
+    #[error("cannot register the signal handlers")]
+    Signals(#[source] std::io::Error),
+
     /// A listener could not bind its address.
     #[error("cannot bind {addr}")]
     Bind {

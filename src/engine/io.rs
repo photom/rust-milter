@@ -99,6 +99,12 @@ impl<R: AsyncRead + Unpin> Inbound<R> {
         }
     }
 
+    /// Bytes of a frame not yet returned have arrived: part of a frame, or
+    /// a whole one sent right after the last.
+    pub(crate) fn in_frame(&self) -> bool {
+        !self.buf.is_empty()
+    }
+
     /// Once a frame's length field has arrived, reserves the whole frame
     /// from `max_memory` and makes room for it, before its data arrives.
     fn reserve_frame(&mut self) -> Result<()> {
