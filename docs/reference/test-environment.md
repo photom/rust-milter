@@ -146,7 +146,7 @@ GitHub Actions runs these jobs on every push to `main` and on every pull request
 |-----|----------|--------|
 | Format | `ci.yml` | `cargo fmt --check` |
 | Clippy | `ci.yml` | Clippy with warnings as errors, with all features and with none |
-| Test | `ci.yml` | `cargo test` on Linux and macOS, with all features and with none, and `RUST_MILTER_TEST_IPV6=on` |
+| Test | `ci.yml` | `cargo test` on Rocky Linux 9, Debian 13, and macOS, with all features and with none, and `RUST_MILTER_TEST_IPV6=on`. Rocky Linux and Debian run in containers on an Ubuntu runner |
 | MSRV | `ci.yml` | The library builds with Rust 1.85, with all features and with none |
 | Rustdoc | `ci.yml` | The API documentation builds without warnings |
 | Dependencies | `ci.yml` | cargo-deny: known vulnerabilities, yanked crates, licenses, and sources, as set in `deny.toml` |
