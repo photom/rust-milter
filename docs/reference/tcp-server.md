@@ -233,18 +233,22 @@ Signal handling rules:
 4. A second SIGTERM, SIGINT, or SIGQUIT during shutdown, of any of the three kinds, SHOULD force an immediate shutdown that skips the drain.
 5. Signal handlers MUST NOT block the async runtime.
 
+Tokio keeps a signal's handler for the life of the process once it is registered, so after `run()` returns, these signals no longer end the process.
+
 ### Shutdown sequence
 
 1. The server receives a shutdown signal (SIGTERM, SIGINT, or SIGQUIT) or a `ServerHandle::shutdown()` call.
 2. It logs the signal or call at INFO level.
 3. It closes every listener at once, so new connections are refused.
-4. It waits `shutdown.grace_period` so commands already on their way can arrive.
-5. It notifies every active connection through the cancellation token.
-6. It lets existing connections finish within `shutdown.drain_timeout`.
-7. When the drain timeout expires, it force-closes the remaining connections.
+4. It waits `shutdown.grace_period` so commands already on their way can arrive. Connections are served as usual meanwhile. The grace period ends early when no connection is open.
+5. It notifies every active connection through the cancellation token, which handlers see as `shutdown()` in their context.
+6. It lets existing connections finish within `shutdown.drain_timeout`. A connection waiting for the MTA's next command closes at once. One that is receiving a frame, running a callback, or writing a reply finishes that command first, then closes.
+7. When the drain timeout expires, it force-closes the remaining connections. A forced close drops the callback in progress and calls no more callbacks, neither `abort` nor `session_end`; the session and message values are dropped.
 8. It releases resources.
 9. It logs shutdown completion at INFO level.
 10. `Server::run()` returns `Ok(())`.
+
+`ServerHandle::force_shutdown()`, and a second shutdown signal, skip steps 4 and 6: every connection is force-closed at once. During a graceful shutdown they end the grace period or the drain.
 
 ### Shutdown exit codes
 
@@ -425,7 +429,8 @@ Fields of the "connection closed" log:
 | Server started | INFO | `bind_addresses`, `pid` |
 | Listener bound | INFO | `address`, `backlog` |
 | Listener bind failed | ERROR in `FailFast` mode, WARN in `BestEffort` mode | `address`, `error` |
-| Shutdown signal received | INFO | `signal`, `signal_name`, `reason` |
+| Shutdown requested | INFO | `reason` (`manual`), `force` |
+| Shutdown signal received | INFO | `signal`, `signal_name`, `reason` (`signal`) |
 | Second shutdown signal received | WARN | `signal`, `signal_name`, `action` (force shutdown) |
 | Shutdown grace period started | INFO | `grace_period_ms` |
 | Shutdown draining started | INFO | `active_connections`, `drain_timeout_ms` |

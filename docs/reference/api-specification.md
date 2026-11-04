@@ -107,8 +107,8 @@ Lifecycle:
 
 | Method | Description |
 |--------|-------------|
-| `shutdown()` | Start a graceful shutdown |
-| `force_shutdown()` | Shut down without draining |
+| `shutdown()` | Start a graceful shutdown. Does nothing once a shutdown has started |
+| `force_shutdown()` | Shut down without the grace period or the drain: close every connection at once. Also ends a graceful shutdown in progress |
 | `wait()` | Wait until the server has stopped |
 | `is_running()` | Whether the server is running |
 | `status()` | In-process `Status` snapshot: the health check fields in [tcp-server.md](tcp-server.md#health-check), `config_generation` and `pending_restart` from [hot-reload.md](hot-reload.md#logging-and-metrics), and the status counters behind the metrics in [telemetry.md](telemetry.md#metrics) |
@@ -210,7 +210,7 @@ Contract:
 | `macro_value(name)` | `Option<&MilterText>`: the value of a macro the MTA sent in this session, at this stage or an earlier one |
 | `connection()` | `&ConnectionInfo` of the MTA connection |
 | `negotiated()` | `&Negotiated` |
-| `shutdown()` | the server's `CancellationToken` |
+| `shutdown()` | the server's `CancellationToken`, cancelled when the shutdown grace period ends |
 
 ### MessageContext
 
@@ -280,7 +280,7 @@ The library performs these protocol duties for every handler:
 | Commands in a wrong state | Recovers like libmilter for a command that fits from `ST_HELO` (`SMFIC_HELO`, `SMFIC_MAIL`, `SMFIC_UNKNOWN`, and later stages the handler switched off): calls `abort` if a message is open, then processes the command. Ignores `SMFIC_ABORT` and `SMFIC_QUIT`. Closes the connection with a protocol error on any other command ([ADR 0001](../adr/0001-commands-in-wrong-state-recover-like-libmilter-or-close.md)) |
 | Replies | Encodes each decision as the matching `SMFIR_*` reply; sends no reply to `SMFIC_MACRO`, `SMFIC_ABORT`, `SMFIC_QUIT`, or `SMFIC_QUIT_NC` |
 | Abort | Calls `abort` and drops the message state when a message is open; ignores `SMFIC_ABORT` outside a message. A message that ends without its final reply or a decision that ends it also gets `abort`: on recovery from a wrong state, on an `SMFIC_MAIL` that starts a new message while one is open, and before `session_end` when the session ends with a message open |
-| Session end | Calls `session_end` and drops the session state on `SMFIC_QUIT` (`Quit`), on `SMFIC_QUIT_NC` (`QuitNewConnection`), on end of file between frames without `SMFIC_QUIT` (`ConnectionClosed`), before closing the connection for an error, a reset, an end of file in the middle of a frame, or a timeout (`Error`), and when shutdown closes the connection (`ServerShutdown`). A connection that closes before a session starts, or between `SMFIC_QUIT_NC` and the next session, calls no callback |
+| Session end | Calls `session_end` and drops the session state on `SMFIC_QUIT` (`Quit`), on `SMFIC_QUIT_NC` (`QuitNewConnection`), on end of file between frames without `SMFIC_QUIT` (`ConnectionClosed`), before closing the connection for an error, a reset, an end of file in the middle of a frame, or a timeout (`Error`), and when shutdown closes the connection (`ServerShutdown`). A forced shutdown closes the connection without calling `abort` or `session_end`. A connection that closes before a session starts, or between `SMFIC_QUIT_NC` and the next session, calls no callback |
 
 `SessionEnd`: `Quit`, `QuitNewConnection`, `ConnectionClosed`, `Error`, `ServerShutdown`.
 
@@ -470,6 +470,7 @@ Errors are `thiserror` enums. Every error type implements `std::error::Error`, `
 | `InvalidReply(ReplyError)` | `Reply::to_frame()` refused a reply that breaks a protocol or MTA rule | the reply is not sent |
 | `Config(ConfigError)` | Invalid configuration at build time | `build()` fails |
 | `Bind { addr, source }` | A listener could not bind | `run()` fails in `FailFast` mode |
+| `Signals(std::io::Error)` | `run()` could not register the handlers for `SIGTERM`, `SIGINT`, and `SIGQUIT` | `run()` fails |
 | `ResourceLimit(ResourceKind)` | `MaxConnections`, `MaxFds`, or `MaxMemory` reached | connection rejected or closed |
 | `ShuttingDown` | The operation is not allowed during shutdown | none |
 

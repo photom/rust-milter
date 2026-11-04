@@ -8,6 +8,8 @@ mod accept;
 mod memory;
 #[cfg(feature = "test-support")]
 mod readback;
+#[cfg(unix)]
+mod signals;
 mod socket;
 mod status;
 mod watch;
@@ -30,7 +32,7 @@ pub use watch::ConfigWatch;
 use memory::Budget;
 use status::Counters;
 
-use crate::engine::{self, Closed, Limits, Report};
+use crate::engine::{self, Closed, Limits, Report, Stop};
 use crate::{BindMode, Error, Handler, Result, ServerConfig};
 
 /// The generation of the configuration a server is built with.
@@ -116,7 +118,9 @@ impl<H: Handler, A: Send + Sync + 'static> ServerBuilder<H, A> {
         Ok(Server {
             handle: ServerHandle {
                 inner: Arc::new(Shared {
+                    stop: CancellationToken::new(),
                     shutdown,
+                    force: CancellationToken::new(),
                     stopped: CancellationToken::new(),
                     running: AtomicBool::new(false),
                     counters,
@@ -136,7 +140,10 @@ impl<H: Handler, A: Send + Sync + 'static> Server<H, A> {
         self.handle.clone()
     }
 
-    /// Binds the listeners as `bind_mode` says and serves until shutdown.
+    /// Binds the listeners as `bind_mode` says, registers the handlers for
+    /// `SIGTERM`, `SIGINT`, and `SIGQUIT` on Unix, and serves until
+    /// shutdown. Once registered, these signals no longer end the process,
+    /// even after `run()` returns.
     pub async fn run(self) -> Result<()> {
         let shared = &self.handle.inner;
         tracing::info!(
@@ -145,6 +152,10 @@ impl<H: Handler, A: Send + Sync + 'static> Server<H, A> {
             "Server starting"
         );
         let listeners = bind(&self.config, &shared.counters)?;
+        // Registered after the binds, so a failed bind leaves the signals
+        // alone, and before any listener accepts.
+        #[cfg(unix)]
+        let signals = signals::Signals::register().map_err(Error::Signals)?;
         let bound: Vec<SocketAddr> = listeners.iter().map(|(addr, _)| *addr).collect();
         shared.running.store(true, Ordering::SeqCst);
         shared.counters.set_accepting(true);
@@ -162,12 +173,14 @@ impl<H: Handler, A: Send + Sync + 'static> Server<H, A> {
             connections: TaskTracker::new(),
             next_id: AtomicU64::new(1),
         });
+        #[cfg(unix)]
+        let _signals = AbortOnDrop(tokio::spawn(signals.watch(Arc::clone(shared))));
         let accepting = TaskTracker::new();
         for (address, listener) in listeners {
             let server = Arc::clone(&server);
             accepting.spawn(async move {
-                let shutdown = server.shared.shutdown.clone();
-                accept::accept_loop(listener, address, &shutdown, |stream, peer| {
+                let stop = server.shared.stop.clone();
+                accept::accept_loop(listener, address, &stop, |stream, peer| {
                     server.connection(stream, peer, address);
                 })
                 .await;
@@ -177,12 +190,73 @@ impl<H: Handler, A: Send + Sync + 'static> Server<H, A> {
         accepting.wait().await;
         shared.counters.set_accepting(false);
         server.connections.close();
-        server.connections.wait().await;
+        drain(&self.config, shared, &server.connections).await;
 
+        let counters = &shared.counters;
+        tracing::info!(
+            uptime_s = counters.uptime().as_secs(),
+            total_connections = counters.accepted.load(Ordering::SeqCst),
+            total_bytes_read = counters.bytes_read.load(Ordering::SeqCst),
+            total_bytes_written = counters.bytes_written.load(Ordering::SeqCst),
+            "Shutdown complete"
+        );
         shared.running.store(false, Ordering::SeqCst);
         shared.stopped.cancel();
         Ok(())
     }
+}
+
+/// Aborts a task when dropped, so it ends with `run()`.
+#[cfg(unix)]
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+#[cfg(unix)]
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Steps 4 to 7 of the shutdown sequence, once the listeners are closed:
+/// the grace period, then the drain, then the forced close of what is left.
+/// A forced shutdown skips the first two.
+async fn drain<A>(config: &ServerConfig, shared: &Shared<A>, connections: &TaskTracker) {
+    let timings = &config.shutdown;
+    let force = &shared.force;
+    if !force.is_cancelled() {
+        tracing::info!(
+            grace_period_ms = millis(timings.grace_period),
+            "Shutdown grace period started"
+        );
+        // Commands on their way can still arrive; with no connection open,
+        // none can.
+        tokio::select! {
+            biased;
+            () = force.cancelled() => {}
+            () = connections.wait() => {}
+            () = tokio::time::sleep(timings.grace_period) => {}
+        }
+    }
+    shared.shutdown.cancel();
+    if !force.is_cancelled() {
+        tracing::info!(
+            active_connections = shared.counters.connections.load(Ordering::SeqCst),
+            drain_timeout_ms = millis(timings.drain_timeout),
+            "Shutdown draining started"
+        );
+        tokio::select! {
+            biased;
+            () = force.cancelled() => {}
+            () = connections.wait() => {}
+            () = tokio::time::sleep(timings.drain_timeout) => {}
+        }
+    }
+    force.cancel();
+    connections.wait().await;
+}
+
+fn millis(duration: std::time::Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
 /// Binds every address in `bind_addresses`. `FailFast` fails at the first
@@ -336,8 +410,18 @@ async fn serve<H: Handler, A>(
         timeouts: &config.timeouts,
         memory,
     };
-    let shutdown = open.shared.shutdown.clone();
-    let report = engine::run(&*handler, reader, writer, Arc::new(info), limits, shutdown).await;
+    let stop = Stop {
+        shutdown: open.shared.shutdown.clone(),
+        force: open.shared.force.clone(),
+    };
+    let report = engine::run(&*handler, reader, writer, Arc::new(info), limits, stop).await;
+    let counters = &open.shared.counters;
+    counters
+        .bytes_read
+        .fetch_add(report.bytes_read, Ordering::Relaxed);
+    counters
+        .bytes_written
+        .fetch_add(report.bytes_written, Ordering::Relaxed);
     log_close(id, peer_addr, accepted_at, &report, &config);
     drop(open);
 }
@@ -372,7 +456,7 @@ fn log_close(
             "Connection timeout"
         );
     }
-    let duration_ms = u64::try_from(accepted_at.elapsed().as_millis()).unwrap_or(u64::MAX);
+    let duration_ms = millis(accepted_at.elapsed());
     let error = report.outcome.as_ref().err().map(|e| error_chain(e));
     macro_rules! closed {
         ($level:ident) => {
@@ -423,7 +507,12 @@ impl<A> Clone for ServerHandle<A> {
 }
 
 struct Shared<A> {
+    /// Cancelled when a shutdown starts: the listeners close.
+    stop: CancellationToken,
+    /// Cancelled when the grace period ends; the handlers' token.
     shutdown: CancellationToken,
+    /// Cancelled to force-close every connection.
+    force: CancellationToken,
     stopped: CancellationToken,
     running: AtomicBool,
     counters: Counters,
@@ -432,11 +521,26 @@ struct Shared<A> {
 }
 
 impl<A> ServerHandle<A> {
-    /// Starts a shutdown: the listeners close, and each connection closes
-    /// when it waits for the MTA's next command.
+    /// Starts a graceful shutdown: the listeners close at once, and after
+    /// `shutdown.grace_period` each connection closes when it waits for the
+    /// MTA's next command. Does nothing once a shutdown has started.
     pub fn shutdown(&self) {
-        self.inner.counters.begin_shutdown();
-        self.inner.shutdown.cancel();
+        if self.inner.stop.is_cancelled() {
+            return;
+        }
+        tracing::info!(reason = "manual", force = false, "Shutdown requested");
+        self.inner.begin();
+    }
+
+    /// Shuts down without the grace period or the drain: every connection
+    /// closes at once, and the callbacks in progress are dropped. Also ends
+    /// a graceful shutdown in progress.
+    pub fn force_shutdown(&self) {
+        if self.inner.force.is_cancelled() {
+            return;
+        }
+        tracing::info!(reason = "manual", force = true, "Shutdown requested");
+        self.inner.force();
     }
 
     /// Waits until the server has stopped.
@@ -457,6 +561,20 @@ impl<A> ServerHandle<A> {
     /// A [`ConfigWatch`] for the application configuration.
     pub fn config_watch(&self) -> ConfigWatch<A> {
         self.inner.watch.clone()
+    }
+}
+
+impl<A> Shared<A> {
+    /// Starts a graceful shutdown.
+    fn begin(&self) {
+        self.counters.begin_shutdown();
+        self.stop.cancel();
+    }
+
+    /// Forces a shutdown, or turns a graceful one into a forced one.
+    fn force(&self) {
+        self.force.cancel();
+        self.begin();
     }
 }
 

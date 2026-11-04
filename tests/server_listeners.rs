@@ -15,6 +15,7 @@ use support::ports::PortLease;
 fn config(addresses: Vec<SocketAddr>) -> ServerConfig {
     ServerConfig {
         bind_addresses: addresses,
+        shutdown: support::quick_shutdown(),
         ..ServerConfig::default()
     }
 }

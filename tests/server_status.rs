@@ -81,6 +81,7 @@ async fn srv_070_status_follows_the_server() {
     let lease = PortLease::acquire().await;
     let config = ServerConfig {
         bind_addresses: vec![lease.v4()],
+        shutdown: support::quick_shutdown(),
         ..ServerConfig::default()
     };
     let server = Server::builder()
@@ -160,6 +161,7 @@ async fn srv_072_logs_the_server_start() {
     let config = ServerConfig {
         bind_addresses: vec![first.v4(), second.v4()],
         backlog: 128,
+        shutdown: support::quick_shutdown(),
         ..ServerConfig::default()
     };
     let server = Server::builder()

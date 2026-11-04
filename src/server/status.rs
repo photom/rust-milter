@@ -53,6 +53,9 @@ pub(crate) struct Counters {
     pub(crate) connections: AtomicUsize,
     pub(crate) accepted: AtomicU64,
     pub(crate) rejected: AtomicU64,
+    /// Bytes read and written by the connections that have closed.
+    pub(crate) bytes_read: AtomicU64,
+    pub(crate) bytes_written: AtomicU64,
     last_error: Mutex<Option<String>>,
     listeners: Mutex<Vec<ListenerStatus>>,
 }
@@ -73,6 +76,8 @@ impl Counters {
             connections: AtomicUsize::new(0),
             accepted: AtomicU64::new(0),
             rejected: AtomicU64::new(0),
+            bytes_read: AtomicU64::new(0),
+            bytes_written: AtomicU64::new(0),
             last_error: Mutex::new(None),
             listeners: Mutex::new(listeners),
         }
@@ -106,13 +111,18 @@ impl Counters {
         }
     }
 
+    /// Time since `run()` bound the listeners; zero before.
+    pub(crate) fn uptime(&self) -> Duration {
+        lock(&self.started).map_or(Duration::ZERO, |started| started.elapsed())
+    }
+
     pub(crate) fn snapshot(&self, config_generation: u64) -> Status {
         let listeners = lock(&self.listeners).clone();
         let shutting_down = self.shutting_down.load(Ordering::SeqCst);
         Status {
             accepting: listeners.iter().any(|l| l.accepting) && !shutting_down,
             connections: self.connections.load(Ordering::SeqCst),
-            uptime: lock(&self.started).map_or(Duration::ZERO, |started| started.elapsed()),
+            uptime: self.uptime(),
             last_error: lock(&self.last_error).clone(),
             shutting_down,
             listeners,
