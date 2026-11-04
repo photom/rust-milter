@@ -74,6 +74,8 @@ async fn load(path: PathBuf) -> Result<Reloaded<TaggerConfig>, LoadError> {
 
 The loader's error type must implement `std::error::Error` and be `Send + Sync + 'static`.
 
+Keep the loader to reading and checking. rust-milter runs its own checks after the loader returns and can still reject the reload, for example when `backlog` changed. It cannot undo anything the loader did, so the loader must not replace values that other code reads, close connections, or start work based on the new settings. Return an error to reject settings your application cannot use; the reload then fails and nothing changes.
+
 ## Register the loader
 
 Load the file once at startup, then register the same loader for reloads:
@@ -141,6 +143,22 @@ impl Handler for HeaderTagger {
 ```
 
 To read the settings once per SMTP session instead, store them in `Session` from the `connect` callback.
+
+## Act after a reload is applied
+
+If something outside the handler depends on your settings, such as a cache built from them, rebuild it from a task that waits for new settings. `changed()` completes only when a reload has been applied, never for one that failed:
+
+```rust
+let mut watch = server.handle().config_watch();
+tokio::spawn(async move {
+    loop {
+        watch.changed().await;
+        let config = watch.current();
+        // Rebuild what depends on the settings from `config`.
+        rebuild_cache(&config);
+    }
+});
+```
 
 ## Trigger a reload
 

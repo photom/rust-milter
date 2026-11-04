@@ -50,6 +50,7 @@ Scenarios for reloading the configuration: the reload coordinator, listener chan
 | RLD-030 | integration | A handler that reads `ConfigWatch` in `mail` and records the value in `end_of_message` | a reload publishes a new value between MAIL and end of message, and a second message follows | the first message records the old value, the second the new one | [hot-reload: Application configuration](../reference/hot-reload.md#application-configuration) |
 | RLD-031 | integration | A task waiting on `ConfigWatch::changed()` | a reload succeeds | the wait completes, and `current()` returns the new value with the new `generation()` | [api: Configuration and reload API](../reference/api-specification.md#configuration-and-reload-api) |
 | RLD-032 | integration | A loader that returns a valid `ServerConfig` and an application value that its own check rejects, as an error | `reload()` is called | it returns `ReloadError::Load`; both configurations stay at the current generation | [configuration: Application configuration](../reference/configuration.md#application-configuration) |
+| RLD-033 | integration | A task waiting on `ConfigWatch::changed()`, and a loader that returns a new application value with a `ServerConfig` that changes `backlog` | `reload()` is called | it returns `RestartRequired`; 100 ms later the wait has not completed, and `current()` still returns the old value | [hot-reload: Reload sequence](../reference/hot-reload.md#reload-sequence) |
 
 ## Errors and triggers
 
