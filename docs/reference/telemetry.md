@@ -119,7 +119,6 @@ Durations use the unit `s`. Every histogram sets these advisory bucket boundarie
 | `milter.config.generation` | Gauge (observable) | `{generation}` | | Current configuration generation |
 | `milter.config.reload` | Counter (observable) | `{reload}` | `milter.reload_result`, `milter.reload_source` | Reload attempts |
 | `milter.config.last_reload.time` | Gauge (observable) | `s` | | Unix time of the last applied reload |
-| `milter.config.pending_restart` | Gauge (observable) | `1` | | 1 while a changed setting waits for a restart, else 0 |
 
 ### Attribute values
 
