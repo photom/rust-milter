@@ -71,16 +71,17 @@ Responsibilities:
 sequenceDiagram
     participant Op as Operator
     participant Coord as Reload coordinator
-    participant Loader as Reload loader
+    participant Loader as Reload loader<br/>(application)
     participant Acc as Accept loop
     participant Ch as Config channel
     participant Conn as Existing connections
+    participant H as Handlers and tasks<br/>(ConfigWatch)
 
-    Op->>Coord: SIGHUP
+    Op->>Coord: SIGHUP or reload()
     Coord->>Loader: load()
-    Loader-->>Coord: ServerConfig + application config
-    Coord->>Coord: validate (startup checks + reload checks)
-    alt validation fails
+    Loader-->>Coord: ServerConfig + application config, or an error
+    Coord->>Coord: validate (startup checks + reload checks,<br/>no setting that requires a restart changed)
+    alt the loader or validation fails
         Coord-->>Op: log ERROR, keep generation N
     else validation passes
         Coord->>Acc: bind added listeners
@@ -89,7 +90,8 @@ sequenceDiagram
             Coord->>Acc: close the listeners bound by this reload
             Coord-->>Op: log ERROR, keep generation N
         else all binds succeed
-            Coord->>Ch: publish generation N+1
+            Coord->>Ch: publish generation N+1<br/>(ServerConfig and application config)
+            Ch-->>H: changed() completes; current() returns<br/>the new application config
             Coord->>Acc: stop removed listeners
             Note over Conn: keep running with the snapshot of generation N
             Note over Acc: new connections get generation N+1
@@ -99,6 +101,8 @@ sequenceDiagram
 ```
 
 New listeners are bound before the new configuration is published, and removed listeners stop only after it. A failed bind leaves the running configuration untouched.
+
+The loader runs before the server's own checks, so the server can still discard what it returns: when validation fails, when a setting that requires a restart changed, or when a bind fails in `FailFast` mode. The loader must therefore only read and check the new settings and build the value it returns. It must not act on them, for example by replacing a value that other code reads or by closing a connection pool. Work that must follow an applied reload waits on `ConfigWatch::changed()`, which completes only when a new generation is published.
 
 ## Reload coordinator states
 
@@ -156,7 +160,7 @@ An address that failed to bind in `BestEffort` mode has no listener, so the next
 
 Handlers often need their own settings. The server carries them next to `ServerConfig`, as a type chosen by the application: the application passes the first value to `ServerBuilder::app_config` and returns later values from its reload loader. The how-to guide [Reload the configuration without a restart](../how-to/reload-the-configuration.md) shows a complete loader.
 
-Handlers read the application configuration through a `ConfigWatch<A>`, a thin wrapper around `tokio::sync::watch::Receiver<Arc<A>>`. `ConfigWatch::current()` returns the current `Arc<A>` and does not block.
+Handlers read the application configuration through a `ConfigWatch<A>`, a thin wrapper around a `tokio::sync::watch` receiver. `ConfigWatch::current()` returns the current `Arc<A>` and does not block. `ConfigWatch::changed()` completes when a reload publishes a new generation; a failed reload publishes nothing, so it does not complete then.
 
 Read it once per SMTP session (in the `connect` callback) or once per message (in the `mail` callback), and keep that `Arc` in the handler's `Session` or `Message` value. A message then sees one consistent configuration, even if a reload happens halfway through it.
 
