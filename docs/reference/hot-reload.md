@@ -91,7 +91,7 @@ sequenceDiagram
             Coord-->>Op: log ERROR, keep generation N
         else all binds succeed
             Coord->>Ch: publish generation N+1<br/>(ServerConfig and application config)
-            Ch-->>H: changed() completes; current() returns<br/>the new application config
+            Ch-->>H: changed() completes, and current() returns<br/>the new application config
             Coord->>Acc: stop removed listeners
             Note over Conn: keep running with the snapshot of generation N
             Note over Acc: new connections get generation N+1
