@@ -162,12 +162,10 @@ println!("generation {}, changed {:?}", report.generation, report.changed);
 A successful reload logs the new generation and the changed settings:
 
 ```
-INFO Reload applied generation=2 changed=["max_connections"] pending_restart=[]
+INFO Reload applied generation=2 changed=["max_connections"] listeners_added=[] listeners_removed=[]
 ```
 
 Changes to your own `[tagger]` table are not listed; rust-milter does not inspect them.
-
-If `pending_restart` is not empty, the listed settings keep their running values until the next restart. Restart the milter when convenient. Which settings need a restart is listed in [configuration.md](../reference/configuration.md#settings-that-need-a-restart).
 
 ## If a reload fails
 
@@ -179,5 +177,12 @@ ERROR Reload failed generation=3 error="cannot parse the configuration file: unk
 
 Fix the file and send `SIGHUP` again. Common causes:
 - a misspelled key, rejected because unknown keys are errors
-- a value outside its range, such as `backlog = 0`
+- a value outside its range, such as `max_connections = 0`
 - a new listen address that cannot be bound, with `bind_mode = "fail_fast"`
+- a changed setting that requires a restart, such as `backlog`. The error names it:
+
+  ```
+  ERROR Reload failed generation=3 error="changing backlog requires a restart; nothing was applied"
+  ```
+
+  Restart the milter to apply the file, or set the value back and send `SIGHUP` again. The settings that require a restart are listed in [configuration.md](../reference/configuration.md#settings-that-need-a-restart).
