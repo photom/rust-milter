@@ -1,6 +1,6 @@
 # Getting started: build your first milter
 
-Status: rust-milter is not implemented yet. This tutorial follows the designed API in [api-specification.md](../reference/api-specification.md) and will work once the library is released.
+rust-milter is not on crates.io yet, so this tutorial takes it from its GitHub repository. The API it uses is specified in [api-specification.md](../reference/api-specification.md).
 
 In this tutorial you build a milter that adds the header `X-Filtered-By: rust-milter` to every message, and connect it to Postfix.
 
@@ -21,7 +21,7 @@ Add the dependencies to `Cargo.toml`:
 
 ```toml
 [dependencies]
-rust-milter = "0.1"
+rust-milter = { git = "https://github.com/photom/rust-milter" }
 tokio = { version = "1", features = ["full"] }
 tracing-subscriber = "0.3"
 ```
@@ -65,6 +65,22 @@ Every other callback keeps its default and lets the message continue.
 
 Add `main` below the handler:
 
+<!-- doctest-setup
+use rust_milter::{Handler, HandlerContext, Server, ServerConfig};
+
+struct HeaderTagger;
+
+impl HeaderTagger {
+    fn new(_ctx: &HandlerContext<()>) -> Self {
+        HeaderTagger
+    }
+}
+
+impl Handler for HeaderTagger {
+    type Session = ();
+    type Message = ();
+}
+-->
 ```rust
 #[tokio::main]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
@@ -98,7 +114,7 @@ The log shows `Listener bound address=127.0.0.1:8891`.
 
 Add these lines to `/etc/postfix/main.cf`:
 
-```
+```text
 smtpd_milters = inet:127.0.0.1:8891
 milter_protocol = 6
 milter_default_action = accept
@@ -118,7 +134,7 @@ swaks --server 127.0.0.1 --to "$USER@localhost" --from test@void.invalid
 
 Open the delivered message, for example in `/var/mail/$USER`. Its headers include:
 
-```
+```text
 X-Filtered-By: rust-milter
 ```
 
@@ -126,3 +142,4 @@ X-Filtered-By: rust-milter
 
 - [Reload the configuration without a restart](../how-to/reload-the-configuration.md) (how-to guide)
 - [Export metrics with OpenTelemetry](../how-to/export-metrics-with-opentelemetry.md) (how-to guide)
+- [Export traces with OpenTelemetry](../how-to/export-traces-with-opentelemetry.md) (how-to guide)
