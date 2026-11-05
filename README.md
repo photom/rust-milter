@@ -2,7 +2,7 @@
 
 An asynchronous Milter protocol library for Rust, built for high throughput.
 
-Status: in development. The documentation describes the designed library; the code implements part of it so far.
+Status: in development, and not yet on crates.io. The library implements the documented design. The load and chaos tests and the milter client sample are not written yet.
 
 ## Overview
 
@@ -15,7 +15,7 @@ rust-milter implements the Milter (mail filter) protocol that Sendmail and Postf
 - Async first: runs on Tokio and handles connections concurrently, designed for 10,000+ concurrent connections (C10K).
 - Graceful shutdown: drains open SMTP sessions before it stops.
 - Configuration reload on `SIGHUP`, and configuration from environment variables for Docker and Kubernetes.
-- Optional OpenTelemetry metrics.
+- Optional OpenTelemetry metrics, and `tracing` spans that export as OpenTelemetry traces.
 - Pure Rust: no C dependencies and no FFI overhead.
 - TCP only (IPv4 and IPv6); Unix domain sockets are not supported.
 
@@ -39,6 +39,7 @@ Practical steps for solving a specific problem. Use them when you have a particu
 
 - [Reload the configuration without a restart](docs/how-to/reload-the-configuration.md)
 - [Export metrics with OpenTelemetry](docs/how-to/export-metrics-with-opentelemetry.md)
+- [Export traces with OpenTelemetry](docs/how-to/export-traces-with-opentelemetry.md)
 - [Record the SMTP client's address](docs/how-to/record-the-smtp-client-address.md)
 - [Make a milter work with both Sendmail and Postfix](docs/how-to/make-a-milter-work-with-sendmail-and-postfix.md)
 - [Deploy a milter in production](docs/how-to/deploy-a-milter-in-production.md)
@@ -55,9 +56,9 @@ Accurate and complete technical specifications. Use them to look up specific det
 - [API specification](docs/reference/api-specification.md)
 - [Configuration specification](docs/reference/configuration.md)
 - [Milter client sample](docs/reference/milter-client.md) (design reference for the sample in `examples/`)
-- [Configuration hot reload](docs/reference/hot-reload.md) (design)
-- [Telemetry (OpenTelemetry)](docs/reference/telemetry.md) (design)
-- [Test environment](docs/reference/test-environment.md) (design)
+- [Configuration hot reload](docs/reference/hot-reload.md)
+- [Telemetry (OpenTelemetry)](docs/reference/telemetry.md)
+- [Test environment](docs/reference/test-environment.md)
 - API reference: run `cargo doc --open`
 
 ### [Explanation](docs/explanation/) (understanding)
@@ -72,7 +73,7 @@ Background on the concepts, design decisions, and architecture.
 
 ## Test scenarios
 
-The planned tests are listed as [test scenarios](docs/testing/), one table row per behavior, each linked to the specification rule it checks.
+The tests are listed as [test scenarios](docs/testing/), one table row per behavior, each linked to the specification rule it checks. Each scenario is written before its test.
 
 ## Architecture decisions
 

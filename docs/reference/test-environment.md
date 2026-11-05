@@ -1,6 +1,6 @@
 # Test environment specification
 
-Status: design, not implemented.
+Status: implemented.
 
 The fixed TCP ports that rust-milter's tests listen on, how tests share them, and the other rules a test environment must meet. Why the tests use these ports and leases is explained in [Test ports](../explanation/test-ports.md). How to run the tests is in [Run the tests](../how-to/run-the-tests.md); how to write a test that listens on a port is in [Write a network test](../how-to/write-a-network-test.md).
 
@@ -75,9 +75,13 @@ CI runs the tests with `--all-features`, so the tests that need the feature run 
 |------|----------|
 | Documents checked | Every Markdown file in `docs/tutorials/` and `docs/how-to/`, found automatically; a new file needs no registration |
 | Code blocks checked | Blocks marked as Rust; shell, TOML, YAML, and other blocks are not compiled |
-| Mechanism | The documents are included as doctests, so they remain the only copy of the examples |
-| Fragments | A fragment that cannot compile alone gets hidden setup lines, which do not appear in the rendered document |
-| Exceptions | A block that cannot compile at all, even with setup lines, is marked as not compiled, with the reason stated next to it |
+| Mechanism | The unpublished workspace crate `tests/docs` includes the documents as doctests, so they remain the only copy of the examples. Its build script finds the documents and prepares a copy of each for rustdoc |
+| Compiled, not run | Every Rust block is compiled and none is run, because the examples start servers and wait for signals |
+| Fragments | A fragment that cannot compile alone gets setup lines in an HTML comment right before it, which GitHub does not render. The comment starts with the line `<!-- doctest-setup` and ends with the line `-->`. The lines above a `---` line go before the block's code, and the lines below it go after |
+| Misplaced setup | A setup comment that is not followed by a Rust block, with only blank lines between, fails the check |
+| Blocks without a language | A code block without a language fails the check, because rustdoc would compile it as Rust. A block that is not code, such as log output, is marked `text` |
+| Exceptions | A block that cannot compile at all, even with setup lines, is marked `rust,ignore`, with the reason in an HTML comment right before it |
+| Features | The check compiles against rust-milter with the `otel` and `serde` features. With `--no-default-features`, the `tests/docs` crate skips the check, so that rust-milter is built without its features |
 | Failure | A block that does not compile fails the test run, and with it the CI build |
 
 ## Interoperability environment

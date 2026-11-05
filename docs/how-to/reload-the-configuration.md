@@ -1,6 +1,6 @@
 # Reload the configuration without a restart
 
-Status: rust-milter is not implemented yet. This guide follows the designed API in [api-specification.md](../reference/api-specification.md) and [hot-reload.md](../reference/hot-reload.md).
+This guide follows [api-specification.md](../reference/api-specification.md) and [hot-reload.md](../reference/hot-reload.md). rust-milter is not on crates.io yet, so the guide takes it from its GitHub repository.
 
 This guide shows how to make a rust-milter server reread its configuration file on `SIGHUP`. It assumes you already have a working milter, such as the one from [Getting started](../tutorials/getting-started.md).
 
@@ -10,9 +10,9 @@ Add the `serde` feature to rust-milter, plus the crates for your file format and
 
 ```toml
 [dependencies]
-rust-milter = { version = "0.1", features = ["serde"] }
+rust-milter = { git = "https://github.com/photom/rust-milter", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
-toml = "0.8"
+toml = "0.9"
 thiserror = "2"
 ```
 
@@ -80,6 +80,43 @@ Keep the loader to reading and checking. rust-milter runs its own checks after t
 
 Load the file once at startup, then register the same loader for reloads:
 
+<!-- doctest-setup
+use std::path::PathBuf;
+
+use rust_milter::{Handler, HandlerContext, Reloaded, Server, ServerConfig};
+
+struct TaggerConfig;
+
+#[derive(Debug, thiserror::Error)]
+#[error("cannot load the configuration")]
+struct LoadError;
+
+async fn load(_path: PathBuf) -> Result<Reloaded<TaggerConfig>, LoadError> {
+    Ok(Reloaded {
+        server: ServerConfig::default(),
+        app: TaggerConfig,
+    })
+}
+
+struct HeaderTagger;
+
+impl HeaderTagger {
+    fn new(_ctx: &HandlerContext<TaggerConfig>) -> Self {
+        HeaderTagger
+    }
+}
+
+impl Handler for HeaderTagger {
+    type Session = ();
+    type Message = ();
+}
+
+async fn start() -> Result<(), Box<dyn std::error::Error>> {
+---
+let _ = server;
+Ok(())
+}
+-->
 ```rust
 let path = PathBuf::from("milter.toml");
 let initial = load(path.clone()).await?;
@@ -96,6 +133,11 @@ let server = Server::builder()
 
 Take a `ConfigWatch` from the handler context. Read it once per message, in `mail`, and keep the value in the handler's `Message` type. The library drops the `Message` value when the message ends or is aborted.
 
+<!-- doctest-setup
+struct TaggerConfig {
+    header_value: String,
+}
+-->
 ```rust
 use std::sync::Arc;
 
@@ -148,6 +190,17 @@ To read the settings once per SMTP session instead, store them in `Session` from
 
 If something outside the handler depends on your settings, such as a cache built from them, rebuild it from a task that waits for new settings. `changed()` completes only when a reload has been applied, never for one that failed:
 
+<!-- doctest-setup
+use rust_milter::{Handler, Server};
+
+struct TaggerConfig;
+
+fn rebuild_cache(_config: &TaggerConfig) {}
+
+fn watch_changes<H: Handler>(server: &Server<H, TaggerConfig>) {
+---
+}
+-->
 ```rust
 let mut watch = server.handle().config_watch();
 tokio::spawn(async move {
@@ -170,6 +223,12 @@ kill -HUP <pid>
 
 Or reload from your own code, for example from an admin endpoint:
 
+<!-- doctest-setup
+async fn reload(server_handle: rust_milter::ServerHandle) -> Result<(), rust_milter::ReloadError> {
+---
+Ok(())
+}
+-->
 ```rust
 let report = server_handle.reload().await?;
 println!("generation {}, changed {:?}", report.generation, report.changed);
@@ -179,7 +238,7 @@ println!("generation {}, changed {:?}", report.generation, report.changed);
 
 A successful reload logs the new generation and the changed settings:
 
-```
+```text
 INFO Reload applied generation=2 changed=["max_connections"] listeners_added=[] listeners_removed=[]
 ```
 
@@ -189,7 +248,7 @@ Changes to your own `[tagger]` table are not listed; rust-milter does not inspec
 
 The milter keeps running with the previous generation and logs the reason:
 
-```
+```text
 ERROR Reload failed generation=3 error="cannot parse the configuration file: unknown field `max_conections`"
 ```
 
@@ -199,7 +258,7 @@ Fix the file and send `SIGHUP` again. Common causes:
 - a new listen address that cannot be bound, with `bind_mode = "fail_fast"`
 - a changed setting that requires a restart, such as `backlog`. The error names it:
 
-  ```
+  ```text
   ERROR Reload failed generation=3 error="changing backlog requires a restart; nothing was applied"
   ```
 
