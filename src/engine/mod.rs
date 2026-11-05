@@ -7,15 +7,19 @@
 mod io;
 mod macros;
 mod state;
+mod trace;
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::sync::CancellationToken;
+use tracing::field::Empty;
+use tracing::{Instrument, Span};
 
 pub(crate) use io::Outbound;
 pub(crate) use macros::Macros;
+pub(crate) use trace::Trace;
 
 use io::Inbound;
 use state::{State, Transitions};
@@ -70,7 +74,8 @@ pub(crate) struct Stop {
     pub(crate) force: CancellationToken,
 }
 
-/// Runs the conversation on one connection until it ends.
+/// Runs the conversation on one connection until it ends. It runs inside
+/// the connection's span, which becomes the parent of the session spans.
 pub(crate) async fn run<H, R, W>(
     handler: &H,
     reader: R,
@@ -78,6 +83,7 @@ pub(crate) async fn run<H, R, W>(
     connection: Arc<ConnectionInfo>,
     limits: Limits<'_>,
     stop: Stop,
+    trace: Trace,
 ) -> Report
 where
     H: Handler,
@@ -107,6 +113,11 @@ where
         events: Events::ALL,
         in_session: false,
         body_skipped: false,
+        connection_span: Span::current(),
+        session_span: None,
+        message_span: None,
+        command_span: Span::none(),
+        trace,
     };
     let outcome = tokio::select! {
         biased;
@@ -151,6 +162,13 @@ struct Engine<'h, H: Handler, R> {
     in_session: bool,
     /// `body` returned `Skip` for the open message.
     body_skipped: bool,
+    connection_span: Span,
+    session_span: Option<Span>,
+    message_span: Option<Span>,
+    /// The innermost span open while the current command runs, for its
+    /// `milter.command` event.
+    command_span: Span,
+    trace: Trace,
 }
 
 impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
@@ -192,7 +210,31 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
         }
     }
 
+    /// Processes one command, then records its `milter.command` event.
     async fn process(&mut self, frame: Frame) -> Result<Flow> {
+        let code = frame.command;
+        let started = std::time::Instant::now();
+        self.ctx.outbound.last_reply = None;
+        self.command_span = self.span();
+        let flow = self.handle(frame).await?;
+        if trace::traced(self.trace.commands, code) {
+            let reply = self.ctx.outbound.last_reply.unwrap_or("noreply");
+            // Entered, not only named as the parent, so that a log bridge
+            // gives the record this span's ID.
+            self.command_span.in_scope(|| {
+                tracing::debug!(
+                    milter.command = trace::command_name(code),
+                    milter.reply = reply,
+                    milter.command.duration = started.elapsed().as_secs_f64(),
+                    "milter.command"
+                );
+            });
+        }
+        self.command_span = Span::none();
+        Ok(flow)
+    }
+
+    async fn handle(&mut self, frame: Frame) -> Result<Flow> {
         let code = frame.command;
         let command = Command::from_frame(frame)?;
         let wrong_state = || ProtocolError::WrongState { command: code };
@@ -226,7 +268,7 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
             self.state = State::Helo;
         }
         if !self.in_session && !matches!(command, Command::Abort | Command::Quit) {
-            self.in_session = true;
+            self.open_session();
         }
         self.state = target;
         self.dispatch(command).await
@@ -243,8 +285,9 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
             } => {
                 let info = connect_info(hostname, family, port, address);
                 let decision = if self.events.contains(Events::CONNECT) {
+                    let span = self.span();
                     let ctx = self.session_ctx(Some(SMFIC_CONNECT));
-                    handler.connect(ctx, &info).await?
+                    handler.connect(ctx, &info).instrument(span).await?
                 } else {
                     ConnectDecision::Continue
                 };
@@ -252,8 +295,9 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
             }
             Command::Helo(name) => {
                 let decision = if self.events.contains(Events::HELO) {
+                    let span = self.span();
                     let ctx = self.session_ctx(Some(SMFIC_HELO));
-                    handler.helo(ctx, &name).await?
+                    handler.helo(ctx, &name).instrument(span).await?
                 } else {
                     ConnectDecision::Continue
                 };
@@ -263,8 +307,12 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
                 self.abort().await?;
                 self.open_message();
                 let decision = if self.events.contains(Events::MAIL) {
+                    let span = self.span();
                     let ctx = self.message_ctx(SMFIC_MAIL);
-                    handler.mail(ctx, &args[0], &args[1..]).await?
+                    handler
+                        .mail(ctx, &args[0], &args[1..])
+                        .instrument(span)
+                        .await?
                 } else {
                     Decision::Continue
                 };
@@ -272,8 +320,13 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
             }
             Command::Rcpt(args) => {
                 let decision = if self.events.contains(Events::RCPT) {
+                    self.ensure_message();
+                    let span = self.span();
                     let ctx = self.message_ctx(SMFIC_RCPT);
-                    handler.rcpt(ctx, &args[0], &args[1..]).await?
+                    handler
+                        .rcpt(ctx, &args[0], &args[1..])
+                        .instrument(span)
+                        .await?
                 } else {
                     Decision::Continue
                 };
@@ -281,7 +334,12 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
             }
             Command::Data => {
                 let decision = if self.events.contains(Events::DATA) {
-                    handler.data(self.message_ctx(SMFIC_DATA)).await?
+                    self.ensure_message();
+                    let span = self.span();
+                    handler
+                        .data(self.message_ctx(SMFIC_DATA))
+                        .instrument(span)
+                        .await?
                 } else {
                     Decision::Continue
                 };
@@ -289,8 +347,10 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
             }
             Command::Header { name, value } => {
                 let decision = if self.events.contains(Events::HEADER) {
+                    self.ensure_message();
+                    let span = self.span();
                     let ctx = self.message_ctx(SMFIC_HEADER);
-                    handler.header(ctx, &name, &value).await?
+                    handler.header(ctx, &name, &value).instrument(span).await?
                 } else {
                     Decision::Continue
                 };
@@ -298,7 +358,12 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
             }
             Command::Eoh => {
                 let decision = if self.events.contains(Events::END_OF_HEADERS) {
-                    handler.end_of_headers(self.message_ctx(SMFIC_EOH)).await?
+                    self.ensure_message();
+                    let span = self.span();
+                    handler
+                        .end_of_headers(self.message_ctx(SMFIC_EOH))
+                        .instrument(span)
+                        .await?
                 } else {
                     Decision::Continue
                 };
@@ -315,7 +380,11 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
             }
             Command::Unknown(text) => {
                 let decision = if self.events.contains(Events::UNKNOWN) {
-                    handler.unknown(self.session_ctx(None), &text).await?
+                    let span = self.span();
+                    handler
+                        .unknown(self.session_ctx(None), &text)
+                        .instrument(span)
+                        .await?
                 } else {
                     Decision::Continue
                 };
@@ -379,6 +448,13 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
             mta_protocol,
         };
         self.state = State::Opts;
+        self.connection_span
+            .record("milter.protocol.version", i64::from(version));
+        tracing::debug!(
+            parent: &self.connection_span,
+            milter.protocol.version = i64::from(version),
+            "milter.negotiated"
+        );
         Ok(())
     }
 
@@ -387,7 +463,12 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
             return Ok(BodyDecision::Continue);
         }
         let handler = self.handler;
-        handler.body(self.message_ctx(SMFIC_BODY), chunk).await
+        self.ensure_message();
+        let span = self.span();
+        handler
+            .body(self.message_ctx(SMFIC_BODY), chunk)
+            .instrument(span)
+            .await
     }
 
     async fn decide_body(&mut self, decision: BodyDecision) -> Result<()> {
@@ -422,9 +503,16 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
         }
         self.ensure_message();
         self.ctx.message.session.stage = Some(SMFIC_BODYEOB);
-        let decision = self.handler.end_of_message(&mut self.ctx).await?;
+        let span = self.span();
+        let decision = self
+            .handler
+            .end_of_message(&mut self.ctx)
+            .instrument(span)
+            .await?;
         let continues = decision == Decision::Continue;
-        self.ctx.outbound.send(&reply_for(decision)).await?;
+        let reply = reply_for(decision);
+        self.ctx.outbound.send(&reply).await?;
+        self.record_reply(trace::reply_name(&reply));
         self.close_message();
         self.state = if continues { State::Endm } else { State::Helo };
         Ok(())
@@ -438,10 +526,19 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
             Decision::Accept => true,
             _ => !matches!(origin, Origin::Rcpt | Origin::Unknown),
         };
-        self.ctx.outbound.send(&reply_for(decision)).await?;
+        let ends_session = origin == Origin::Session && decision != Decision::Continue;
+        let reply = reply_for(decision);
+        self.ctx.outbound.send(&reply).await?;
+        if ends_session {
+            if let Some(session) = &self.session_span {
+                session.record("milter.reply", trace::reply_name(&reply));
+            }
+        }
         if ends {
             if origin == Origin::Unknown {
                 self.abort().await?;
+            } else {
+                self.record_reply(trace::reply_name(&reply));
             }
             self.close_message();
             self.state = State::Helo;
@@ -455,7 +552,12 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
             return Ok(());
         }
         self.ctx.message.session.stage = None;
-        let result = self.handler.abort(&mut self.ctx.message).await;
+        let span = self.span();
+        let result = self
+            .handler
+            .abort(&mut self.ctx.message)
+            .instrument(span)
+            .await;
         self.close_message();
         result
     }
@@ -469,18 +571,47 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
         }
         let _ = self.abort().await;
         self.ctx.message.session.stage = None;
+        let span = self.span();
         let _ = self
             .handler
             .session_end(&mut self.ctx.message.session, reason)
+            .instrument(span)
             .await;
         self.ctx.message.session.reset();
         self.in_session = false;
+        self.session_span = None;
         self.state = State::QuitNc;
+    }
+
+    /// Starts a session and its span, a child of the connection span.
+    fn open_session(&mut self) {
+        self.in_session = true;
+        let id = self
+            .trace
+            .sessions
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let span = tracing::info_span!(
+            parent: &self.connection_span,
+            "milter.session",
+            milter.session.id = attribute(id),
+            milter.reply = Empty,
+        );
+        self.command_span = span.clone();
+        self.session_span = Some(span);
     }
 
     fn open_message(&mut self) {
         self.ctx.message.message = Some(H::Message::default());
         self.body_skipped = false;
+        let parent = self.span();
+        let span = tracing::info_span!(
+            parent: &parent,
+            "milter.message",
+            milter.queue_id = Empty,
+            milter.reply = Empty,
+        );
+        self.command_span = span.clone();
+        self.message_span = Some(span);
     }
 
     fn ensure_message(&mut self) {
@@ -489,9 +620,34 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
         }
     }
 
+    /// Drops the open message and ends its span, with the queue ID if the
+    /// MTA sent one.
     fn close_message(&mut self) {
         self.ctx.message.message = None;
         self.body_skipped = false;
+        if let Some(span) = self.message_span.take() {
+            let macros = &self.ctx.message.session.macros;
+            if let Some(id) = macros.get("i", Some(SMFIC_BODYEOB)) {
+                span.record("milter.queue_id", id.to_string_lossy().as_ref());
+            }
+        }
+    }
+
+    /// Sets `milter.reply` on the open message's span.
+    fn record_reply(&self, reply: &'static str) {
+        if let Some(span) = &self.message_span {
+            span.record("milter.reply", reply);
+        }
+    }
+
+    /// The innermost open span: the message's, the session's, or the
+    /// connection's.
+    fn span(&self) -> Span {
+        self.message_span
+            .as_ref()
+            .or(self.session_span.as_ref())
+            .unwrap_or(&self.connection_span)
+            .clone()
     }
 
     fn session_ctx(&mut self, stage: Option<u8>) -> &mut SessionContext<H> {
@@ -504,6 +660,12 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
         self.ctx.message.session.stage = Some(stage);
         &mut self.ctx.message
     }
+}
+
+/// A counter as a span attribute. `tracing-opentelemetry` records a `u64`
+/// as text, and an `i64` as an integer.
+pub(crate) fn attribute(count: u64) -> i64 {
+    i64::try_from(count).unwrap_or(i64::MAX)
 }
 
 /// The state a command moves to.

@@ -26,6 +26,8 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
+use tracing::Instrument;
+use tracing::field::Empty;
 
 pub(crate) use memory::Reservation;
 #[cfg(feature = "test-support")]
@@ -39,7 +41,7 @@ use memory::Budget;
 use reload::{Coordinator, Loader, Outcome, Request};
 use status::Counters;
 
-use crate::engine::{self, Closed, Limits, Report, Stop};
+use crate::engine::{self, Closed, Limits, Report, Stop, Trace};
 use crate::{BindMode, Error, Handler, ReloadError, Result, ServerConfig};
 
 /// The generation of the configuration a server is built with.
@@ -207,6 +209,7 @@ impl<H: Handler, A: Send + Sync + 'static> Server<H, A> {
             budget: Budget::new(config.resource_limits.max_memory),
             connections: TaskTracker::new(),
             next_id: AtomicU64::new(1),
+            sessions: Arc::new(AtomicU64::new(1)),
         });
         #[cfg(unix)]
         let _signals = AbortOnDrop(tokio::spawn(signals.watch(Arc::clone(shared))));
@@ -339,6 +342,8 @@ struct Accepting<H, A> {
     budget: Arc<Budget>,
     connections: TaskTracker,
     next_id: AtomicU64,
+    /// The next `milter.session.id`.
+    sessions: Arc<AtomicU64>,
 }
 
 impl<H: Handler, A: Send + Sync + 'static> Accepting<H, A> {
@@ -350,6 +355,21 @@ impl<H: Handler, A: Send + Sync + 'static> Accepting<H, A> {
         let counters = &self.shared.counters;
         counters.accepted.fetch_add(1, Ordering::Relaxed);
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let span = tracing::info_span!(
+            "milter.connection",
+            otel.kind = "server",
+            network.transport = "tcp",
+            network.type = if peer_addr.is_ipv4() { "ipv4" } else { "ipv6" },
+            network.peer.address = %peer_addr.ip(),
+            network.peer.port = i64::from(peer_addr.port()),
+            server.address = %listener.ip(),
+            server.port = i64::from(listener.port()),
+            milter.connection.id = engine::attribute(id),
+            milter.protocol.version = Empty,
+            error.type = Empty,
+            otel.status_code = Empty,
+        );
+        let entered = span.enter();
 
         let max_connections = config.max_connections;
         if counters.connections.load(Ordering::SeqCst) >= max_connections {
@@ -402,14 +422,23 @@ impl<H: Handler, A: Send + Sync + 'static> Accepting<H, A> {
             "Connection accepted"
         );
         let open = Open::new(Arc::clone(&self.shared));
-        self.connections.spawn(serve(
-            stream,
-            Arc::clone(&self.handler),
-            info,
-            config,
-            memory,
-            open,
-        ));
+        let trace = Trace {
+            sessions: Arc::clone(&self.sessions),
+            commands: config.telemetry.trace_commands,
+        };
+        drop(entered);
+        self.connections.spawn(
+            serve(
+                stream,
+                Arc::clone(&self.handler),
+                info,
+                config,
+                memory,
+                open,
+                trace,
+            )
+            .instrument(span),
+        );
     }
 }
 
@@ -441,6 +470,7 @@ async fn serve<H: Handler, A>(
     config: Arc<ServerConfig>,
     memory: Reservation,
     open: Open<A>,
+    trace: Trace,
 ) {
     let (reader, writer) = stream.into_split();
     let id = info.id;
@@ -455,7 +485,16 @@ async fn serve<H: Handler, A>(
         shutdown: open.shared.shutdown.clone(),
         force: open.shared.force.clone(),
     };
-    let report = engine::run(&*handler, reader, writer, Arc::new(info), limits, stop).await;
+    let report = engine::run(
+        &*handler,
+        reader,
+        writer,
+        Arc::new(info),
+        limits,
+        stop,
+        trace,
+    )
+    .await;
     let counters = &open.shared.counters;
     counters
         .bytes_read
@@ -463,8 +502,26 @@ async fn serve<H: Handler, A>(
     counters
         .bytes_written
         .fetch_add(report.bytes_written, Ordering::Relaxed);
-    log_close(id, peer_addr, accepted_at, &report, &config);
+    let reason = close_reason(&report.outcome);
+    if let (Err(error), "error") = (&report.outcome, reason) {
+        let span = tracing::Span::current();
+        span.record("error.type", error.variant());
+        span.record("otel.status_code", "error");
+    }
+    log_close(id, peer_addr, accepted_at, &report, reason, &config);
     drop(open);
+}
+
+/// The `milter.close_reason` of a connection's outcome.
+fn close_reason(outcome: &Result<Closed>) -> &'static str {
+    match outcome {
+        Ok(Closed::ByClient) => "client_closed",
+        Ok(Closed::ByShutdown) => "server_shutdown",
+        Err(Error::Timeout(_)) => "timeout",
+        Err(Error::ConnectionReset) => "reset",
+        Err(Error::ResourceLimit(_)) => "limit_reached",
+        Err(_) => "error",
+    }
 }
 
 /// Writes the "Connection closed" log, at WARN only for an error.
@@ -473,16 +530,9 @@ fn log_close(
     peer_addr: SocketAddr,
     accepted_at: Instant,
     report: &Report,
+    reason: &'static str,
     config: &ServerConfig,
 ) {
-    let reason = match &report.outcome {
-        Ok(Closed::ByClient) => "client_closed",
-        Ok(Closed::ByShutdown) => "server_shutdown",
-        Err(Error::Timeout(_)) => "timeout",
-        Err(Error::ConnectionReset) => "reset",
-        Err(Error::ResourceLimit(_)) => "limit_reached",
-        Err(_) => "error",
-    };
     if let Err(Error::Timeout(kind)) = &report.outcome {
         let value = match kind {
             crate::TimeoutKind::Connect => config.timeouts.connect,

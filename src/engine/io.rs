@@ -152,6 +152,8 @@ pub(crate) struct Outbound {
     timeout: Duration,
     /// Bytes sent.
     pub(crate) bytes_written: u64,
+    /// The `milter.reply` name of the last reply sent.
+    pub(crate) last_reply: Option<&'static str>,
 }
 
 impl Outbound {
@@ -161,6 +163,7 @@ impl Outbound {
             buf: BytesMut::new(),
             timeout,
             bytes_written: 0,
+            last_reply: None,
         }
     }
 
@@ -178,6 +181,7 @@ impl Outbound {
             .map_err(|_| Error::Timeout(TimeoutKind::Write))?
             .map_err(io_error)?;
         self.bytes_written += self.buf.len() as u64;
+        self.last_reply = Some(super::trace::reply_name(reply));
         Ok(())
     }
 }
