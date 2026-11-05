@@ -9,9 +9,8 @@ postconf -e \
   'mydestination =' \
   'inet_protocols = ipv4' \
   'relay_domains = void.invalid' \
-  'transport_maps = inline:{ void.invalid=smtp:[runner]:2525 }' \
-  'smtp_dns_support_level = disabled' \
-  'smtpd_milters = inet:runner:8891' \
+  'transport_maps = inline:{ void.invalid=smtp:[runner.void.invalid]:2525 }' \
+  'smtpd_milters = inet:runner.void.invalid:8891' \
   'milter_protocol = 6' \
   'milter_default_action = tempfail' \
   'maillog_file = /dev/stdout'

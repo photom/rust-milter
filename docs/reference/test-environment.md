@@ -95,6 +95,7 @@ flowchart LR
         postfix["postfix<br/>(Debian package)"]
         sendmail["sendmail<br/>(Debian package)"]
         short["sendmail-short<br/>(short milter timeouts)"]
+        dns["dns<br/>(Unbound, names in void.invalid)"]
     end
     runner -->|"SMTP"| postfix
     runner -->|"SMTP"| sendmail
@@ -102,6 +103,9 @@ flowchart LR
     postfix -->|"milter, and mail to void.invalid"| runner
     sendmail -->|"milter, and mail to void.invalid"| runner
     short -->|"milter, and mail to void.invalid"| runner
+    postfix -->|"DNS"| dns
+    sendmail -->|"DNS"| dns
+    short -->|"DNS"| dns
 ```
 
 | Service | Image | Role |
@@ -110,8 +114,21 @@ flowchart LR
 | `postfix` | The pinned Debian release with the `postfix` package | MTA under test |
 | `sendmail` | The same Debian release with the `sendmail` package | MTA under test |
 | `sendmail-short` | The `sendmail` image with the filter timeouts `T=E:3s;R:2s` | MTA for the Sendmail timeout scenario |
+| `dns` | The same Debian release with the `unbound` package | The MTAs' only DNS resolver. It answers for the names in `void.invalid` and their addresses, and answers NXDOMAIN at once for every other name, without sending a query anywhere ([testing ADR 0003](../testing/adr/0003-interop-stack-resolves-names-with-a-local-unbound.md)) |
 
-All MTA images use one Debian release, pinned by tag. Each MTA container prints its version when it starts, and CI keeps the Compose logs, so a failure can be traced to a package upgrade.
+The network has the fixed subnet `10.231.0.0/24`, and each service has a fixed address, so that `dns` can answer for each name:
+
+| Name | Address | Records in `dns` |
+|------|---------|------------------|
+| `runner.void.invalid` | 10.231.0.10 | A, PTR. `void.invalid` has the MX record `10 runner.void.invalid` |
+| `postfix.void.invalid` | 10.231.0.25 | A, PTR |
+| `sendmail.void.invalid` | 10.231.0.26 | A, PTR |
+| `sendmail-short.void.invalid` | 10.231.0.27 | A, PTR |
+| `dns.void.invalid` | 10.231.0.53 | A, PTR |
+
+Each container's host name is its name in the table. The MTAs start once `dns` passes its healthcheck. Each MTA writes `dns` as the only `nameserver` in its `/etc/resolv.conf` when it starts, and its configuration names the runner as `runner.void.invalid`, which resolves before the runner exists. The runner keeps Docker's resolver, and reaches the MTAs by their service names.
+
+The MTA and DNS images use one Debian release, pinned by tag. Each MTA container prints its version when it starts, and CI keeps the Compose logs, so a failure can be traced to a package upgrade.
 
 Postfix listens on several ports. Each port is an `smtpd` service in `master.cf` that overrides the settings in the table:
 
@@ -126,17 +143,17 @@ Settings common to both MTAs:
 
 | Setting | Value |
 |---------|-------|
-| Milter | `inet:8891@runner` for Sendmail; `inet:runner:8891` in Postfix's `smtpd_milters` |
+| Milter | `inet:8891@runner.void.invalid` for Sendmail; `inet:runner.void.invalid:8891` in Postfix's `smtpd_milters` |
 | Milter protocol | 6, except on the Postfix ports above |
 | Failure policy | tempfail: Postfix `milter_default_action = tempfail`, Sendmail filter flag `F=T` |
-| Test addresses | Only the domain `void.invalid`. Both MTAs route it to the sink on `runner` port 2525: Postfix through `transport_maps`, Sendmail through its mailertable. Sendmail accepts the unresolvable domain (`FEATURE(accept_unresolvable_domains)`), and does not look it up (`FEATURE(nocanonify)`), because the stack has no DNS outside it |
+| Test addresses | Only the domain `void.invalid`. Both MTAs route it to the sink on `runner.void.invalid` port 2525: Postfix through `transport_maps`, Sendmail through its mailertable, because an MX record cannot name a port |
 | Relaying | Both MTAs accept mail for `void.invalid` from the Compose network only |
 | Queues | Postfix's `/var/spool/postfix` and Sendmail's `/var/spool/mqueue` are Compose volumes. The runner mounts them read-only at `/mta/postfix` and `/mta/sendmail`, so a test can find a message that an MTA held or quarantined instead of delivering |
 
 Rules:
 1. The Compose network is internal. No container in it can reach the internet or the host's network, so test mail cannot leave even if an MTA routes it wrongly.
-2. Every email address in a test uses the domain `void.invalid`, which can never resolve.
-3. The `INT` tests run one at a time (`--test-threads=1`), because every MTA points at the one milter address `runner:8891`.
+2. Every email address in a test uses the domain `void.invalid`. Only the stack's `dns` service resolves it; no DNS outside the stack ever can.
+3. The `INT` tests run one at a time (`--test-threads=1`), because every MTA points at the one milter address `runner.void.invalid:8891`.
 4. Inside the stack the milter listens on the runner's network address, not on loopback. The loopback rule in [Rules for tests](#rules-for-tests) applies to `cargo test` only.
 5. The `INT` tests live in their own crate, `tests/interop`, and are `#[ignore]`d so that `cargo test` outside the stack skips them.
 6. A timeout scenario finishes in under 10 seconds, as in `cargo test`.

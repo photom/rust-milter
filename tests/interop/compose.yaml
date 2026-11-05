@@ -1,15 +1,17 @@
 # Interoperability stack: see docs/reference/test-environment.md
 # ("Interoperability environment"). Run with:
-#   docker compose -f tests/interop/compose.yaml run --build --rm --use-aliases runner
-# --use-aliases gives the run container the name "runner" in the network;
-# without it, the MTAs cannot reach the milter or the SMTP sink.
+#   docker compose -f tests/interop/compose.yaml run --build --rm runner
 name: rust-milter-interop
 
 networks:
   # Internal: no container can reach the internet or the host's network,
-  # so test mail cannot leave the stack.
+  # so test mail cannot leave the stack. The addresses are fixed, so that
+  # the DNS service can answer for each container's name.
   interop:
     internal: true
+    ipam:
+      config:
+        - subnet: 10.231.0.0/24
 
 # The MTAs' queues, mounted read-only in the runner, so that a test can find
 # a message an MTA kept instead of delivering it (INT-015).
@@ -17,12 +19,34 @@ volumes:
   postfix-spool:
   sendmail-queue:
 
+# The MTAs use the stack's DNS service as their only resolver. The runner
+# keeps Docker's resolver, which knows the service names.
+x-mta-environment: &mta-environment
+  RESOLVER: 10.231.0.53
+
 services:
+  # The MTAs start once dns answers, because Sendmail looks up the milter's
+  # address when it reads its configuration, and exits if the lookup fails.
+  dns:
+    build: ./dns
+    hostname: dns.void.invalid
+    networks:
+      interop:
+        ipv4_address: 10.231.0.53
+    healthcheck:
+      test: ["CMD", "getent", "hosts", "runner.void.invalid"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+
   runner:
     build:
       context: ../..
       dockerfile: tests/interop/runner/Dockerfile
-    networks: [interop]
+    hostname: runner.void.invalid
+    networks:
+      interop:
+        ipv4_address: 10.231.0.10
     depends_on: [postfix, sendmail, sendmail-short]
     volumes:
       - postfix-spool:/mta/postfix:ro
@@ -30,16 +54,27 @@ services:
 
   postfix:
     build: ./postfix
-    networks: [interop]
+    hostname: postfix.void.invalid
+    environment: *mta-environment
+    networks:
+      interop:
+        ipv4_address: 10.231.0.25
+    depends_on:
+      dns:
+        condition: service_healthy
     volumes:
       - postfix-spool:/var/spool/postfix
 
-  # Fully qualified host names, which /etc/hosts resolves, so that Sendmail
-  # does not ask DNS for its own name when it starts.
   sendmail:
     build: ./sendmail
     hostname: sendmail.void.invalid
-    networks: [interop]
+    environment: *mta-environment
+    networks:
+      interop:
+        ipv4_address: 10.231.0.26
+    depends_on:
+      dns:
+        condition: service_healthy
     volumes:
       - sendmail-queue:/var/spool/mqueue
 
@@ -49,4 +84,10 @@ services:
       args:
         FILTER_TIMEOUTS: "E:3s;R:2s"
     hostname: sendmail-short.void.invalid
-    networks: [interop]
+    environment: *mta-environment
+    networks:
+      interop:
+        ipv4_address: 10.231.0.27
+    depends_on:
+      dns:
+        condition: service_healthy

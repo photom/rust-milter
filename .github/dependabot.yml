@@ -13,5 +13,6 @@ updates:
       - /tests/interop/postfix
       - /tests/interop/sendmail
       - /tests/interop/runner
+      - /tests/interop/dns
     schedule:
       interval: weekly

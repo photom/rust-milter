@@ -7,4 +7,5 @@ RUN echo "postfix postfix/main_mailer_type select Internet Site" | debconf-set-s
 COPY configure.sh /usr/local/sbin/configure-postfix
 RUN sh /usr/local/sbin/configure-postfix
 EXPOSE 25 2602 2603 2604 2625 2626
-CMD ["sh", "-c", "echo \"postfix version: $(postconf -h mail_version)\" && exec postfix start-fg"]
+# The stack's Unbound, at $RESOLVER, is the only resolver (see compose.yaml).
+CMD ["sh", "-c", "echo \"nameserver $RESOLVER\" > /etc/resolv.conf && echo \"postfix version: $(postconf -h mail_version)\" && exec postfix start-fg"]

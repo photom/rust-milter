@@ -4,7 +4,7 @@
 set -eu
 mc=/etc/mail/sendmail.mc
 
-filter="S=inet:8891@runner, F=T"
+filter="S=inet:8891@runner.void.invalid, F=T"
 if [ -n "${FILTER_TIMEOUTS:-}" ]; then
   filter="$filter, T=$FILTER_TIMEOUTS"
 fi
@@ -12,22 +12,15 @@ fi
 # Listen on every interface of the container, not only on loopback.
 sed -i "s/, *Addr=127\.0\.0\.1//" "$mc"
 
-# Insert the test settings before the mailer definitions. The Compose
-# network has no DNS outside it, so every lookup of a name outside the
-# stack fails or times out. nocanonify keeps Sendmail from looking up the
-# recipient's domain, which would queue every message instead of
-# delivering it. DONT_PROBE_INTERFACES keeps it from looking up the
-# names of its interface addresses when it starts.
+# Insert the test settings before the mailer definitions.
 sed -i "/^MAILER_DEFINITIONS/i\\
 define(\`confDOMAIN_NAME', \`sendmail.void.invalid')dnl\\
 FEATURE(\`accept_unresolvable_domains')dnl\\
-FEATURE(\`nocanonify')dnl\\
-define(\`confDONT_PROBE_INTERFACES', \`True')dnl\\
 FEATURE(\`mailertable', \`hash -o /etc/mail/mailertable.db')dnl\\
 define(\`RELAY_MAILER_ARGS', \`TCP \$h 2525')dnl\\
 INPUT_MAIL_FILTER(\`rust-milter', \`$filter')dnl" "$mc"
 
-echo "void.invalid relay:[runner]" > /etc/mail/mailertable
+echo "void.invalid relay:[runner.void.invalid]" > /etc/mail/mailertable
 makemap hash /etc/mail/mailertable < /etc/mail/mailertable
 echo "void.invalid" > /etc/mail/relay-domains
 

@@ -135,7 +135,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: docker compose -f tests/interop/compose.yaml run --build --rm --use-aliases runner
+      - run: docker compose -f tests/interop/compose.yaml run --build --rm runner
       - if: always()
         run: docker compose -f tests/interop/compose.yaml logs
       - if: always()
