@@ -19,7 +19,7 @@ use tracing::{Instrument, Span};
 
 pub(crate) use io::Outbound;
 pub(crate) use macros::Macros;
-pub(crate) use trace::Trace;
+pub(crate) use trace::{Trace, Traffic};
 
 use io::Inbound;
 use state::{State, Transitions};
@@ -100,13 +100,14 @@ where
             timeouts.clone(),
             accepted_at,
             limits.memory,
+            Arc::clone(&trace.traffic),
         ),
         ctx: EomContext {
             message: MessageContext {
                 session: SessionContext::new(connection, stop.shutdown.clone()),
                 message: None,
             },
-            outbound: Outbound::new(writer, timeouts.write),
+            outbound: Outbound::new(writer, timeouts.write, Arc::clone(&trace.traffic)),
         },
         state: State::Init,
         rules: Transitions::new(),
@@ -117,6 +118,7 @@ where
         session_span: None,
         message_span: None,
         command_span: Span::none(),
+        message_started: None,
         trace,
     };
     let outcome = tokio::select! {
@@ -168,6 +170,8 @@ struct Engine<'h, H: Handler, R> {
     /// The innermost span open while the current command runs, for its
     /// `milter.command` event.
     command_span: Span,
+    /// When the open message started, for `milter.server.message.duration`.
+    message_started: Option<std::time::Instant>,
     trace: Trace,
 }
 
@@ -215,6 +219,10 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
         let code = frame.command;
         let started = std::time::Instant::now();
         self.ctx.outbound.last_reply = None;
+        self.ctx.outbound.command = trace::command_index(code);
+        if let Some(index) = self.ctx.outbound.command {
+            self.trace.traffic.command(index);
+        }
         self.command_span = self.span();
         let flow = self.handle(frame).await?;
         if trace::traced(self.trace.commands, code) {
@@ -448,6 +456,7 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
             mta_protocol,
         };
         self.state = State::Opts;
+        self.trace.traffic.negotiated(version);
         self.connection_span
             .record("milter.protocol.version", i64::from(version));
         tracing::debug!(
@@ -503,6 +512,8 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
         }
         self.ensure_message();
         self.ctx.message.session.stage = Some(SMFIC_BODYEOB);
+        #[cfg(feature = "otel")]
+        let eom_started = std::time::Instant::now();
         let span = self.span();
         let decision = self
             .handler
@@ -513,6 +524,15 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
         let reply = reply_for(decision);
         self.ctx.outbound.send(&reply).await?;
         self.record_reply(trace::reply_name(&reply));
+        #[cfg(feature = "otel")]
+        {
+            let histograms = &self.trace.histograms;
+            let name = trace::reply_name(&reply);
+            histograms.eom(eom_started.elapsed(), name);
+            if let Some(started) = self.message_started {
+                histograms.message(started.elapsed(), name);
+            }
+        }
         self.close_message();
         self.state = if continues { State::Endm } else { State::Helo };
         Ok(())
@@ -612,6 +632,7 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
         );
         self.command_span = span.clone();
         self.message_span = Some(span);
+        self.message_started = Some(std::time::Instant::now());
     }
 
     fn ensure_message(&mut self) {
@@ -625,6 +646,7 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
     fn close_message(&mut self) {
         self.ctx.message.message = None;
         self.body_skipped = false;
+        self.message_started = None;
         if let Some(span) = self.message_span.take() {
             let macros = &self.ctx.message.session.macros;
             if let Some(id) = macros.get("i", Some(SMFIC_BODYEOB)) {

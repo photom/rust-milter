@@ -63,9 +63,10 @@ impl<H: Handler, A: Send + Sync + 'static> Listeners<H, A> {
         let stop = self.server.shared.stop.child_token();
         let server = Arc::clone(&self.server);
         let token = stop.clone();
+        let counts = server.shared.counters.listener(address);
         self.tasks.spawn(async move {
             accept::accept_loop(listener, address, &token, |stream, peer| {
-                server.connection(stream, peer, address);
+                server.connection(stream, peer, address, &counts);
             })
             .await;
         });

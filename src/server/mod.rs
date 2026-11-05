@@ -7,6 +7,8 @@
 mod accept;
 mod listeners;
 mod memory;
+#[cfg(feature = "otel")]
+mod otel;
 #[cfg(feature = "test-support")]
 mod readback;
 mod reload;
@@ -30,6 +32,8 @@ use tracing::Instrument;
 use tracing::field::Empty;
 
 pub(crate) use memory::Reservation;
+#[cfg(feature = "otel")]
+pub(crate) use otel::Histograms;
 #[cfg(feature = "test-support")]
 pub use readback::SocketReadback;
 pub use reload::{ReloadReport, Reloaded};
@@ -39,7 +43,7 @@ pub use watch::ConfigWatch;
 use listeners::Listeners;
 use memory::Budget;
 use reload::{Coordinator, Loader, Outcome, Request};
-use status::Counters;
+use status::{Counters, ListenerCounts, Source};
 
 use crate::engine::{self, Closed, Limits, Report, Stop, Trace};
 use crate::{BindMode, Error, Handler, ReloadError, Result, ServerConfig};
@@ -64,6 +68,8 @@ impl Server<(), ()> {
             app: (),
             factory: Box::new(|_| ()),
             loader: None,
+            #[cfg(feature = "otel")]
+            meter_provider: None,
         }
     }
 }
@@ -78,7 +84,13 @@ pub struct ServerBuilder<H, A = ()> {
     app: A,
     factory: Factory<H, A>,
     loader: Option<Loader<A>>,
+    #[cfg(feature = "otel")]
+    meter_provider: Option<SharedMeterProvider>,
 }
+
+/// A meter provider the builder was given.
+#[cfg(feature = "otel")]
+type SharedMeterProvider = Arc<dyn opentelemetry::metrics::MeterProvider + Send + Sync>;
 
 /// The handler factory, called once in `build`.
 type Factory<H, A> = Box<dyn FnOnce(&HandlerContext<A>) -> H>;
@@ -106,6 +118,17 @@ impl<H, A> ServerBuilder<H, A> {
         }));
         self
     }
+
+    /// The OpenTelemetry meter provider for the server's metrics. Without
+    /// it, the server uses `opentelemetry::global::meter_provider()`.
+    #[cfg(feature = "otel")]
+    pub fn meter_provider<P>(mut self, provider: P) -> Self
+    where
+        P: opentelemetry::metrics::MeterProvider + Send + Sync + 'static,
+    {
+        self.meter_provider = Some(Arc::new(provider));
+        self
+    }
 }
 
 impl<A> ServerBuilder<(), A> {
@@ -118,6 +141,8 @@ impl<A> ServerBuilder<(), A> {
             app,
             factory: Box::new(|_| ()),
             loader: None,
+            #[cfg(feature = "otel")]
+            meter_provider: self.meter_provider,
         }
     }
 
@@ -132,6 +157,8 @@ impl<A> ServerBuilder<(), A> {
             app: self.app,
             factory: Box::new(factory),
             loader: self.loader,
+            #[cfg(feature = "otel")]
+            meter_provider: self.meter_provider,
         }
     }
 }
@@ -141,8 +168,15 @@ impl<H: Handler, A: Send + Sync + 'static> ServerBuilder<H, A> {
     pub fn build(self) -> Result<Server<H, A>> {
         self.config.validate()?;
         let shutdown = CancellationToken::new();
-        let counters = Counters::new(&self.config.bind_addresses);
+        let counters = Arc::new(Counters::new(&self.config.bind_addresses));
         let (watch, publisher) = ConfigWatch::new(self.config, self.app);
+        #[cfg(feature = "otel")]
+        let instruments = {
+            let provider = self
+                .meter_provider
+                .unwrap_or_else(opentelemetry::global::meter_provider);
+            otel::register(&otel::meter(&*provider), &counters, &watch)
+        };
         let context = HandlerContext {
             watch: watch.clone(),
             shutdown: shutdown.clone(),
@@ -162,6 +196,8 @@ impl<H: Handler, A: Send + Sync + 'static> ServerBuilder<H, A> {
                     publisher,
                     requests,
                     has_loader: self.loader.is_some(),
+                    #[cfg(feature = "otel")]
+                    instruments,
                 }),
             },
             handler: Arc::new(handler),
@@ -218,7 +254,13 @@ impl<H: Handler, A: Send + Sync + 'static> Server<H, A> {
         for (address, listener) in listeners {
             set.start(address, listener);
         }
-        let coordinator = Coordinator::new(self.loader, set, generation, shared.stop.clone());
+        let coordinator = Coordinator::new(
+            self.loader,
+            set,
+            generation,
+            shared.stop.clone(),
+            Arc::clone(&shared.counters),
+        );
         let coordinating = tokio::spawn(coordinator.run(self.requests));
 
         shared.stop.cancelled().await;
@@ -238,8 +280,8 @@ impl<H: Handler, A: Send + Sync + 'static> Server<H, A> {
         tracing::info!(
             uptime_s = counters.uptime().as_secs(),
             total_connections = counters.accepted.load(Ordering::SeqCst),
-            total_bytes_read = counters.bytes_read.load(Ordering::SeqCst),
-            total_bytes_written = counters.bytes_written.load(Ordering::SeqCst),
+            total_bytes_read = counters.traffic.bytes_received(),
+            total_bytes_written = counters.traffic.bytes_sent(),
             "Shutdown complete"
         );
         shared.running.store(false, Ordering::SeqCst);
@@ -346,14 +388,32 @@ struct Accepting<H, A> {
     sessions: Arc<AtomicU64>,
 }
 
+/// Records a connection's duration, with the `otel` feature.
+fn record_duration<A>(shared: &Shared<A>, accepted_at: Instant, reason: &'static str) {
+    #[cfg(feature = "otel")]
+    shared
+        .instruments
+        .histograms
+        .connection(accepted_at.elapsed(), reason);
+    #[cfg(not(feature = "otel"))]
+    let _ = (shared, accepted_at, reason);
+}
+
 impl<H: Handler, A: Send + Sync + 'static> Accepting<H, A> {
     /// Takes on an accepted connection with the current configuration, or
     /// closes it at once when a limit is reached.
-    fn connection(&self, stream: TcpStream, peer_addr: SocketAddr, listener: SocketAddr) {
+    fn connection(
+        &self,
+        stream: TcpStream,
+        peer_addr: SocketAddr,
+        listener: SocketAddr,
+        counts: &Arc<ListenerCounts>,
+    ) {
         let accepted_at = Instant::now();
         let (generation, config) = self.shared.watch.server();
         let counters = &self.shared.counters;
         counters.accepted.fetch_add(1, Ordering::Relaxed);
+        counts.accepted();
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let span = tracing::info_span!(
             "milter.connection",
@@ -372,8 +432,14 @@ impl<H: Handler, A: Send + Sync + 'static> Accepting<H, A> {
         let entered = span.enter();
 
         let max_connections = config.max_connections;
-        if counters.connections.load(Ordering::SeqCst) >= max_connections {
+        let reject = || {
             counters.rejected.fetch_add(1, Ordering::Relaxed);
+            counts.rejected();
+            counters.closed("limit_reached", None);
+            record_duration(&self.shared, accepted_at, "limit_reached");
+        };
+        if counters.connections.load(Ordering::SeqCst) >= max_connections {
+            reject();
             tracing::warn!(
                 conn_id = id,
                 remote_addr = %peer_addr,
@@ -383,7 +449,7 @@ impl<H: Handler, A: Send + Sync + 'static> Accepting<H, A> {
             return;
         }
         let Some(memory) = Reservation::new(&self.budget) else {
-            counters.rejected.fetch_add(1, Ordering::Relaxed);
+            reject();
             tracing::warn!(
                 limit_type = "max_memory",
                 current = self.budget.used(),
@@ -392,18 +458,24 @@ impl<H: Handler, A: Send + Sync + 'static> Accepting<H, A> {
             );
             return;
         };
-        let Ok(local_addr) = stream.local_addr() else {
-            return;
+        let setup_failed = |error: std::io::Error| {
+            counters.closed("error", Some(&Error::Io(error)));
+            record_duration(&self.shared, accepted_at, "error");
+        };
+        let local_addr = match stream.local_addr() {
+            Ok(local_addr) => local_addr,
+            Err(error) => return setup_failed(error),
         };
         // A connection whose options cannot be set is closed before any
         // read, as a setup error.
         if let Err(error) = socket::configure(&stream, &config.socket_options) {
             tracing::debug!(conn_id = id, error = %error, "Socket setup failed");
-            return;
+            return setup_failed(error);
         }
         #[cfg(feature = "test-support")]
-        let Ok(probe) = readback::Probe::new(&stream) else {
-            return;
+        let probe = match readback::Probe::new(&stream) {
+            Ok(probe) => probe,
+            Err(error) => return setup_failed(error),
         };
         let info = ConnectionInfo {
             id,
@@ -421,10 +493,13 @@ impl<H: Handler, A: Send + Sync + 'static> Accepting<H, A> {
             listener = %listener,
             "Connection accepted"
         );
-        let open = Open::new(Arc::clone(&self.shared));
+        let open = Open::new(Arc::clone(&self.shared), Arc::clone(counts));
         let trace = Trace {
             sessions: Arc::clone(&self.sessions),
             commands: config.telemetry.trace_commands,
+            traffic: Arc::clone(&counters.traffic),
+            #[cfg(feature = "otel")]
+            histograms: Arc::clone(&self.shared.instruments.histograms),
         };
         drop(entered);
         self.connections.spawn(
@@ -442,20 +517,24 @@ impl<H: Handler, A: Send + Sync + 'static> Accepting<H, A> {
     }
 }
 
-/// Counts a connection as open until it is dropped.
+/// Counts a connection as open, on the server and on its listener, until
+/// it is dropped.
 struct Open<A> {
     shared: Arc<Shared<A>>,
+    listener: Arc<ListenerCounts>,
 }
 
 impl<A> Open<A> {
-    fn new(shared: Arc<Shared<A>>) -> Open<A> {
+    fn new(shared: Arc<Shared<A>>, listener: Arc<ListenerCounts>) -> Open<A> {
         shared.counters.connections.fetch_add(1, Ordering::SeqCst);
-        Open { shared }
+        listener.opened();
+        Open { shared, listener }
     }
 }
 
 impl<A> Drop for Open<A> {
     fn drop(&mut self) {
+        self.listener.closed();
         self.shared
             .counters
             .connections
@@ -495,14 +574,11 @@ async fn serve<H: Handler, A>(
         trace,
     )
     .await;
-    let counters = &open.shared.counters;
-    counters
-        .bytes_read
-        .fetch_add(report.bytes_read, Ordering::Relaxed);
-    counters
-        .bytes_written
-        .fetch_add(report.bytes_written, Ordering::Relaxed);
     let reason = close_reason(&report.outcome);
+    open.shared
+        .counters
+        .closed(reason, report.outcome.as_ref().err());
+    record_duration(&open.shared, accepted_at, reason);
     if let (Err(error), "error") = (&report.outcome, reason) {
         let span = tracing::Span::current();
         span.record("error.type", error.variant());
@@ -606,12 +682,14 @@ struct Shared<A> {
     force: CancellationToken,
     stopped: CancellationToken,
     running: AtomicBool,
-    counters: Counters,
+    counters: Arc<Counters>,
     watch: ConfigWatch<A>,
     publisher: watch::Publisher<A>,
     /// The reload coordinator's requests.
     requests: mpsc::UnboundedSender<Request<A>>,
     has_loader: bool,
+    #[cfg(feature = "otel")]
+    instruments: otel::Instruments,
 }
 
 impl<A> ServerHandle<A> {
@@ -672,6 +750,11 @@ impl<A> ServerHandle<A> {
     /// reload. Called before `run()`, it waits until `run()` has bound the
     /// listeners.
     pub async fn reload(&self) -> std::result::Result<ReloadReport, ReloadError> {
+        let outcome = self.load().await;
+        self.counted(outcome)
+    }
+
+    async fn load(&self) -> Outcome {
         if self.inner.stop.is_cancelled() {
             return Err(ReloadError::ShuttingDown);
         }
@@ -687,23 +770,31 @@ impl<A> ServerHandle<A> {
         self.request(Request::Load(Some(reply)), outcome).await
     }
 
+    /// Counts the result of a reload request made through the API.
+    fn counted(&self, outcome: Outcome) -> Outcome {
+        self.inner.counters.reloaded(outcome.is_ok(), Source::Api);
+        outcome
+    }
+
     /// Applies a configuration the caller built, with the same checks as a
     /// reload through the loader.
     pub async fn reload_with_config(
         &self,
         new: Reloaded<A>,
     ) -> std::result::Result<ReloadReport, ReloadError> {
-        if self.inner.stop.is_cancelled() {
-            return Err(ReloadError::ShuttingDown);
-        }
-        tracing::info!(
-            source = "api",
-            generation = self.config_generation(),
-            "Reload requested"
-        );
-        let (reply, outcome) = oneshot::channel();
-        self.request(Request::Apply(Box::new(new), reply), outcome)
-            .await
+        let outcome = if self.inner.stop.is_cancelled() {
+            Err(ReloadError::ShuttingDown)
+        } else {
+            tracing::info!(
+                source = "api",
+                generation = self.config_generation(),
+                "Reload requested"
+            );
+            let (reply, outcome) = oneshot::channel();
+            self.request(Request::Apply(Box::new(new), reply), outcome)
+                .await
+        };
+        self.counted(outcome)
     }
 
     /// Sends a request to the coordinator and waits for its outcome. A

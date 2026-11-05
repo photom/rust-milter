@@ -6,16 +6,18 @@ Scenarios for metrics, traces, and the data rules. The trace and log scenarios n
 
 | ID | Level | Given | When | Then | Spec |
 |----|-------|-------|------|------|------|
-| TEL-001 | integration | The crate without the `otel` feature | CI lists its normal dependencies (`cargo tree -e normal`) | no `opentelemetry` crate appears | [telemetry: Requirements](../reference/telemetry.md#requirements) |
-| TEL-002 | integration | The crate with the `otel` feature | CI lists its normal dependencies | `opentelemetry` appears, and `opentelemetry_sdk` and every exporter crate do not | [telemetry: Requirements](../reference/telemetry.md#requirements) |
+| TEL-001 | integration | The crate without the `otel` feature | a test lists its normal dependencies with `cargo tree -e normal` | no `opentelemetry` crate appears | [telemetry: Requirements](../reference/telemetry.md#requirements) |
+| TEL-002 | integration | The crate with the `otel` feature | a test lists its normal dependencies | `opentelemetry` appears, and `opentelemetry_sdk` and every exporter crate do not | [telemetry: Requirements](../reference/telemetry.md#requirements) |
 | TEL-003 | integration | A server with the `otel` feature and no SDK installed | the fake MTA runs a complete session | the session succeeds, and `status()` counts the connection, commands, and replies | [telemetry: Requirements](../reference/telemetry.md#requirements) |
 | TEL-004 | integration | A meter provider passed to `ServerBuilder::meter_provider`, and a different global provider | the fake MTA runs a session | the metrics reach only the builder's provider | [telemetry: Configuration and API](../reference/telemetry.md#configuration-and-api) |
+| TEL-005 | integration | A server, with or without the `otel` feature, and one session with `MAIL`, `RCPT`, end of message, and `SMFIC_QUIT` | the session ends and `status()` is read | `commands` lists `optneg`, `connect`, `helo`, `mail`, `rcpt`, `eom`, and `quit` once each; `replies` has `optneg`/`optneg` and `continue` for the five commands that answer it; `negotiations` is `[(6, 1)]`; `connections_closed` is `[("client_closed", None, 1)]`; `bytes_received` and `bytes_sent` are more than 0; the listener's `connections_accepted` is 1 and `connections_active` 0 | [api: ServerHandle](../reference/api-specification.md#serverhandle) |
+| TEL-006 | integration | A server on A that accepted one connection, and a reload that keeps A and adds B | `status()` is read | A's `connections_accepted` is still 1, and B's is 0 | [api: ServerHandle](../reference/api-specification.md#serverhandle) |
 
 ## Metrics
 
 | ID | Level | Given | When | Then | Spec |
 |----|-------|-------|------|------|------|
-| TEL-010 | integration | A server and a fake MTA that runs sessions covering every command, every reply, a rejected connection, and a reload | metrics are collected | every metric in the tables of telemetry.md is reported, with its name, instrument type, unit, and attribute set, and no other metric is | [telemetry: Metrics](../reference/telemetry.md#metrics) |
+| TEL-010 | integration | A server with `max_connections` = 1, and a fake MTA that runs a session through every stage, opens a second connection that is rejected, ends a third with a protocol error, and reloads | metrics are collected | every metric in the tables of telemetry.md is reported, with its name, instrument type, unit, and attribute set, and no other metric is | [telemetry: Metrics](../reference/telemetry.md#metrics) |
 | TEL-011 | integration | The same run | the collected values are compared with `status()` | every counter and gauge equals the matching `status()` field | [telemetry: Metrics](../reference/telemetry.md#metrics) |
 | TEL-012 | integration | The same run | the histograms are read | each uses the bucket boundaries listed in telemetry.md, in seconds | [telemetry: Metrics](../reference/telemetry.md#metrics) |
 | TEL-013 | integration | A connection closed by the fake MTA and one closed for a protocol error | `milter.server.connection.closed` is read | the first has `milter.close_reason` = `client_closed` and no `error.type`; the second has `error` and `error.type` = `Protocol` | [telemetry: Server metrics](../reference/telemetry.md#server-metrics) |
