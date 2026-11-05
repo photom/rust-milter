@@ -34,8 +34,11 @@ services:
     volumes:
       - postfix-spool:/var/spool/postfix
 
+  # Fully qualified host names, which /etc/hosts resolves, so that Sendmail
+  # does not ask DNS for its own name when it starts.
   sendmail:
     build: ./sendmail
+    hostname: sendmail.void.invalid
     networks: [interop]
     volumes:
       - sendmail-queue:/var/spool/mqueue
@@ -45,4 +48,5 @@ services:
       context: ./sendmail
       args:
         FILTER_TIMEOUTS: "E:3s;R:2s"
+    hostname: sendmail-short.void.invalid
     networks: [interop]
