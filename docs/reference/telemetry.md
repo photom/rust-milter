@@ -1,6 +1,6 @@
 # Telemetry specification (OpenTelemetry)
 
-Status: design, not implemented.
+Status: traces implemented; metrics not implemented yet.
 
 How rust-milter reports metrics, traces, and logs through OpenTelemetry. This document is the single definition of every metric name in rust-milter; the other specifications link here.
 
@@ -125,11 +125,11 @@ Durations use the unit `s`. Every histogram sets these advisory bucket boundarie
 | Attribute | Values |
 |-----------|--------|
 | `milter.close_reason` | `client_closed`, `server_shutdown`, `timeout`, `error`, `reset`, `limit_reached` |
-| `error.type` | the variant name of the error enum, such as `ReadTimeout`, `Protocol`, `Reset` |
+| `error.type` | the variant name of `Error`, such as `Protocol`, `Handler`, or `ConnectionClosed` |
 | `network.io.direction` | `receive`, `transmit` |
 | `milter.protocol.version` | `2`, `3`, `4`, `6` |
 | `milter.command` | `optneg`, `macro`, `connect`, `helo`, `mail`, `rcpt`, `data`, `header`, `eoh`, `body`, `eom`, `abort`, `unknown`, `quit`, `quit_nc` |
-| `milter.reply` | `continue`, `accept`, `reject`, `tempfail`, `discard`, `replycode`, `skip`, `progress`, `noreply`, plus `modification` for any `SMFIR_*` modification action |
+| `milter.reply` | `optneg` for the answer to option negotiation, `continue`, `accept`, `reject`, `tempfail`, `discard`, `replycode`, `skip`, `progress`, `noreply`, plus `modification` for any `SMFIR_*` modification action |
 | `milter.reload_result` | `applied`, `failed` |
 | `milter.reload_source` | `sighup`, `api` |
 
@@ -159,10 +159,14 @@ flowchart TB
 | Span | Kind | Starts | Ends |
 |------|------|--------|------|
 | `milter.connection` | SERVER | `accept()` returns | the socket closes |
-| `milter.session` | INTERNAL | `SMFIC_CONNECT` | `SMFIC_QUIT`, `SMFIC_QUIT_NC`, or connection close |
-| `milter.message` | INTERNAL | `SMFIC_MAIL` | the final reply at end of message, `SMFIC_ABORT`, or session end |
+| `milter.session` | INTERNAL | the session starts: `SMFIC_CONNECT`, or the first command of a session the MTA starts without it | `SMFIC_QUIT`, `SMFIC_QUIT_NC`, or connection close |
+| `milter.message` | INTERNAL | the handler's `Message` value is created: `SMFIC_MAIL`, or the first command of a message without it | the `Message` value is dropped: after the final reply at end of message, after a decision that ends the message earlier, on `SMFIC_ABORT`, or at session end |
+
+When a session or message starts and ends follows the protocol engine rules in [api-specification.md](api-specification.md#protocol-engine-behavior). A session span's parent is the connection span, and a message span's parent is its session span, so a second session after `SMFIC_QUIT_NC` is never a child of the first.
 
 Span names are fixed strings. Nothing variable goes into a name.
+
+The spans are `tracing` spans at INFO level, and `otel.kind` gives their kind to `tracing-opentelemetry`. A subscriber that filters out INFO for the target `rust_milter` records none of them. Every handler callback runs inside the innermost open span, so an attribute a handler adds to the current span lands on the session or message span.
 
 ### Span attributes
 
@@ -174,16 +178,31 @@ Span names are fixed strings. Nothing variable goes into a name.
 | `server.address`, `server.port` | connection | the listener that accepted the connection |
 | `milter.connection.id` | connection | connection ID |
 | `milter.protocol.version` | connection | negotiated version |
-| `milter.session.id` | session | session ID, new for every session |
-| `milter.queue_id` | message | value of the `{i}` macro, when the MTA sends it |
-| `milter.reply` | session, message | the final decision |
-| `error.type` | any | set when the span ends with an error; the span status is then `Error` |
+| `milter.session.id` | session | a number unique within the server's lifetime, counting from 1 |
+| `milter.queue_id` | message | the value of the `{i}` macro, when the MTA sent it before the message ended |
+| `milter.reply` | session | the decision of `connect` or `helo` that ended the session early: `accept`, `reject`, `tempfail`, or `replycode`. Not set when the session ended another way |
+| `milter.reply` | message | the final reply at end of message, or the decision that ended the message earlier. Not set when the message was aborted |
+| `error.type` | connection | set when the connection closes with the close reason `error`; the value is the variant name of `Error`, such as `Protocol`, `Handler`, or `ConnectionClosed`, and the span status is then `Error` |
 
 The queue ID is the one macro value recorded.
 
+A timeout or a reset closes a connection in normal operation, with its own close reason, so it sets no `error.type` and no `Error` status (see the close reasons in [tcp-server.md](tcp-server.md#connection-lifecycle-logs)).
+
 ### Command events
 
-Each command and its reply become one span event named `milter.command`, with the attributes `milter.command`, `milter.reply`, and the command's duration. The `trace_commands` setting limits the volume:
+Each command and its reply become one span event named `milter.command`. It is a `tracing` event at DEBUG level, with these attributes:
+
+| Attribute | Value |
+|-----------|-------|
+| `milter.command` | the command, from [Attribute values](#attribute-values) |
+| `milter.reply` | the last reply sent for the command, or `noreply` for a command that gets none, such as `macro`, `abort`, and `quit` |
+| `milter.command.duration` | seconds, as a floating-point number, from the moment the whole command was read until its last reply was written |
+
+The event goes to the innermost span open while the command ran: a `mail` event to the message it starts, an `eom` or `abort` event to the message it ends, `connect`, `helo`, `unknown`, and `quit` to the session, and `optneg` and the macros before a session to the connection.
+
+After option negotiation, the connection span also gets one DEBUG event named `milter.negotiated`, with `milter.protocol.version`, whatever `trace_commands` says.
+
+The `trace_commands` setting limits the volume of `milter.command` events:
 
 | Value | Events recorded |
 |-------|-----------------|

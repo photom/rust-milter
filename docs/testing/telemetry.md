@@ -1,6 +1,6 @@
 # Test scenarios: Telemetry
 
-Scenarios for metrics, traces, and the data rules. Unless a scenario says otherwise, the test builds the server with the `otel` feature, an in-memory exporter from the OpenTelemetry SDK's test utilities, and `tracing-opentelemetry`. Conventions are in [README.md](README.md).
+Scenarios for metrics, traces, and the data rules. The trace and log scenarios need no Cargo feature: the tests send the server's `tracing` spans and events to the in-memory exporters of the OpenTelemetry SDK's test utilities, through `tracing-opentelemetry` and `opentelemetry-appender-tracing`. Unless a scenario says otherwise, the metric scenarios build the server with the `otel` feature and an in-memory metric exporter. Conventions are in [README.md](README.md).
 
 ## Feature and providers
 
@@ -35,10 +35,14 @@ Scenarios for metrics, traces, and the data rules. Unless a scenario says otherw
 | TEL-024 | integration | `trace_commands` = `none`, `envelope`, and `all`, in three runs of the same session with three headers and two body chunks | the span events are counted | `none` gives no `milter.command` events; `envelope` gives one per envelope command listed in telemetry.md; `all` adds one per header, body chunk, and macro | [telemetry: Command events](../reference/telemetry.md#command-events) |
 | TEL-025 | integration | Every span from TEL-020 | the span names are read | each is one of `milter.connection`, `milter.session`, and `milter.message` | [telemetry: Span structure](../reference/telemetry.md#span-structure) |
 | TEL-026 | integration | A handler whose `connect` adds an attribute to the current span | the spans are exported | the attribute is on the `milter.session` span | [telemetry: Data that must never be recorded](../reference/telemetry.md#data-that-must-never-be-recorded) |
+| TEL-027 | integration | One session whose `connect` rejects it, and one with three messages: accepted at end of message, rejected in `rcpt` and then accepted at end of message, and aborted | the spans are exported | the first session span has `milter.reply` = `reject`; the second has none; the message spans have `accept`, `accept`, and none | [telemetry: Span attributes](../reference/telemetry.md#span-attributes) |
+| TEL-028 | integration | `trace_commands` = `envelope`, and a session with `MAIL` and `SMFIC_ABORT` | the span events are read | the `mail` event is on the message span with `milter.reply` = `continue`; the `abort` event is on the same message span with `noreply`; the `connect` event is on the session span; each has a `milter.command.duration` of 0 or more seconds; the connection span has one `milter.negotiated` event with `milter.protocol.version` = 6 | [telemetry: Command events](../reference/telemetry.md#command-events) |
+| TEL-029 | integration | A connection that closes after its idle timeout, and one that the fake MTA resets | the spans are exported | neither connection span has `error.type` or the status `Error` | [telemetry: Span attributes](../reference/telemetry.md#span-attributes) |
 
 ## Data rules and logs
 
 | ID | Level | Given | When | Then | Spec |
 |----|-------|-------|------|------|------|
-| TEL-030 | integration | A session with marker values in the client hostname, client address, HELO name, sender, recipient, ESMTP arguments, header names and values, body, every macro, a `Reply` text, and a quarantine reason, at log level TRACE | every exported metric, span, span event, and log record is searched for the markers | none appears, except the queue ID on the message span | [telemetry: Data that must never be recorded](../reference/telemetry.md#data-that-must-never-be-recorded) |
+| TEL-030 | integration | A session with marker values in the client hostname, client address, HELO name, sender, recipient, ESMTP arguments, header names and values, body, every macro, a `Reply` text, and a quarantine reason, with `trace_commands` = `all` and no level filter | every exported span, span event, and log record is searched for the markers | none appears, except the queue ID on the message span | [telemetry: Data that must never be recorded](../reference/telemetry.md#data-that-must-never-be-recorded) |
 | TEL-031 | integration | `tracing-opentelemetry` and `opentelemetry-appender-tracing` installed together | the server logs inside a session | each log record carries the trace ID and span ID of the span it was emitted in | [telemetry: Logs](../reference/telemetry.md#logs) |
+| TEL-032 | integration | The session of TEL-030, with the `otel` feature and an in-memory metric exporter | every exported metric is searched for the markers | none appears | [telemetry: Data that must never be recorded](../reference/telemetry.md#data-that-must-never-be-recorded) |
