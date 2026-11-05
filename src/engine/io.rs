@@ -1,12 +1,14 @@
 //! Reading frames from the MTA and sending replies to it, with the
 //! connection timeouts of ADR 0006.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::BytesMut;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::time::Instant;
 
+use super::trace::Traffic;
 use crate::server::Reservation;
 use crate::{Error, Frame, Reply, ResourceKind, Result, TimeoutConfig, TimeoutKind};
 
@@ -30,6 +32,8 @@ pub(crate) struct Inbound<R> {
     idle_since: Option<Instant>,
     /// This connection's share of `max_memory`.
     memory: Reservation,
+    /// The server's counts.
+    traffic: Arc<Traffic>,
     /// Bytes received.
     pub(crate) bytes_read: u64,
     /// Frames received.
@@ -43,6 +47,7 @@ impl<R: AsyncRead + Unpin> Inbound<R> {
         timeouts: TimeoutConfig,
         accepted_at: Instant,
         memory: Reservation,
+        traffic: Arc<Traffic>,
     ) -> Self {
         Inbound {
             reader,
@@ -54,6 +59,7 @@ impl<R: AsyncRead + Unpin> Inbound<R> {
             frame_started: None,
             idle_since: None,
             memory,
+            traffic,
             bytes_read: 0,
             frames: 0,
         }
@@ -86,6 +92,7 @@ impl<R: AsyncRead + Unpin> Inbound<R> {
                 .map_err(|_| Error::Timeout(kind))?
                 .map_err(io_error)?;
             self.bytes_read += read as u64;
+            self.traffic.received(read);
             if read == 0 {
                 if self.buf.is_empty() {
                     return Ok(None);
@@ -154,16 +161,26 @@ pub(crate) struct Outbound {
     pub(crate) bytes_written: u64,
     /// The `milter.reply` name of the last reply sent.
     pub(crate) last_reply: Option<&'static str>,
+    /// The position in `COMMANDS` of the command being answered.
+    pub(crate) command: Option<usize>,
+    /// The server's counts.
+    traffic: Arc<Traffic>,
 }
 
 impl Outbound {
-    pub(crate) fn new(writer: impl AsyncWrite + Send + Unpin + 'static, timeout: Duration) -> Self {
+    pub(crate) fn new(
+        writer: impl AsyncWrite + Send + Unpin + 'static,
+        timeout: Duration,
+        traffic: Arc<Traffic>,
+    ) -> Self {
         Outbound {
             writer: Box::new(writer),
             buf: BytesMut::new(),
             timeout,
             bytes_written: 0,
             last_reply: None,
+            command: None,
+            traffic,
         }
     }
 
@@ -181,6 +198,10 @@ impl Outbound {
             .map_err(|_| Error::Timeout(TimeoutKind::Write))?
             .map_err(io_error)?;
         self.bytes_written += self.buf.len() as u64;
+        self.traffic.sent(self.buf.len());
+        if let Some(command) = self.command {
+            self.traffic.reply(command, reply);
+        }
         self.last_reply = Some(super::trace::reply_name(reply));
         Ok(())
     }
