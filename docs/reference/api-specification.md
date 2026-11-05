@@ -127,12 +127,33 @@ Lifecycle:
 | `uptime` | `Duration` | Time since `run()` bound the listeners; zero before |
 | `last_error` | `Option<String>` | The last listener error, such as a failed bind in `BestEffort` mode |
 | `shutting_down` | `bool` | A shutdown has started |
-| `listeners` | `Vec<ListenerStatus>` | One entry per address in `bind_addresses`: `address` (`SocketAddr`), `bound`, and `accepting` |
+| `listeners` | `Vec<ListenerStatus>` | One entry per address in `bind_addresses`, in their order |
 | `config_generation` | `u64` | The current configuration generation, starting at 1 |
 | `connections_accepted` | `u64` | Connections accepted since `run()` started, rejected ones included |
 | `connections_rejected` | `u64` | Connections closed at once because `max_connections` or `max_memory` was reached |
+| `bytes_received` | `u64` | Bytes read from MTA connections since `run()` started, counted as they arrive |
+| `bytes_sent` | `u64` | Bytes written to MTA connections, counted as they are written |
+| `connections_closed` | `Vec<(&'static str, Option<&'static str>, u64)>` | Closed connections by `milter.close_reason`, and for the reason `error` by `error.type` |
+| `negotiations` | `Vec<(u32, u64)>` | Completed option negotiations, by negotiated protocol version |
+| `commands` | `Vec<(&'static str, u64)>` | Commands received, by `milter.command` |
+| `replies` | `Vec<(&'static str, &'static str, u64)>` | Replies sent, by `milter.command` and `milter.reply` |
+| `reloads` | `Vec<(&'static str, &'static str, u64)>` | Reload requests, by `milter.reload_result` and `milter.reload_source` |
+| `last_reload` | `Option<SystemTime>` | When the last reload was applied; `None` before the first |
 
-The other status counters behind the metrics in [telemetry.md](telemetry.md#metrics) are added with the telemetry.
+The lists hold the counts that are not zero, with the attribute values of [telemetry.md](telemetry.md#attribute-values), in the order of its tables. Each count is the value of a metric in [telemetry.md](telemetry.md#status-counters), so `status()` gives an application without OpenTelemetry the same numbers ([ADR 0004](../adr/0004-metrics-come-from-opentelemetry-and-status.md)).
+
+`ListenerStatus`, also `#[non_exhaustive]`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `address` | `SocketAddr` | The listener's address |
+| `bound` | `bool` | The address was bound |
+| `accepting` | `bool` | The listener is accepting connections |
+| `connections_accepted` | `u64` | Connections this listener accepted, rejected ones included |
+| `connections_active` | `usize` | Open connections this listener accepted |
+| `connections_rejected` | `u64` | Connections this listener closed at once at a limit |
+
+A listener's counts continue when a reload keeps its address, and start at zero for an address the server had no listener on.
 
 ## Handler trait
 
