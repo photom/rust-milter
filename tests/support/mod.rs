@@ -26,6 +26,18 @@ pub fn quick_shutdown() -> ShutdownConfig {
     }
 }
 
+/// Waits until `condition` holds, for up to [`WAIT`].
+pub async fn wait_until(condition: impl Fn() -> bool) {
+    let deadline = std::time::Instant::now() + WAIT;
+    while !condition() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the condition in time"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
 /// A handler that implements no callbacks.
 pub struct ContinueAll;
 

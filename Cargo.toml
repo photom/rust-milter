@@ -24,6 +24,7 @@ workspace = true
 
 [dependencies]
 bytes = "1"
+opentelemetry = { version = "0.33", default-features = false, features = ["metrics"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 socket2 = { version = "0.6", features = ["all"] }
 thiserror = "2"
@@ -42,6 +43,7 @@ tracing-opentelemetry = "0.34"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
 
 [features]
+otel = ["dep:opentelemetry"]
 serde = ["dep:serde"]
 # Hidden hooks for rust-milter's own tests; not covered by semver.
 test-support = []
