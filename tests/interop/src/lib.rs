@@ -8,6 +8,7 @@
 pub mod logs;
 pub mod mail;
 pub mod milter;
+pub mod queue;
 pub mod sink;
 pub mod smtp;
 

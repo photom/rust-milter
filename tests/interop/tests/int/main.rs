@@ -6,3 +6,4 @@
 //! binary, so that the SMTP sink runs for the whole run.
 
 mod basic_flow;
+mod decisions;

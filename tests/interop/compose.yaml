@@ -11,6 +11,12 @@ networks:
   interop:
     internal: true
 
+# The MTAs' queues, mounted read-only in the runner, so that a test can find
+# a message an MTA kept instead of delivering it (INT-015).
+volumes:
+  postfix-spool:
+  sendmail-queue:
+
 services:
   runner:
     build:
@@ -18,14 +24,21 @@ services:
       dockerfile: tests/interop/runner/Dockerfile
     networks: [interop]
     depends_on: [postfix, sendmail, sendmail-short]
+    volumes:
+      - postfix-spool:/mta/postfix:ro
+      - sendmail-queue:/mta/sendmail:ro
 
   postfix:
     build: ./postfix
     networks: [interop]
+    volumes:
+      - postfix-spool:/var/spool/postfix
 
   sendmail:
     build: ./sendmail
     networks: [interop]
+    volumes:
+      - sendmail-queue:/var/spool/mqueue
 
   sendmail-short:
     build:

@@ -131,6 +131,7 @@ Settings common to both MTAs:
 | Failure policy | tempfail: Postfix `milter_default_action = tempfail`, Sendmail filter flag `F=T` |
 | Test addresses | Only the domain `void.invalid`. Both MTAs route it to the sink on `runner` port 2525: Postfix through `transport_maps`, Sendmail through its mailertable. Sendmail accepts the unresolvable domain (`FEATURE(accept_unresolvable_domains)`), and does not look it up (`FEATURE(nocanonify)`), because the stack has no DNS outside it |
 | Relaying | Both MTAs accept mail for `void.invalid` from the Compose network only |
+| Queues | Postfix's `/var/spool/postfix` and Sendmail's `/var/spool/mqueue` are Compose volumes. The runner mounts them read-only at `/mta/postfix` and `/mta/sendmail`, so a test can find a message that an MTA held or quarantined instead of delivering |
 
 Rules:
 1. The Compose network is internal. No container in it can reach the internet or the host's network, so test mail cannot leave even if an MTA routes it wrongly.
