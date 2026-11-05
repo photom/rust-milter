@@ -33,7 +33,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["r
 [dev-dependencies]
 # What the examples use.
 opentelemetry = "0.33"
-opentelemetry-otlp = { version = "0.33", features = ["grpc-tonic", "metrics", "trace"] }
+opentelemetry-otlp = { version = "0.33", default-features = false, features = ["grpc-tonic", "metrics", "trace"] }
 opentelemetry_sdk = "0.33"
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
