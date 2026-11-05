@@ -223,7 +223,7 @@ The TCP server MUST handle these signals for graceful shutdown:
 | `SIGTERM` | REQUIRED | Initiate graceful shutdown |
 | `SIGINT` | REQUIRED | Initiate graceful shutdown (Ctrl+C) |
 | `SIGQUIT` | Optional | Initiate graceful shutdown. Handling the signal replaces its default action, a core dump |
-| `SIGHUP` | Optional | Reload the configuration through the registered loader (designed in [hot-reload.md](hot-reload.md)) |
+| `SIGHUP` | Optional | Reload the configuration through the registered loader, as [hot-reload.md](hot-reload.md) specifies. Without a loader, or during shutdown, the server logs `SIGHUP ignored` at WARN and changes nothing |
 
 Signal handling rules:
 

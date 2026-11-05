@@ -252,7 +252,7 @@ rust-milter logs through `tracing`, with the fields listed in [tcp-server.md](tc
 | `telemetry.trace_commands` in `ServerConfig` | `None`, `Envelope` (default), or `All`; reloadable (see [configuration.md](configuration.md)) |
 | `ServerHandle::status()` | In-process snapshot of the status counters, available without the `otel` feature |
 
-The application installs the SDK: it builds a `MeterProvider` with an exporter, such as OTLP, and passes it to `ServerBuilder::meter_provider`. The how-to guide [Export metrics with OpenTelemetry](../how-to/export-metrics-with-opentelemetry.md) shows the steps.
+The application installs the SDK: it builds a `MeterProvider` with an exporter, such as OTLP, and passes it to `ServerBuilder::meter_provider`. The how-to guide [Export metrics with OpenTelemetry](../how-to/export-metrics-with-opentelemetry.md) shows the steps. For traces, it installs a `TracerProvider` and the `tracing-opentelemetry` layer, as [Export traces with OpenTelemetry](../how-to/export-traces-with-opentelemetry.md) shows.
 
 Standard `OTEL_*` environment variables, such as `OTEL_EXPORTER_OTLP_ENDPOINT`, are read by the SDK in the application, not by rust-milter.
 
