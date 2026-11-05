@@ -848,7 +848,7 @@ pub struct ConnectionInfo {
     pub id: u64,
     /// The MTA's address.
     pub peer_addr: SocketAddr,
-    /// When `accept()` returned.
+    /// The listener address that accepted the connection.
     pub local_addr: SocketAddr,
     /// When `accept()` returned.
     pub accepted_at: Instant,
