@@ -1,6 +1,6 @@
 # Write a network test
 
-Status: rust-milter and its test support code are not implemented yet. This guide follows [test-environment.md](../reference/test-environment.md) and [api-specification.md](../reference/api-specification.md).
+This guide follows [test-environment.md](../reference/test-environment.md) and [api-specification.md](../reference/api-specification.md).
 
 This guide shows how to write an integration test that starts a server on a leased test port, talks to it, and stops it.
 
@@ -8,7 +8,8 @@ This guide shows how to write an integration test that starts a server on a leas
 
 Integration tests share the helper `tests/support/ports.rs`. Name the test after its scenario ID from `docs/testing/`, take a lease at the start of the test, and keep it in a variable until the end:
 
-```rust
+<!-- Not compiled by the documentation check: `mod support;` loads a file from tests/, which a doctest cannot reach. -->
+```rust,ignore
 mod support;
 
 use support::ports::PortLease;
@@ -25,6 +26,15 @@ async fn eng_001_server_answers_option_negotiation() {
 
 `ContinueAll` is a test handler in `tests/support` that implements no callbacks, so the library negotiates options and answers every command with `Continue`.
 
+<!-- doctest-setup
+use rust_milter_docs::support::ContinueAll;
+use rust_milter_docs::support::ports::PortLease;
+
+async fn start(lease: PortLease) {
+---
+let _ = (handle, task, lease);
+}
+-->
 ```rust
 use rust_milter::{Server, ServerConfig};
 
@@ -45,6 +55,11 @@ let task = tokio::spawn(server.run());
 
 Connect a plain TCP stream to the leased address and exchange frames:
 
+<!-- doctest-setup
+async fn negotiate(addr: std::net::SocketAddr) {
+---
+}
+-->
 ```rust
 use bytes::BytesMut;
 use rust_milter::protocol::{SMFIC_OPTNEG, SMFI_CURR_ACTS, SMFI_CURR_PROT};
@@ -74,6 +89,17 @@ assert_eq!(reply.command, SMFIC_OPTNEG);
 
 ## 4. Stop the server before the lease ends
 
+<!-- doctest-setup
+use rust_milter_docs::support::ports::PortLease;
+
+async fn stop(
+    handle: rust_milter::ServerHandle,
+    task: tokio::task::JoinHandle<rust_milter::Result<()>>,
+    lease: PortLease,
+) {
+---
+}
+-->
 ```rust
 handle.shutdown();
 task.await.unwrap().unwrap();
@@ -86,6 +112,15 @@ The lease must outlive the server. Dropping it earlier lets another test take th
 
 Take each lease separately. A test may hold up to 3:
 
+<!-- doctest-setup
+use rust_milter::ServerConfig;
+use rust_milter_docs::support::ports::PortLease;
+
+async fn two_listeners() {
+---
+let _ = (config, first, second);
+}
+-->
 ```rust
 let first = PortLease::acquire().await;
 let second = PortLease::acquire().await;
@@ -99,6 +134,15 @@ let config = ServerConfig {
 
 Bind the leased port yourself first, then start the server on it:
 
+<!-- doctest-setup
+use rust_milter::{Server, ServerConfig};
+use rust_milter_docs::support::ContinueAll;
+use rust_milter_docs::support::ports::PortLease;
+
+async fn bind_fails() {
+---
+}
+-->
 ```rust
 let lease = PortLease::acquire().await;
 let _blocker = std::net::TcpListener::bind(lease.v4()).unwrap();
@@ -121,6 +165,14 @@ assert!(matches!(result, Err(rust_milter::Error::Bind { .. })));
 
 Ask the lease for the IPv6 address, and let the helper skip the test where IPv6 is unavailable:
 
+<!-- doctest-setup
+use rust_milter_docs::support::ports::PortLease;
+
+async fn ipv6() {
+---
+let _ = addr;
+}
+-->
 ```rust
 let lease = PortLease::acquire().await;
 let Some(addr) = lease.v6_or_skip() else { return };

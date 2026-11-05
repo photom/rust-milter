@@ -1,5 +1,6 @@
 [workspace]
-members = [".", "tests/interop"]
+members = [".", "tests/docs", "tests/interop"]
+default-members = [".", "tests/docs"]
 resolver = "3"
 
 [workspace.package]

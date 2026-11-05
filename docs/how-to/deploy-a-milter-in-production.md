@@ -1,6 +1,6 @@
 # Deploy a milter in production
 
-Status: rust-milter is not implemented yet. This guide follows [configuration.md](../reference/configuration.md) and [tcp-server.md](../reference/tcp-server.md).
+This guide follows [configuration.md](../reference/configuration.md) and [tcp-server.md](../reference/tcp-server.md).
 
 This guide shows how to run a rust-milter milter safely next to a production MTA.
 

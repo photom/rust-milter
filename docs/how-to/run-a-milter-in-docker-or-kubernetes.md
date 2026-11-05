@@ -1,6 +1,6 @@
 # Run a milter in Docker or Kubernetes
 
-Status: rust-milter is not implemented yet. This guide follows [configuration.md](../reference/configuration.md#environment-variables) and [tcp-server.md](../reference/tcp-server.md).
+This guide follows [configuration.md](../reference/configuration.md#environment-variables) and [tcp-server.md](../reference/tcp-server.md).
 
 This guide shows how to package a rust-milter milter as a container image, configure it with environment variables, and run it next to Postfix in Docker or Kubernetes.
 
@@ -8,6 +8,22 @@ This guide shows how to package a rust-milter milter as a container image, confi
 
 Build the server configuration from environment variables with the prefix `RUST_MILTER_`:
 
+<!-- doctest-setup
+use rust_milter::{Handler, HandlerContext};
+
+struct MyHandler;
+
+impl MyHandler {
+    fn new(_ctx: &HandlerContext<()>) -> Self {
+        MyHandler
+    }
+}
+
+impl Handler for MyHandler {
+    type Session = ();
+    type Message = ();
+}
+-->
 ```rust
 use rust_milter::{Server, ServerConfig};
 
@@ -80,7 +96,7 @@ services:
 
 In Postfix's `main.cf`, point at the service name:
 
-```
+```text
 smtpd_milters = inet:milter:8891
 ```
 
@@ -182,7 +198,7 @@ A NetworkPolicy takes effect only if the cluster's network plugin enforces it.
 
 In Postfix's `main.cf`, point at the Service:
 
-```
+```text
 smtpd_milters = inet:milter.mail.svc.cluster.local:8891
 ```
 
