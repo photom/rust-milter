@@ -1,6 +1,6 @@
 # Telemetry specification (OpenTelemetry)
 
-Status: traces implemented; metrics not implemented yet.
+Status: implemented.
 
 How rust-milter reports metrics, traces, and logs through OpenTelemetry. This document is the single definition of every metric name in rust-milter; the other specifications link here.
 
@@ -100,7 +100,7 @@ Durations use the unit `s`. Every histogram sets these advisory bucket boundarie
 |------|------------|------|------------|-------------|
 | `milter.server.connection.accepted` | Counter (observable) | `{connection}` | `server.address`, `server.port` | Connections accepted, per listener |
 | `milter.server.connection.active` | UpDownCounter (observable) | `{connection}` | `server.address`, `server.port` | Open connections, per listener |
-| `milter.server.connection.rejected` | Counter (observable) | `{connection}` | `server.address`, `server.port` | Connections closed at once because `max_connections` was reached |
+| `milter.server.connection.rejected` | Counter (observable) | `{connection}` | `server.address`, `server.port` | Connections closed at once because `max_connections` or `max_memory` was reached |
 | `milter.server.connection.closed` | Counter (observable) | `{connection}` | `milter.close_reason`, `error.type` | Connections closed, by reason; `error.type` only when the reason is `error` |
 | `milter.server.connection.duration` | Histogram | `s` | `milter.close_reason` | Time from `accept()` to close |
 | `milter.server.io` | Counter (observable) | `By` | `network.io.direction` | Bytes received (`receive`) and sent (`transmit`) |
@@ -118,7 +118,32 @@ Durations use the unit `s`. Every histogram sets these advisory bucket boundarie
 |------|------------|------|------------|-------------|
 | `milter.config.generation` | Gauge (observable) | `{generation}` | | Current configuration generation |
 | `milter.config.reload` | Counter (observable) | `{reload}` | `milter.reload_result`, `milter.reload_source` | Reload attempts |
-| `milter.config.last_reload.time` | Gauge (observable) | `s` | | Unix time of the last applied reload |
+| `milter.config.last_reload.time` | Gauge (observable) | `s` | | Unix time of the last applied reload; not reported before the first |
+
+### Status counters
+
+Every counter and gauge reads the same value that `ServerHandle::status()` reports ([api-specification.md](api-specification.md#serverhandle)). Histograms have no `status()` field.
+
+| Metric | `status()` field |
+|--------|------------------|
+| `milter.server.connection.accepted` | `listeners[].connections_accepted` |
+| `milter.server.connection.active` | `listeners[].connections_active` |
+| `milter.server.connection.rejected` | `listeners[].connections_rejected` |
+| `milter.server.connection.closed` | `connections_closed` |
+| `milter.server.io` | `bytes_received` (`receive`) and `bytes_sent` (`transmit`) |
+| `milter.server.negotiation` | `negotiations` |
+| `milter.server.command` | `commands` |
+| `milter.server.reply` | `replies` |
+| `milter.config.generation` | `config_generation` |
+| `milter.config.reload` | `reloads` |
+| `milter.config.last_reload.time` | `last_reload` |
+
+What each one counts:
+- Bytes are counted as they are read and written, so an open connection adds to `milter.server.io` before it closes.
+- A connection closed at once at `max_connections` or `max_memory` counts as rejected, and as closed with the reason `limit_reached`. Its `milter.server.connection.duration` is recorded too.
+- A command is counted once it is read in full and its command code is known. `macro`, `abort`, `quit`, and `quit_nc` get no reply, so they appear in `milter.server.command` only.
+- `milter.server.message.duration` and `milter.server.eom.duration` record the messages that reach their final reply at end of message.
+- Each reload request counts once, when it returns its result: a call to `reload()` or `reload_with_config()` with the source `api`, a `SIGHUP` that reaches the reload coordinator with the source `sighup`. Requests folded into one reload each count, with the shared result. A `SIGHUP` that is ignored counts as nothing.
 
 ### Attribute values
 
@@ -127,7 +152,7 @@ Durations use the unit `s`. Every histogram sets these advisory bucket boundarie
 | `milter.close_reason` | `client_closed`, `server_shutdown`, `timeout`, `error`, `reset`, `limit_reached` |
 | `error.type` | the variant name of `Error`, such as `Protocol`, `Handler`, or `ConnectionClosed` |
 | `network.io.direction` | `receive`, `transmit` |
-| `milter.protocol.version` | `2`, `3`, `4`, `6` |
+| `milter.protocol.version` | the negotiated version, `2` to `6` |
 | `milter.command` | `optneg`, `macro`, `connect`, `helo`, `mail`, `rcpt`, `data`, `header`, `eoh`, `body`, `eom`, `abort`, `unknown`, `quit`, `quit_nc` |
 | `milter.reply` | `optneg` for the answer to option negotiation, `continue`, `accept`, `reject`, `tempfail`, `discard`, `replycode`, `skip`, `progress`, `noreply`, plus `modification` for any `SMFIR_*` modification action |
 | `milter.reload_result` | `applied`, `failed` |

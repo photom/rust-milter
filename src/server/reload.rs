@@ -5,10 +5,12 @@
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::sync::Arc;
 
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
+use super::status::{Counters, Source};
 use crate::{ReloadError, ServerConfig};
 
 /// A new server configuration and application configuration, returned by a
@@ -70,6 +72,8 @@ pub(super) struct Coordinator<A, T> {
     target: T,
     generation: u64,
     stop: CancellationToken,
+    /// Where `SIGHUP` requests and applied reloads are counted.
+    counters: Arc<Counters>,
 }
 
 impl<A: Send + 'static, T: Target<A>> Coordinator<A, T> {
@@ -78,12 +82,14 @@ impl<A: Send + 'static, T: Target<A>> Coordinator<A, T> {
         target: T,
         generation: u64,
         stop: CancellationToken,
+        counters: Arc<Counters>,
     ) -> Coordinator<A, T> {
         Coordinator {
             loader,
             target,
             generation,
             stop,
+            counters,
         }
     }
 
@@ -122,6 +128,10 @@ impl<A: Send + 'static, T: Target<A>> Coordinator<A, T> {
                 tracing::debug!(pending_requests = loads.len(), "Reload coalesced");
             }
             let outcome = self.load().await;
+            // `reload()` counts its own requests; `SIGHUP` waits for none.
+            for _ in loads.iter().filter(|reply| reply.is_none()) {
+                self.counters.reloaded(outcome.is_ok(), Source::Sighup);
+            }
             answer(loads, outcome);
         }
     }
@@ -154,6 +164,7 @@ impl<A: Send + 'static, T: Target<A>> Coordinator<A, T> {
         match self.target.apply(next, new).await {
             Ok(report) => {
                 self.generation = next;
+                self.counters.applied_now();
                 tracing::info!(
                     generation = report.generation,
                     changed = ?report.changed,
@@ -325,7 +336,8 @@ mod tests {
     fn start(loader: Option<Loader<()>>, target: Recording) -> Running {
         let (requests, receiver) = mpsc::unbounded_channel();
         let stop = CancellationToken::new();
-        let coordinator = Coordinator::new(loader, target, 1, stop.clone());
+        let counters = Arc::new(Counters::new(&[]));
+        let coordinator = Coordinator::new(loader, target, 1, stop.clone(), counters);
         let task = tokio::spawn(coordinator.run(receiver));
         Running {
             requests,
