@@ -14,7 +14,7 @@
 - [ ] `cargo clippy --workspace --all-targets --all-features -- -D warnings`
 - [ ] `cargo test --workspace`
 - [ ] `cargo deny --all-features check`
-- [ ] Interoperability tests (`docker compose -f tests/interop/compose.yaml run --build --rm runner`)
+- [ ] Interoperability tests (`docker compose -f tests/interop/compose.yaml run --build --rm --use-aliases runner`)
 
 ## Checklist
 

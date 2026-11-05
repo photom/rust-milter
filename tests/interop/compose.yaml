@@ -1,6 +1,8 @@
 # Interoperability stack: see docs/reference/test-environment.md
 # ("Interoperability environment"). Run with:
-#   docker compose -f tests/interop/compose.yaml run --build --rm runner
+#   docker compose -f tests/interop/compose.yaml run --build --rm --use-aliases runner
+# --use-aliases gives the run container the name "runner" in the network;
+# without it, the MTAs cannot reach the milter or the SMTP sink.
 name: rust-milter-interop
 
 networks:

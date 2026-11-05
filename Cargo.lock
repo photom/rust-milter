@@ -651,6 +651,9 @@ name = "rust-milter-interop"
 version = "0.0.0"
 dependencies = [
  "rust-milter",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
