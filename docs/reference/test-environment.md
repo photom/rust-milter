@@ -129,7 +129,7 @@ Settings common to both MTAs:
 | Milter | `inet:8891@runner` for Sendmail; `inet:runner:8891` in Postfix's `smtpd_milters` |
 | Milter protocol | 6, except on the Postfix ports above |
 | Failure policy | tempfail: Postfix `milter_default_action = tempfail`, Sendmail filter flag `F=T` |
-| Test addresses | Only the domain `void.invalid`. Both MTAs route it to the sink on `runner` port 2525: Postfix through `transport_maps`, Sendmail through its mailertable. Sendmail accepts the unresolvable domain (`FEATURE(accept_unresolvable_domains)`) |
+| Test addresses | Only the domain `void.invalid`. Both MTAs route it to the sink on `runner` port 2525: Postfix through `transport_maps`, Sendmail through its mailertable. Sendmail accepts the unresolvable domain (`FEATURE(accept_unresolvable_domains)`), and does not look it up (`FEATURE(nocanonify)`), because the stack has no DNS outside it |
 | Relaying | Both MTAs accept mail for `void.invalid` from the Compose network only |
 
 Rules:
