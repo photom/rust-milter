@@ -1,0 +1,63 @@
+# The Rust files that are not converted to the procedural style of ADR 0008
+# yet. The style check reports no closures or Fn bounds in them, and its
+# Clippy run reports none of the disallowed methods of clippy.toml.
+#
+# A converted file comes off the list in the same change. The list only
+# shrinks: new files follow the style from the start, and the check fails
+# on a listed file that has nothing left to convert.
+# One path per line, from the repository root, in sorted order.
+
+src/config/address.rs
+src/config/env.rs
+src/config/file_format.rs
+src/config/mod.rs
+src/config/reload.rs
+src/config/text.rs
+src/config/validate.rs
+src/engine/io.rs
+src/engine/macros.rs
+src/engine/mod.rs
+src/engine/state.rs
+src/engine/trace.rs
+src/handler/context.rs
+src/handler/flags.rs
+src/message/command.rs
+src/message/reply.rs
+src/message/reply_code.rs
+src/message/text.rs
+src/server/accept.rs
+src/server/listeners.rs
+src/server/memory.rs
+src/server/mod.rs
+src/server/otel.rs
+src/server/reload.rs
+src/server/status.rs
+tests/configuration.rs
+tests/configuration_env.rs
+tests/configuration_file.rs
+tests/configuration_process_env.rs
+tests/docs/build.rs
+tests/docs/src/setup.rs
+tests/engine_callbacks.rs
+tests/engine_isolation.rs
+tests/engine_macros.rs
+tests/engine_negotiation.rs
+tests/engine_reset.rs
+tests/engine_state.rs
+tests/frame.rs
+tests/interop/src/sink.rs
+tests/message.rs
+tests/metrics.rs
+tests/metrics_global.rs
+tests/reload.rs
+tests/server_limits.rs
+tests/server_sockets.rs
+tests/server_status.rs
+tests/server_timeouts.rs
+tests/shutdown.rs
+tests/shutdown_signals.rs
+tests/support/logs.rs
+tests/support/mod.rs
+tests/support/mta.rs
+tests/support/ports.rs
+tests/telemetry.rs
