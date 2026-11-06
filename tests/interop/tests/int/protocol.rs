@@ -1,4 +1,4 @@
-//! Protocol details: INT-030 to INT-035.
+//! Protocol details: INT-030 to INT-036. INT-033 and INT-034 are withdrawn.
 
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -242,57 +242,6 @@ impl Handler for RecordsLongHeader {
     }
 }
 
-#[tokio::test]
-#[ignore = "runs in the interoperability stack"]
-async fn int_033_a_large_buffer_passes_a_100_kb_header_whole() {
-    let handler = RecordsLongHeader::default();
-    let seen = Arc::clone(&handler.0);
-    let mut config = Milter::config();
-    config.resource_limits.per_connection_buffer = 256 * 1024;
-    let milter = Milter::start_with(config, handler).await;
-    let (folded, unfolded) = long_header(100_000);
-    let mail = Mail::new().header("X-Long", folded);
-
-    let sent = Smtp::send_one(Mta::Postfix, &mail).await;
-
-    assert!(sent.accepted(), "{sent:?}");
-    sink::wait_for(&mail.token).await;
-    milter.wait_closed(1).await;
-    milter.stop().await;
-    let seen = seen.lock().unwrap().clone();
-    assert_eq!(seen.len(), 1, "one X-Long header");
-    let received = without_line_breaks(&seen[0]);
-    assert!(
-        received == unfolded.as_bytes(),
-        "the header differs: {} bytes received, {} expected",
-        received.len(),
-        unfolded.len()
-    );
-}
-
-#[tokio::test]
-#[ignore = "runs in the interoperability stack"]
-async fn int_034_a_header_larger_than_the_buffer_closes_the_connection() {
-    let logs = Logs::capture();
-    let milter = Milter::start(RecordsLongHeader::default()).await;
-    let (folded, _) = long_header(200_000);
-    let mail = Mail::new().header("X-Long", folded);
-
-    let sent = Smtp::send_one(Mta::Postfix, &mail).await;
-
-    let Some(reply) = &sent.data else {
-        panic!("DATA was not sent: {sent:?}");
-    };
-    assert_eq!(reply.code / 100, 4, "{sent:?}");
-    milter.wait_closed(1).await;
-    let closed = logs.named("Connection closed");
-    milter.stop().await;
-    assert_eq!(closed.len(), 1, "{closed:?}");
-    assert_eq!(closed[0].field("reason"), Some("error"), "{closed:?}");
-    let error = closed[0].field("error").unwrap_or_default();
-    assert!(error.contains("exceeds the 131072-byte limit"), "{error}");
-}
-
 /// An `X-Raw` header value as the handler saw it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RawHeader {
@@ -349,4 +298,44 @@ async fn int_035_a_header_that_is_not_utf8_arrives_as_raw_bytes() {
         };
         assert_eq!(seen, [expected], "{mta}");
     }
+}
+
+/// The most bytes of one header Postfix sends to a milter
+/// (`KLUDGE_HEADER_LIMIT` in Postfix's `cleanup_message.c`).
+const POSTFIX_HEADER_CUT: usize = 60_000;
+
+#[tokio::test]
+#[ignore = "runs in the interoperability stack"]
+async fn int_036_postfix_cuts_a_long_header_to_60000_bytes() {
+    let handler = RecordsLongHeader::default();
+    let seen = Arc::clone(&handler.0);
+    let milter = Milter::start(handler).await;
+    let (folded, unfolded) = long_header(100_000);
+    let mail = Mail::new().header("X-Long", folded);
+
+    let sent = Smtp::send_one(Mta::Postfix, &mail).await;
+
+    assert!(sent.accepted(), "{sent:?}");
+    sink::wait_for(&mail.token).await;
+    milter.wait_closed(1).await;
+    milter.stop().await;
+    let seen = seen.lock().unwrap().clone();
+    assert_eq!(seen.len(), 1, "one X-Long header");
+    let value = &seen[0];
+    assert!(
+        value.len() <= POSTFIX_HEADER_CUT,
+        "{} bytes, more than the cut",
+        value.len()
+    );
+    let received = without_line_breaks(value);
+    assert!(
+        received.len() < unfolded.len(),
+        "the header was cut: {} of {} bytes",
+        received.len(),
+        unfolded.len()
+    );
+    assert!(
+        unfolded.as_bytes().starts_with(&received),
+        "the handler received the start of the header"
+    );
 }

@@ -45,3 +45,4 @@ Each file groups its scenarios into tables with these columns:
 4. A case found during implementation is added here first, with a new ID, then tested.
 5. When a specification changes, the scenarios that link to it are updated in the same change.
 6. A scenario whose expected result depends on an open decision is marked "open" in its Then column and links to the question.
+7. A scenario that turns out to be impossible is withdrawn, not deleted: it keeps its row and ID, its Then column starts with "Withdrawn:" and gives the reason, and it has no test.
