@@ -12,6 +12,7 @@
 
 mod basic_flow;
 mod decisions;
+mod lifecycle;
 mod modifications;
 mod protocol;
 mod timeouts;
