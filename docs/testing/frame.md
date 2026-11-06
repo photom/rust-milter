@@ -22,7 +22,7 @@ Scenarios for parsing and encoding Milter protocol frames. Conventions are in [R
 | FRM-021 | unit | A maximum of 65,540 bytes and a frame with 65,535 data bytes (65,540-byte packet) | the frame is parsed | the frame is returned | [configuration: ResourceLimitsConfig](../reference/configuration.md#resourcelimitsconfig) |
 | FRM-022 | unit | A maximum of 65,540 bytes and a frame with 65,536 data bytes | the buffer is checked | `FrameTooLarge` is returned | [configuration: ResourceLimitsConfig](../reference/configuration.md#resourcelimitsconfig) |
 | FRM-023 | unit | The default maximum and a body chunk of 65,535 bytes, the largest either MTA sends | the frame is parsed | the frame is returned | [protocol: Headers and body](../reference/milter-protocol.md#headers-and-body) |
-| FRM-024 | unit | The default maximum and a header frame of 100,000 data bytes, as Postfix can send for a long header | the frame is parsed | the frame is returned | [protocol: Message format](../reference/milter-protocol.md#message-format) |
+| FRM-024 | unit | The default maximum and a header frame of 100,000 data bytes | the frame is parsed | the frame is returned | [protocol: Message format](../reference/milter-protocol.md#message-format) |
 
 ## Encoding
 

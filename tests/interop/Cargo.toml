@@ -13,3 +13,6 @@ workspace = true
 
 [dependencies]
 rust-milter = { path = "../.." }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "sync", "time"] }
+tracing = { version = "0.1", default-features = false, features = ["std"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
