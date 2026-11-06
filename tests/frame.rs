@@ -170,7 +170,7 @@ fn frm_023_accepts_the_largest_body_chunk_at_the_default_maximum() {
 }
 
 #[test]
-fn frm_024_accepts_a_long_postfix_header_at_the_default_maximum() {
+fn frm_024_accepts_a_100_kb_header_frame_at_the_default_maximum() {
     let mut buf = BytesMut::from(&raw_frame_of_size(b'L', 100_000)[..]);
 
     let frame = Frame::parse(&mut buf, DEFAULT_MAX).unwrap().unwrap();
