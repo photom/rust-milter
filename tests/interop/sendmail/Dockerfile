@@ -11,5 +11,6 @@ EXPOSE 25
 # The stack's Unbound, at $RESOLVER, is the only resolver (see compose.yaml).
 # Sendmail logs through syslog; busybox syslogd writes the log to its stdout
 # (-O -). It runs in the foreground (-n), in the background of the shell, so
-# that its stdout stays the container's.
-CMD ["sh", "-c", "echo \"nameserver $RESOLVER\" > /etc/resolv.conf && { syslogd -n -O - & } && sendmail -d0.1 -bt < /dev/null | head -n 1 && exec sendmail -bD -q30m"]
+# that its stdout stays the container's. The logger line checks that syslogd
+# works at all, because Sendmail's log has not appeared so far.
+CMD ["sh", "-c", "echo \"nameserver $RESOLVER\" > /etc/resolv.conf && { syslogd -n -O - & } && sleep 1 && { logger -p mail.info 'syslog check: syslogd is running' || true; } && sendmail -d0.1 -bt < /dev/null | head -n 1 && exec sendmail -bD -q30m"]

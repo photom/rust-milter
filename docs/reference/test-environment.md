@@ -148,6 +148,7 @@ Settings common to both MTAs:
 | Failure policy | tempfail: Postfix `milter_default_action = tempfail`, Sendmail filter flag `F=T` |
 | Test addresses | Only the domain `void.invalid`. Both MTAs route it to the sink on `runner.void.invalid` port 2525: Postfix through `transport_maps`, Sendmail through its mailertable, because an MX record cannot name a port |
 | Relaying | Both MTAs accept mail for `void.invalid` from the Compose network only |
+| Client limits | Sendmail's access database sets `ClientRate`, `ClientConn`, and `GreetPause` to 0 for `10.231.0`, as Debian does for localhost. Debian's defaults for other clients, 10 connections per 10 minutes, would refuse the tests' sessions |
 | Queues | Postfix's `/var/spool/postfix` and Sendmail's `/var/spool/mqueue` are Compose volumes. The runner mounts them read-only at `/mta/postfix` and `/mta/sendmail`, so a test can find a message that an MTA held or quarantined instead of delivering |
 
 Rules:
