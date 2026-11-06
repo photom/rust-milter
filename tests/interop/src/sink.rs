@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 
-use crate::WAIT;
+use crate::{WAIT, text};
 
 /// The port both MTAs deliver to.
 pub const PORT: u16 = 2525;
@@ -36,19 +36,22 @@ impl Delivered {
     /// removed, so a value is one line with its original spacing.
     pub fn headers(&self) -> Vec<(String, Vec<u8>)> {
         let mut fields: Vec<(String, Vec<u8>)> = Vec::new();
-        for line in self.header_section().split(|&b| b == b'\n') {
+        for line in text::lines(self.header_section()) {
             let line = line.strip_suffix(b"\r").unwrap_or(line);
-            if line.first().is_some_and(|b| *b == b' ' || *b == b'\t') {
+            let folded = matches!(line.first(), Some(b' ' | b'\t'));
+            if folded {
                 if let Some((_, value)) = fields.last_mut() {
                     value.extend_from_slice(line);
                 }
-            } else if let Some(colon) = line.iter().position(|&b| b == b':') {
-                let name = String::from_utf8_lossy(&line[..colon]).into_owned();
-                let value = line[colon + 1..]
-                    .strip_prefix(b" ")
-                    .unwrap_or(&line[colon + 1..]);
-                fields.push((name, value.to_vec()));
+                continue;
             }
+            let Some(colon) = text::find_byte(line, b':') else {
+                continue;
+            };
+            let name = String::from_utf8_lossy(&line[..colon]).into_owned();
+            let after_colon = &line[colon + 1..];
+            let value = after_colon.strip_prefix(b" ").unwrap_or(after_colon);
+            fields.push((name, value.to_vec()));
         }
         fields
     }
@@ -56,37 +59,39 @@ impl Delivered {
     /// The values of the header fields named `name`, in order, compared
     /// without case.
     pub fn header_values(&self, name: &str) -> Vec<Vec<u8>> {
-        self.headers()
-            .into_iter()
-            .filter(|(n, _)| n.eq_ignore_ascii_case(name))
-            .map(|(_, v)| v)
-            .collect()
+        let mut values = Vec::new();
+        for (field_name, value) in self.headers() {
+            if field_name.eq_ignore_ascii_case(name) {
+                values.push(value);
+            }
+        }
+        values
     }
 
     /// The first value of the header field `name`, as text.
     pub fn header(&self, name: &str) -> Option<String> {
-        self.header_values(name)
-            .first()
-            .map(|v| String::from_utf8_lossy(v).into_owned())
+        let values = self.header_values(name);
+        let first = values.first()?;
+        Some(String::from_utf8_lossy(first).into_owned())
     }
 
     /// The body, after the empty line that ends the headers.
     pub fn body(&self) -> &[u8] {
-        match find(&self.data, b"\r\n\r\n") {
+        match text::find(&self.data, b"\r\n\r\n") {
             Some(at) => &self.data[at + 4..],
             None => &[],
         }
     }
 
     fn header_section(&self) -> &[u8] {
-        match find(&self.data, b"\r\n\r\n") {
+        match text::find(&self.data, b"\r\n\r\n") {
             Some(at) => &self.data[..at],
             None => &self.data,
         }
     }
 
     fn holds(&self, token: &str) -> bool {
-        find(&self.data, token.as_bytes()).is_some()
+        text::contains(&self.data, token.as_bytes())
     }
 }
 
@@ -110,13 +115,14 @@ pub fn start() {
 
 /// Every copy of the message with `token` received so far.
 pub fn received(token: &str) -> Vec<Delivered> {
-    DELIVERED
-        .lock()
-        .unwrap()
-        .iter()
-        .filter(|d| d.holds(token))
-        .cloned()
-        .collect()
+    let delivered = DELIVERED.lock().unwrap();
+    let mut copies = Vec::new();
+    for copy in delivered.iter() {
+        if copy.holds(token) {
+            copies.push(copy.clone());
+        }
+    }
+    copies
 }
 
 /// Waits for the first copy of the message with `token`.
@@ -234,18 +240,14 @@ async fn read_data(read: &mut BufReader<tokio::net::tcp::OwnedReadHalf>) -> io::
 /// The address in a MAIL or RCPT argument, such as `<a@void.invalid> SIZE=10`.
 fn path(argument: &str) -> String {
     let argument = argument.trim_start();
-    match argument.strip_prefix('<') {
-        Some(rest) => rest.split('>').next().unwrap_or_default().to_owned(),
-        None => argument
-            .split_whitespace()
-            .next()
-            .unwrap_or_default()
-            .to_owned(),
+    if let Some(rest) = argument.strip_prefix('<') {
+        return match rest.find('>') {
+            Some(end) => rest[..end].to_owned(),
+            None => rest.to_owned(),
+        };
     }
-}
-
-fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .position(|window| window == needle)
+    match argument.find(' ') {
+        Some(end) => argument[..end].to_owned(),
+        None => argument.to_owned(),
+    }
 }

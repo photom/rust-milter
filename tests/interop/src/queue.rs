@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use crate::WAIT;
+use crate::{WAIT, text};
 
 /// Where the runner mounts Postfix's `/var/spool/postfix`.
 pub const POSTFIX_SPOOL: &str = "/mta/postfix";
@@ -17,57 +17,79 @@ pub const SENDMAIL_QUEUE: &str = "/mta/sendmail";
 /// its queue file.
 pub async fn wait_for_postfix_hold(token: &str) -> PathBuf {
     let hold = Path::new(POSTFIX_SPOOL).join("hold");
-    wait_for_file(token, |path| path.starts_with(&hold)).await
+    let deadline = Instant::now() + WAIT;
+    loop {
+        if let Some(file) = find_queue_file(&hold, "", token) {
+            return file;
+        }
+        pause_until(deadline, token).await;
+    }
 }
 
 /// Waits for the message with `token` in Sendmail's queue as a quarantined
 /// queue file (`hf...`), and returns the quarantine reason from its `q`
 /// line.
 pub async fn wait_for_sendmail_quarantine(token: &str) -> String {
-    let file = wait_for_file(token, |path| {
-        path.starts_with(SENDMAIL_QUEUE)
-            && path
-                .file_name()
-                .is_some_and(|name| name.to_string_lossy().starts_with("hf"))
-    })
-    .await;
-    let content = fs::read(&file).expect("the quarantined queue file is readable");
-    content
-        .split(|&b| b == b'\n')
-        .find_map(|line| line.strip_prefix(b"q"))
-        .map(|reason| String::from_utf8_lossy(reason).into_owned())
-        .unwrap_or_else(|| panic!("{} has a q line", file.display()))
+    let deadline = Instant::now() + WAIT;
+    let file = loop {
+        if let Some(file) = find_queue_file(Path::new(SENDMAIL_QUEUE), "hf", token) {
+            break file;
+        }
+        pause_until(deadline, token).await;
+    };
+    let content = match fs::read(&file) {
+        Ok(content) => content,
+        Err(error) => panic!("reading {} failed: {error}", file.display()),
+    };
+    for line in text::lines(&content) {
+        if let Some(reason) = line.strip_prefix(b"q") {
+            return String::from_utf8_lossy(reason).into_owned();
+        }
+    }
+    panic!("{} has no q line", file.display());
 }
 
-async fn wait_for_file(token: &str, wanted: impl Fn(&Path) -> bool) -> PathBuf {
-    let deadline = Instant::now() + WAIT;
-    loop {
-        let mut files = Vec::new();
-        walk(Path::new(POSTFIX_SPOOL), &mut files);
-        walk(Path::new(SENDMAIL_QUEUE), &mut files);
-        let found = files.into_iter().find(|path| {
-            wanted(path)
-                && fs::read(path).is_ok_and(|content| {
-                    content
-                        .windows(token.len())
-                        .any(|window| window == token.as_bytes())
-                })
-        });
-        if let Some(path) = found {
-            return path;
+/// The first regular file under `dir` whose name starts with `prefix` and
+/// whose content holds `token`.
+fn find_queue_file(dir: &Path, prefix: &str, token: &str) -> Option<PathBuf> {
+    let mut files = Vec::new();
+    walk(dir, &mut files);
+    for path in files {
+        let named = match path.file_name() {
+            Some(name) => name.to_string_lossy().starts_with(prefix),
+            None => false,
+        };
+        if !named {
+            continue;
         }
-        assert!(Instant::now() < deadline, "message {token} queued in time");
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        // A file the MTA removes while the test looks is skipped.
+        let Ok(content) = fs::read(&path) else {
+            continue;
+        };
+        if text::contains(&content, token.as_bytes()) {
+            return Some(path);
+        }
     }
+    None
+}
+
+/// Sleeps briefly before the next look at the queue, or fails the test if
+/// `deadline` has passed.
+async fn pause_until(deadline: Instant, token: &str) {
+    assert!(Instant::now() < deadline, "message {token} queued in time");
+    tokio::time::sleep(Duration::from_millis(200)).await;
 }
 
 /// Collects the regular files under `dir`. A directory that cannot be read,
-/// such as a file removed while walking, is skipped.
+/// such as one removed while walking, is skipped.
 fn walk(dir: &Path, files: &mut Vec<PathBuf>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
-    for entry in entries.flatten() {
+    for entry in entries {
+        let Ok(entry) = entry else {
+            continue;
+        };
         let path = entry.path();
         match entry.file_type() {
             Ok(kind) if kind.is_dir() => walk(&path, files),

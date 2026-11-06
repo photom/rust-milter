@@ -8,7 +8,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 
-use crate::{Mail, Mta, STARTUP, WAIT};
+use crate::{Mail, Mta, STARTUP, WAIT, text};
 
 /// An SMTP reply.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,7 +48,10 @@ pub struct Sent {
 impl Sent {
     /// The MTA accepted the message with 250.
     pub fn accepted(&self) -> bool {
-        self.data.as_ref().is_some_and(|reply| reply.code == 250)
+        match &self.data {
+            Some(reply) => reply.code == 250,
+            None => false,
+        }
     }
 }
 
@@ -136,7 +139,13 @@ impl Smtp {
         for recipient in &mail.to {
             rcpts.push(self.command(&format!("RCPT TO:<{recipient}>")).await);
         }
-        let data = if rcpts.iter().any(Reply::is_positive) {
+        let mut any_accepted = false;
+        for reply in &rcpts {
+            if reply.is_positive() {
+                any_accepted = true;
+            }
+        }
+        let data = if any_accepted {
             Some(self.data(&mail.content()).await)
         } else {
             None
@@ -155,7 +164,7 @@ impl Smtp {
             return reply;
         }
         let mut stuffed = Vec::with_capacity(content.len() + 5);
-        for line in content.split_inclusive(|&b| b == b'\n') {
+        for line in text::lines_with_ends(content) {
             if line.starts_with(b".") {
                 stuffed.push(b'.');
             }
@@ -177,10 +186,13 @@ impl Smtp {
 
     async fn write_all(&mut self, bytes: &[u8]) {
         let mta = self.mta;
-        tokio::time::timeout(WAIT, self.write.write_all(bytes))
-            .await
-            .unwrap_or_else(|_| panic!("{mta} reads the command in time"))
-            .unwrap_or_else(|error| panic!("writing to {mta} failed: {error}"));
+        let written = match tokio::time::timeout(WAIT, self.write.write_all(bytes)).await {
+            Ok(written) => written,
+            Err(_) => panic!("{mta} did not read the command in time"),
+        };
+        if let Err(error) = written {
+            panic!("writing to {mta} failed: {error}");
+        }
     }
 
     async fn read_reply(&mut self) -> Reply {
@@ -188,22 +200,27 @@ impl Smtp {
         let mut lines = Vec::new();
         loop {
             let mut line = Vec::new();
-            let read = tokio::time::timeout(WAIT, self.read.read_until(b'\n', &mut line))
-                .await
-                .unwrap_or_else(|_| panic!("{mta} replies in time; lines so far: {lines:?}"))
-                .unwrap_or_else(|error| panic!("reading from {mta} failed: {error}"));
+            let read =
+                match tokio::time::timeout(WAIT, self.read.read_until(b'\n', &mut line)).await {
+                    Ok(Ok(read)) => read,
+                    Ok(Err(error)) => panic!("reading from {mta} failed: {error}"),
+                    Err(_) => panic!("{mta} did not reply in time; lines so far: {lines:?}"),
+                };
             assert!(
                 read > 0,
                 "{mta} closed the connection; lines so far: {lines:?}"
             );
-            let text = String::from_utf8_lossy(&line).trim_end().to_owned();
-            println!("smtp {mta} < {text}");
-            let code = text
-                .get(..3)
-                .and_then(|code| code.parse().ok())
-                .unwrap_or_else(|| panic!("{mta} sent a reply code: {text:?}"));
-            let last = text.as_bytes().get(3) != Some(&b'-');
-            lines.push(text);
+            let reply_line = String::from_utf8_lossy(&line).trim_end().to_owned();
+            println!("smtp {mta} < {reply_line}");
+            let code: u16 = match reply_line.get(..3) {
+                Some(digits) => match digits.parse() {
+                    Ok(code) => code,
+                    Err(_) => panic!("{mta} sent no reply code: {reply_line:?}"),
+                },
+                None => panic!("{mta} sent no reply code: {reply_line:?}"),
+            };
+            let last = reply_line.as_bytes().get(3) != Some(&b'-');
+            lines.push(reply_line);
             if last {
                 return Reply { code, lines };
             }

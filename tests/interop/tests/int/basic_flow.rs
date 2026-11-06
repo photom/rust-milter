@@ -218,6 +218,8 @@ async fn int_004_two_messages_in_one_session_share_the_connection() {
         let seen = seen.lock().unwrap().clone();
         assert_eq!(seen.len(), 2, "{mta}: {seen:?}");
         assert_eq!(seen[0].0, seen[1].0, "{mta}: one connection: {seen:?}");
-        assert!(seen.iter().all(|&(_, fresh)| fresh), "{mta}: {seen:?}");
+        for (_, fresh) in &seen {
+            assert!(*fresh, "{mta}: {seen:?}");
+        }
     }
 }

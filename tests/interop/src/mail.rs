@@ -42,7 +42,10 @@ impl Mail {
 
     /// Replaces the envelope recipients.
     pub fn to(mut self, recipients: &[&str]) -> Mail {
-        self.to = recipients.iter().map(|&r| r.to_owned()).collect();
+        self.to = Vec::new();
+        for recipient in recipients {
+            self.to.push((*recipient).to_owned());
+        }
         self
     }
 

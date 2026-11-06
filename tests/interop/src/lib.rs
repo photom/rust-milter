@@ -11,6 +11,7 @@ pub mod milter;
 pub mod queue;
 pub mod sink;
 pub mod smtp;
+mod text;
 
 use std::fmt;
 use std::time::Duration;

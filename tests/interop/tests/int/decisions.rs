@@ -149,10 +149,13 @@ async fn int_013_postfix_closes_the_connection_after_a_connect_reject() {
     replies.push(smtp.command("MAIL FROM:<sender@void.invalid>").await);
     smtp.quit().await;
 
-    assert!(
-        replies.iter().any(|reply| reply.code / 100 == 5),
-        "{replies:?}"
-    );
+    let mut rejected = false;
+    for reply in &replies {
+        if reply.code / 100 == 5 {
+            rejected = true;
+        }
+    }
+    assert!(rejected, "{replies:?}");
     milter.wait_closed(1).await;
     let logged = logs.at_least(Level::INFO);
     milter.stop().await;

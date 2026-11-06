@@ -31,7 +31,10 @@ pub struct Captured {
 impl Captured {
     /// A field's value.
     pub fn field(&self, name: &str) -> Option<&str> {
-        self.fields.get(name).map(String::as_str)
+        match self.fields.get(name) {
+            Some(value) => Some(value.as_str()),
+            None => None,
+        }
     }
 }
 
@@ -59,10 +62,13 @@ impl Logs {
 
     /// The events with this message.
     pub fn named(&self, message: &str) -> Vec<Captured> {
-        self.all()
-            .into_iter()
-            .filter(|e| e.message == message)
-            .collect()
+        let mut named = Vec::new();
+        for event in self.all() {
+            if event.message == message {
+                named.push(event);
+            }
+        }
+        named
     }
 
     /// The WARN and ERROR events.
@@ -72,11 +78,14 @@ impl Logs {
 
     /// The events at `level` or more severe.
     pub fn at_least(&self, level: Level) -> Vec<Captured> {
-        // In `tracing`, a more severe level compares as smaller.
-        self.all()
-            .into_iter()
-            .filter(|e| e.level <= level)
-            .collect()
+        let mut severe = Vec::new();
+        for event in self.all() {
+            // In `tracing`, a more severe level compares as smaller.
+            if event.level <= level {
+                severe.push(event);
+            }
+        }
+        severe
     }
 }
 
