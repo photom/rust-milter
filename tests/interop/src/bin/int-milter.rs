@@ -1,10 +1,9 @@
 //! A milter that runs as a child process of the server lifecycle scenarios
 //! (INT-050, INT-051), so that the test can send it real signals.
 //!
-//! It listens on port 8891 like [`Milter`](rust_milter_interop::Milter),
-//! continues at every stage, and has a reload loader that returns the same
-//! configuration, so that `SIGHUP` reloads it. It exits with code 0 when
-//! `run` returns `Ok`.
+//! It listens on port 8891 like [`Milter`], continues at every stage, and
+//! has a reload loader that returns the same configuration, so that `SIGHUP`
+//! reloads it. It exits with code 0 when `run` returns `Ok`.
 
 use std::process::ExitCode;
 
