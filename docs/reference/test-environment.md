@@ -139,6 +139,8 @@ Postfix listens on several ports. Each port is an `smtpd` service in `master.cf`
 | 2625 | `milter_content_timeout = 2s` | INT-040 |
 | 2626 | `smtpd_peername_lookup = no`, so the client's hostname arrives as `[<address>]` | INT-031 |
 
+On every port, Postfix's `header_size_limit` is 262,144 bytes instead of its default 102,400. Postfix cuts a longer header, so with the default, the 200,000-byte header of INT-034 would never reach the milter whole.
+
 Settings common to both MTAs:
 
 | Setting | Value |

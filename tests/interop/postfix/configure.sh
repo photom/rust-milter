@@ -3,6 +3,8 @@
 # void.invalid is relayed to the SMTP sink in the runner.
 set -eu
 
+# header_size_limit is above its default of 102400, which would cut the
+# 200,000-byte header of INT-034 before it reaches the milter.
 postconf -e \
   'compatibility_level = 3.6' \
   'myhostname = postfix.void.invalid' \
@@ -13,6 +15,7 @@ postconf -e \
   'smtpd_milters = inet:runner.void.invalid:8891' \
   'milter_protocol = 6' \
   'milter_default_action = tempfail' \
+  'header_size_limit = 262144' \
   'maillog_file = /dev/stdout'
 
 # Run every service outside the chroot, so name lookups use the
