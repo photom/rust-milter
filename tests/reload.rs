@@ -1079,6 +1079,10 @@ mod sockets {
                 }
                 Step::At(state) => mta.reach(state).await,
             }
+            // The client's connect can finish before the server accepts the
+            // connection. Wait until the server holds it, so that it was
+            // accepted with the configuration from before the reload.
+            open_connections(&server.handle, 1).await;
             let before = handler.seen().len();
 
             server.handle.reload().await.unwrap();
