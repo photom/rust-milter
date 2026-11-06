@@ -31,6 +31,23 @@ The Rust examples in the tutorials and how-to guides compile as doctests. Run on
 cargo test --doc
 ```
 
+## Run the style check
+
+The style check reports closures and `Fn` bounds outside the exceptions of [ADR 0008](../adr/0008-rust-code-is-written-in-a-procedural-style.md):
+
+```sh
+cargo test -p rust-milter-style
+```
+
+A plain `cargo clippy` does not report the disallowed methods of `clippy.toml`. To see the calls in the files that are not on the exemption list, run Clippy with the lint turned on and pass its output to the `disallowed-methods` binary:
+
+```sh
+cargo clippy --workspace --all-targets --all-features --message-format=short -- -W clippy::disallowed_methods 2> /tmp/clippy-style.txt
+cargo run -p rust-milter-style --bin disallowed-methods -- /tmp/clippy-style.txt
+```
+
+After you convert a file, remove it from `tests/style/exemptions.txt` in the same change and run the three commands again.
+
 ## Run the suite with cargo-nextest
 
 `cargo-nextest` runs each test in its own process. The port leases work across processes, so no extra setting is needed:
@@ -48,6 +65,8 @@ Run the same checks as CI, except the interoperability tests and CodeQL:
 ```sh
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo clippy --workspace --all-targets --all-features --message-format=short -- -W clippy::disallowed_methods 2> /tmp/clippy-style.txt
+cargo run -p rust-milter-style --bin disallowed-methods -- /tmp/clippy-style.txt
 cargo +1.85 check -p rust-milter --lib --all-features
 cargo deny --all-features check
 ```

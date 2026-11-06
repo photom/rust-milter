@@ -12,6 +12,7 @@ The fixed TCP ports that rust-milter's tests listen on, how tests share them, an
 - [Rules for tests](#rules-for-tests)
 - [Socket option readback](#socket-option-readback)
 - [Documentation check](#documentation-check)
+- [Style check](#style-check)
 - [Interoperability environment](#interoperability-environment)
 - [CI](#ci)
 - [Toolchain](#toolchain)
@@ -83,6 +84,23 @@ CI runs the tests with `--all-features`, so the tests that need the feature run 
 | Exceptions | A block that cannot compile at all, even with setup lines, is marked `rust,ignore`, with the reason in an HTML comment right before it |
 | Features | The check compiles against rust-milter with the `otel` and `serde` features. With `--no-default-features`, the `tests/docs` crate skips the check, so that rust-milter is built without its features |
 | Failure | A block that does not compile fails the test run, and with it the CI build |
+
+## Style check
+
+`cargo test` checks that the Rust code keeps the procedural style of [ADR 0008](../adr/0008-rust-code-is-written-in-a-procedural-style.md). A separate Clippy run in CI checks the methods.
+
+| Item | Behavior |
+|------|----------|
+| Files checked | Every `.rs` file under `src/`, `tests/`, and `examples/`, except in `target` directories |
+| Closures | A closure fails the check, unless it is an argument of a method call named `handler`, `reload_with`, or `call_once`, or of a call to `thread::spawn` or `std::thread::spawn`. A closure inside an allowed closure fails. An `async` block passes; an `async` closure fails |
+| Macros | The check reads the arguments of a macro when they parse as expressions separated by commas, as in `assert!`, `vec!`, and `format!`. It skips other macros, such as `tokio::select!` and `macro_rules!` |
+| `Fn` bounds | A bound on `Fn`, `FnMut`, `FnOnce`, `AsyncFn`, `AsyncFnMut`, or `AsyncFnOnce` fails, in an `impl` type, a `dyn` type, a generic parameter, or a `where` clause. The builder items `Factory`, `handler`, and `reload_with` in `src/server/mod.rs` and `Loader` in `src/server/reload.rs` may have them |
+| Methods | `clippy.toml` lists the methods that take a function under `disallowed-methods`. The workspace allows the lint, so a plain `cargo clippy` stays quiet. The style check's Clippy run turns it on with `-W clippy::disallowed_methods` and `--message-format=short`, and the `disallowed-methods` binary of `tests/style` reads the output, ignoring terminal colors. A call in a file that is not on the exemption list fails the run |
+| Lints that suggest closures | The workspace allows `manual_filter`, `manual_filter_map`, `manual_find`, `manual_find_map`, `manual_map`, `manual_retain`, and `map_entry` |
+| Exemption list | `tests/style/exemptions.txt` lists the files that are not converted yet, one path per line in sorted order. Both checks skip the listed files. A listed path that does not exist fails `cargo test`. A listed file with no disallowed method call and no closure or `Fn` bound fails the Clippy run, so the list shrinks as files are converted |
+| Lint attributes | An attribute that allows or expects `clippy::disallowed_methods` fails the check in any file, listed or not. The exemption list is the only way to skip the check |
+| Mechanism | The unpublished workspace crate `tests/style` parses each file with `syn`. It is a default member of the workspace, so `cargo test` runs it. CI runs the Clippy part in the Clippy job |
+| Failure | Each finding prints as `path:line:column` with its reason and fails the test run or the Clippy job, and with it the CI build |
 
 ## Interoperability environment
 
@@ -168,7 +186,7 @@ GitHub Actions runs these jobs on every push to `main` and on every pull request
 | Job | Workflow | Checks |
 |-----|----------|--------|
 | Format | `ci.yml` | `cargo fmt --check` |
-| Clippy | `ci.yml` | Clippy with warnings as errors, with all features and with none |
+| Clippy | `ci.yml` | Clippy with warnings as errors, with all features and with none, then the disallowed methods of the [style check](#style-check) with all features |
 | Test | `ci.yml` | `cargo test` on Rocky Linux 9, Debian 13, and macOS, with all features and with none, and `RUST_MILTER_TEST_IPV6=on`. Rocky Linux and Debian run in containers on an Ubuntu runner |
 | MSRV | `ci.yml` | The library builds with Rust 1.85, with all features and with none |
 | Rustdoc | `ci.yml` | The API documentation builds without warnings |

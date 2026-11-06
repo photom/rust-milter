@@ -657,6 +657,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rust-milter-style"
+version = "0.0.0"
+dependencies = [
+ "proc-macro2",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "rustversion"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
