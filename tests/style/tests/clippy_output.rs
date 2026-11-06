@@ -62,6 +62,16 @@ fn sty_022_a_call_reported_for_two_targets_counts_once_in_source_order() {
     );
 }
 
+#[test]
+fn sty_025_a_line_with_terminal_colors_is_read() {
+    let output = "\u{1b}[0msrc/a.rs:7:3: \u{1b}[0m\u{1b}[0m\u{1b}[1m\u{1b}[33mwarning\u{1b}[0m\u{1b}[0m: use of a disallowed method `std::iter::Iterator::any`\u{1b}[0m\n";
+
+    assert_eq!(
+        disallowed_method_calls(output),
+        [call("src/a.rs", 7, 3, "std::iter::Iterator::any")]
+    );
+}
+
 /// A directory under the system's temporary directory with the given
 /// files, from a clean start.
 fn tree(name: &str, files: &[(&str, &str)]) -> PathBuf {

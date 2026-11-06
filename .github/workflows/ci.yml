@@ -37,7 +37,7 @@ jobs:
       - name: Disallowed methods
         shell: bash
         run: |
-          cargo clippy --workspace --all-targets --all-features --message-format=short -- -W clippy::disallowed_methods 2>&1 | tee target/clippy-style.txt
+          cargo clippy --workspace --all-targets --all-features --message-format=short --color never -- -W clippy::disallowed_methods 2>&1 | tee target/clippy-style.txt
           cargo run -p rust-milter-style --bin disallowed-methods -- target/clippy-style.txt
 
   test-linux:

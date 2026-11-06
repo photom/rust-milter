@@ -132,11 +132,12 @@ pub struct MethodCall {
 /// The disallowed method calls in the output of `cargo clippy
 /// --message-format=short`, in source order, each once. Clippy reports a
 /// call once for each target that compiles the file; other lines are
-/// skipped.
+/// skipped. Terminal colors, as with `CARGO_TERM_COLOR=always`, are
+/// ignored.
 pub fn disallowed_method_calls(output: &str) -> Vec<MethodCall> {
     let mut calls = Vec::new();
     for line in output.lines() {
-        if let Some(call) = parse_method_call(line)
+        if let Some(call) = parse_method_call(&without_colors(line))
             && !calls.contains(&call)
         {
             calls.push(call);
@@ -144,6 +145,28 @@ pub fn disallowed_method_calls(output: &str) -> Vec<MethodCall> {
     }
     calls.sort();
     calls
+}
+
+/// `line` without its ANSI escape sequences, such as `ESC [ 1 ; 33 m`. A
+/// sequence ends at its first byte in the range `@` to `~`.
+fn without_colors(line: &str) -> String {
+    let mut text = String::with_capacity(line.len());
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        if c != '\u{1b}' {
+            text.push(c);
+            continue;
+        }
+        if chars.next() != Some('[') {
+            continue;
+        }
+        for code in chars.by_ref() {
+            if ('@'..='~').contains(&code) {
+                break;
+            }
+        }
+    }
+    text
 }
 
 /// The call in one line of Clippy's short output, such as
