@@ -140,6 +140,38 @@ pub async fn wait_for(token: &str) -> Delivered {
     }
 }
 
+/// Waits until the copies of the message with `token` together reach every
+/// recipient in `recipients`, and returns the recipients they reached,
+/// sorted. An MTA may deliver one message in several transactions.
+pub async fn wait_for_recipients(token: &str, recipients: &[&str]) -> Vec<String> {
+    let deadline = Instant::now() + WAIT;
+    loop {
+        let mut reached: Vec<String> = Vec::new();
+        for copy in received(token) {
+            for recipient in copy.rcpts {
+                if !reached.contains(&recipient) {
+                    reached.push(recipient);
+                }
+            }
+        }
+        reached.sort();
+        let mut all_reached = true;
+        for recipient in recipients {
+            if !reached.contains(&(*recipient).to_owned()) {
+                all_reached = false;
+            }
+        }
+        if all_reached {
+            return reached;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "message {token} reached {recipients:?} in time; reached {reached:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
 /// Checks that no copy of the message with `token` arrives within `period`.
 pub async fn assert_none_within(token: &str, period: Duration) {
     tokio::time::sleep(period).await;
