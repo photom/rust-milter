@@ -171,6 +171,10 @@ Both MTAs:
 
 Postfix applies `SMFIR_INSHEADER` relative to the message as delivered, which includes its own `Received:` header, and `SMFIR_CHGHEADER` relative to the headers the milter saw.
 
+Header size:
+- When a milter is configured, Postfix cuts each header to 60,000 bytes, whatever `header_size_limit` says, so that the header fits in libmilter's 65,535-byte packet limit. The cut applies both to what the milter receives and to the delivered message.
+- Sendmail limits all headers of a message together to `MaxHeadersLength`, 32,768 bytes by default.
+
 ### Error handling and cleanup
 
 Sendmail closes the connection on a protocol error and aborts at once on a malformed message.
@@ -231,7 +235,7 @@ Every message in the milter protocol has this layout:
 Size limits differ by side:
 - libmilter rejects a command whose data is longer than its maximum data size, 65535 bytes by default.
 - Postfix accepts reply packets up to `INT_MAX / 2` bytes. Sendmail sets no limit on replies.
-- Postfix splits only the body into 65535-byte chunks. Other commands, such as a long header, can exceed 65535 bytes of data.
+- Postfix splits only the body into 65535-byte chunks. It does not split other commands, but it cuts each header to 60,000 bytes when a milter is configured (see [Headers and body](#headers-and-body)), so a header packet stays below 65535 bytes of data.
 
 ### Reading a message
 
