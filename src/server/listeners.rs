@@ -4,12 +4,14 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
+use super::accept::{self, OnAccept};
 use super::reload::{Outcome, ReloadReport, Reloaded, Target};
-use super::{Accepting, accept, error_chain, socket};
+use super::status::ListenerCounts;
+use super::{Accepting, error_chain, socket};
 use crate::config::reload::{changed, requires_restart};
 use crate::{BindMode, Handler, ReloadError};
 
@@ -26,11 +28,24 @@ struct Changes {
 
 /// Compares two address lists as sets.
 fn compare(old: &[SocketAddr], new: &[SocketAddr]) -> Changes {
-    Changes {
-        added: new.iter().filter(|a| !old.contains(a)).copied().collect(),
-        removed: old.iter().filter(|a| !new.contains(a)).copied().collect(),
-        kept: old.iter().filter(|a| new.contains(a)).copied().collect(),
+    let mut changes = Changes {
+        added: Vec::new(),
+        removed: Vec::new(),
+        kept: Vec::new(),
+    };
+    for address in new {
+        if !old.contains(address) {
+            changes.added.push(*address);
+        }
     }
+    for address in old {
+        if new.contains(address) {
+            changes.kept.push(*address);
+        } else {
+            changes.removed.push(*address);
+        }
+    }
+    changes
 }
 
 /// A listener that is accepting.
@@ -38,6 +53,20 @@ struct Listener {
     address: SocketAddr,
     /// Stops this listener's accept loop; a child of the server's `stop`.
     stop: CancellationToken,
+}
+
+/// Hands the connections of one listener to the server.
+struct Handoff<H, A> {
+    server: Arc<Accepting<H, A>>,
+    address: SocketAddr,
+    counts: Arc<ListenerCounts>,
+}
+
+impl<H: Handler, A: Send + Sync + 'static> OnAccept<TcpStream> for Handoff<H, A> {
+    fn accepted(&mut self, stream: TcpStream, peer: SocketAddr) {
+        self.server
+            .connection(stream, peer, self.address, &self.counts);
+    }
 }
 
 /// The listener set. Only the reload coordinator changes it once the
@@ -61,14 +90,14 @@ impl<H: Handler, A: Send + Sync + 'static> Listeners<H, A> {
     /// Starts accepting on `listener`.
     pub(super) fn start(&mut self, address: SocketAddr, listener: TcpListener) {
         let stop = self.server.shared.stop.child_token();
-        let server = Arc::clone(&self.server);
         let token = stop.clone();
-        let counts = server.shared.counters.listener(address);
+        let mut handoff = Handoff {
+            server: Arc::clone(&self.server),
+            address,
+            counts: self.server.shared.counters.listener(address),
+        };
         self.tasks.spawn(async move {
-            accept::accept_loop(listener, address, &token, |stream, peer| {
-                server.connection(stream, peer, address, &counts);
-            })
-            .await;
+            accept::accept_loop(listener, address, &token, &mut handoff).await;
         });
         self.open.push(Listener { address, stop });
     }
@@ -91,7 +120,10 @@ impl<H: Handler, A: Send + Sync + 'static> Target<A> for Listeners<H, A> {
         if !settings.is_empty() {
             return Err(ReloadError::RestartRequired { settings });
         }
-        let open: Vec<SocketAddr> = self.open.iter().map(|l| l.address).collect();
+        let mut open = Vec::new();
+        for listener in &self.open {
+            open.push(listener.address);
+        }
         let changes = compare(&open, &config.bind_addresses);
 
         let mut bound = Vec::new();
@@ -123,23 +155,33 @@ impl<H: Handler, A: Send + Sync + 'static> Target<A> for Listeners<H, A> {
             .publisher
             .publish(generation, Arc::clone(&config), app);
 
-        let listeners_added: Vec<SocketAddr> = bound.iter().map(|(addr, _)| *addr).collect();
+        let mut listeners_added = Vec::new();
         for (addr, listener) in bound {
             tracing::info!(address = %addr, backlog = config.backlog, "Listener bound");
+            listeners_added.push(addr);
             self.start(addr, listener);
         }
-        self.open.retain(|listener| {
-            let removed = changes.removed.contains(&listener.address);
-            if removed {
+        let mut still_open = Vec::new();
+        for listener in self.open.drain(..) {
+            if changes.removed.contains(&listener.address) {
                 listener.stop.cancel();
+            } else {
+                still_open.push(listener);
             }
-            !removed
-        });
+        }
+        self.open = still_open;
 
-        counters.replace_listeners(config.bind_addresses.iter().map(|&address| {
-            let bound = self.open.iter().any(|l| l.address == address);
-            (address, bound)
-        }));
+        let mut statuses = Vec::new();
+        for &address in &config.bind_addresses {
+            let mut bound = false;
+            for listener in &self.open {
+                if listener.address == address {
+                    bound = true;
+                }
+            }
+            statuses.push((address, bound));
+        }
+        counters.replace_listeners(statuses);
         Ok(ReloadReport {
             generation,
             changed: changed(&old, &config),
