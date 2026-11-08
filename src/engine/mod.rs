@@ -229,14 +229,13 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
             let reply = self.ctx.outbound.last_reply.unwrap_or("noreply");
             // Entered, not only named as the parent, so that a log bridge
             // gives the record this span's ID.
-            self.command_span.in_scope(|| {
-                tracing::debug!(
-                    milter.command = trace::command_name(code),
-                    milter.reply = reply,
-                    milter.command.duration = started.elapsed().as_secs_f64(),
-                    "milter.command"
-                );
-            });
+            let _entered = self.command_span.enter();
+            tracing::debug!(
+                milter.command = trace::command_name(code),
+                milter.reply = reply,
+                milter.command.duration = started.elapsed().as_secs_f64(),
+                "milter.command"
+            );
         }
         self.command_span = Span::none();
         Ok(flow)
@@ -245,7 +244,6 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
     async fn handle(&mut self, frame: Frame) -> Result<Flow> {
         let code = frame.command;
         let command = Command::from_frame(frame)?;
-        let wrong_state = || ProtocolError::WrongState { command: code };
 
         if self.state == State::Init {
             let Command::OptNeg {
@@ -254,7 +252,7 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
                 protocol,
             } = command
             else {
-                return Err(wrong_state().into());
+                return Err(ProtocolError::WrongState { command: code }.into());
             };
             self.negotiate(version, actions, protocol).await?;
             return Ok(Flow::Open);
@@ -270,7 +268,7 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
                 return Ok(Flow::Open);
             }
             if !self.rules.allows(State::Helo, target) {
-                return Err(wrong_state().into());
+                return Err(ProtocolError::WrongState { command: code }.into());
             }
             self.abort().await?;
             self.state = State::Helo;
@@ -729,7 +727,10 @@ fn connect_info(
 ) -> ConnectInfo {
     let address = match (family, port, address) {
         (AddressFamily::Inet | AddressFamily::Inet6, Some(port), Some(text)) => {
-            ip_address(&text).map(|ip| SocketAddr::new(ip, port))
+            match ip_address(&text) {
+                Some(ip) => Some(SocketAddr::new(ip, port)),
+                None => None,
+            }
         }
         _ => None,
     };

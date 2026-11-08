@@ -84,10 +84,12 @@ impl Transitions {
             (SMFIP_NODATA, Data),
             (SMFIP_NOUNKNOWN, Unkn),
         ];
-        let skip = skipped
-            .iter()
-            .filter(|(flag, _)| protocol & flag != 0)
-            .fold(0, |bits, (_, state)| bits | 1 << *state as u16);
+        let mut skip = 0;
+        for (flag, state) in skipped {
+            if protocol & flag != 0 {
+                skip |= 1 << state as u16;
+            }
+        }
         Transitions { skip }
     }
 
@@ -123,12 +125,14 @@ mod tests {
     #[test]
     fn quit_new_connection_is_allowed_only_after_end_of_message_and_unknown() {
         let rules = Transitions::for_protocol(SMFI_CURR_PROT);
-        let allowed: Vec<State> = [
+        let mut allowed = Vec::new();
+        for from in [
             Init, Opts, Conn, Helo, Mail, Rcpt, Data, Hdrs, Eohs, Body, Endm, Unkn, QuitNc,
-        ]
-        .into_iter()
-        .filter(|&from| rules.allows(from, QuitNc))
-        .collect();
+        ] {
+            if rules.allows(from, QuitNc) {
+                allowed.push(from);
+            }
+        }
         assert_eq!(allowed, [Endm, Unkn]);
     }
 }
