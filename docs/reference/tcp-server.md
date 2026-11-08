@@ -344,6 +344,7 @@ The error types and their variants are specified in [api-specification.md](api-s
 |-------|-------|-----------------|
 | `EMFILE` (too many open files) | `accept()` | Log, then back off: stop accepting on that listener for 100 ms, doubling after each consecutive error up to 1 s. A successful accept resets the back-off |
 | `ENFILE` (system file table full) | `accept()` | Same back-off as `EMFILE` |
+| `EINVAL`, `EBADF`, `ENOTSOCK` | `accept()` | The listener socket is broken, and waiting does not fix it. Log "Accept error (fatal)" at ERROR, record the error as `last_error` in `ServerHandle::status()`, and keep retrying with the same back-off as `EMFILE` |
 | any other `accept()` error | `accept()` | Same back-off as `EMFILE`, so a failing listener never spins |
 | `ECONNABORTED` | `accept()` | The client gave up before `accept()` returned. Log at debug level and keep accepting |
 | `ECONNRESET` | connection | Log at debug level, close connection |
@@ -376,7 +377,7 @@ In `BestEffort` mode the server:
 
 | Level | Usage |
 |-------|-------|
-| ERROR | Fatal errors, server cannot continue |
+| ERROR | Failures an operator has to act on: a rejected configuration, a failed reload or bind, a broken listener |
 | WARN | Recoverable errors, degraded operation |
 | INFO | Significant events (start, stop, config) |
 | DEBUG | Connection events, detailed flow |
@@ -389,12 +390,14 @@ In `BestEffort` mode the server:
 | Connection accepted | DEBUG | `conn_id`, `remote_addr`, `local_addr` |
 | First command received | DEBUG | `conn_id`, `remote_addr`, `local_addr`, `duration_ms` (time since accept) |
 | Connection active | TRACE | `conn_id`, `state` |
-| Connection idle | TRACE | `conn_id`, `idle_since` |
+| Connection idle | TRACE | `conn_id`, `state` |
 | Connection draining | DEBUG | `conn_id`, `reason` |
 | Connection closed (normal) | DEBUG | `conn_id`, `remote_addr`, `duration_ms`, `bytes_read`, `bytes_written`, `reason` |
 | Connection closed (error) | WARN | `conn_id`, `remote_addr`, `duration_ms`, `bytes_read`, `bytes_written`, `error`, `reason` |
 | Connection timeout | DEBUG | `conn_id`, `timeout_type`, `timeout_value` |
 | Connection rejected (limit) | WARN | `conn_id`, `remote_addr`, `max_connections` |
+
+Each command that arrives logs "Connection active" with `state`, the protocol state it arrives in, named as in libmilter (such as `ST_HELO`); the first one also logs "First command received". When the connection waits for the next command again, it logs "Connection idle" with the state the command left it in. A connection that sees the shutdown token logs "Connection draining" with `reason` = `server_shutdown` before it closes. A forced close logs no "Connection draining".
 
 The close log is the error form, at WARN, only for the reason `error`: a protocol error, a failed callback, an end of file in the middle of a frame, a frame longer than `per_connection_buffer`, or a socket error other than a reset. A close for the reasons `client_closed`, `server_shutdown`, `timeout`, `reset`, and `limit_reached` (a buffer that would pass `max_memory`) is the normal form at DEBUG, with `error` added for a timeout, a reset, and a limit. MTAs close idle milter connections and reset connections in normal operation, so neither is a warning.
 
@@ -437,6 +440,8 @@ Fields of the "connection closed" log:
 | Configuration loaded | INFO | `generation` |
 | Configuration error | ERROR | `error`, `field` |
 
+`build()` logs "Configuration loaded" with `generation` 1 when it accepts the configuration, and "Configuration error" when validation rejects it. `field` names the setting or rule that failed, such as `backlog` or `max_memory`. A reload logs "Reload applied" or "Reload failed" instead ([hot-reload.md](hot-reload.md#logging-and-metrics)).
+
 ### Error logs
 
 | Event | Level | Required fields |
@@ -446,6 +451,8 @@ Fields of the "connection closed" log:
 | Resource limit reached | WARN | `limit_type`, `current`, `max` |
 | I/O error | DEBUG | `conn_id`, `operation`, `error` |
 | Protocol error | WARN | `conn_id`, `error`, `details` |
+
+"Accept error (fatal)" replaces "Accept error" for an error that waiting cannot fix (see [Error recovery](#error-recovery)). "I/O error" has `operation` = `read` or `write`; a reset logs one too. "Protocol error" has `details` = the protocol state the connection was in; the connection then closes with the WARN form of "Connection closed".
 
 ### Log fields
 
