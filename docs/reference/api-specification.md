@@ -31,7 +31,7 @@ The public API of the rust-milter server library: its types, traits, errors, and
 | Type | Category | Description |
 |------|----------|-------------|
 | `Server<H, A>` | Core | The milter server, generic over the handler `H` and the application configuration `A` (default `()`) |
-| `ServerBuilder<H, A>` | Core | Builds a `Server` |
+| `ServerBuilder<H, A, F>` | Core | Builds a `Server`. `F` is the type of the handler factory, `()` until `handler` is called |
 | `ServerHandle<A>` | Core | Controls a running server: shutdown, reload, status |
 | `ServerConfig` | Configuration | Server settings ([configuration.md](configuration.md)) |
 | `ConfigWatch<A>` | Configuration | Read access to the current application configuration |

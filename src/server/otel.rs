@@ -69,9 +69,6 @@ pub(crate) fn meter(provider: &dyn MeterProvider) -> Meter {
     provider.meter_with_scope(scope)
 }
 
-/// What a counter observes: its values, each with its attributes.
-type Observe = Box<dyn Fn(&Counters) -> Vec<(u64, Vec<KeyValue>)> + Send + Sync>;
-
 /// The `server.address` and `server.port` attributes of a listener.
 fn listener_attributes(address: std::net::SocketAddr) -> [KeyValue; 2] {
     [
@@ -80,190 +77,198 @@ fn listener_attributes(address: std::net::SocketAddr) -> [KeyValue; 2] {
     ]
 }
 
+/// The observable counters of telemetry.md.
+#[derive(Debug, Clone, Copy)]
+enum Observed {
+    Accepted,
+    Rejected,
+    Closed,
+    Io,
+    Negotiation,
+    Command,
+    Reply,
+    Reload,
+}
+
+impl Observed {
+    const ALL: [Observed; 8] = [
+        Observed::Accepted,
+        Observed::Rejected,
+        Observed::Closed,
+        Observed::Io,
+        Observed::Negotiation,
+        Observed::Command,
+        Observed::Reply,
+        Observed::Reload,
+    ];
+
+    /// The instrument's name, unit, and description.
+    fn describe(self) -> (&'static str, &'static str, &'static str) {
+        match self {
+            Observed::Accepted => (
+                "milter.server.connection.accepted",
+                "{connection}",
+                "Connections accepted, per listener",
+            ),
+            Observed::Rejected => (
+                "milter.server.connection.rejected",
+                "{connection}",
+                "Connections closed at once because max_connections or max_memory was reached",
+            ),
+            Observed::Closed => (
+                "milter.server.connection.closed",
+                "{connection}",
+                "Connections closed, by reason",
+            ),
+            Observed::Io => ("milter.server.io", "By", "Bytes received and sent"),
+            Observed::Negotiation => (
+                "milter.server.negotiation",
+                "{negotiation}",
+                "Completed option negotiations, by negotiated version",
+            ),
+            Observed::Command => (
+                "milter.server.command",
+                "{command}",
+                "Commands received from the MTA",
+            ),
+            Observed::Reply => (
+                "milter.server.reply",
+                "{reply}",
+                "Replies sent, by the command they answer",
+            ),
+            Observed::Reload => ("milter.config.reload", "{reload}", "Reload attempts"),
+        }
+    }
+
+    /// The counter's values, each with its attributes.
+    fn values(self, counters: &Counters) -> Vec<(u64, Vec<KeyValue>)> {
+        let mut values = Vec::new();
+        match self {
+            Observed::Accepted => {
+                for listener in counters.snapshot(0).listeners {
+                    let attributes = listener_attributes(listener.address).to_vec();
+                    values.push((listener.connections_accepted, attributes));
+                }
+            }
+            Observed::Rejected => {
+                for listener in counters.snapshot(0).listeners {
+                    let attributes = listener_attributes(listener.address).to_vec();
+                    values.push((listener.connections_rejected, attributes));
+                }
+            }
+            Observed::Closed => {
+                for (reason, error, count) in counters.snapshot(0).connections_closed {
+                    let mut attributes = vec![KeyValue::new("milter.close_reason", reason)];
+                    if let Some(error) = error {
+                        attributes.push(KeyValue::new("error.type", error));
+                    }
+                    values.push((count, attributes));
+                }
+            }
+            Observed::Io => {
+                let traffic = &counters.traffic;
+                values.push((
+                    traffic.bytes_received(),
+                    vec![KeyValue::new("network.io.direction", "receive")],
+                ));
+                values.push((
+                    traffic.bytes_sent(),
+                    vec![KeyValue::new("network.io.direction", "transmit")],
+                ));
+            }
+            Observed::Negotiation => {
+                for (version, count) in counters.traffic.negotiations() {
+                    let version = KeyValue::new("milter.protocol.version", i64::from(version));
+                    values.push((count, vec![version]));
+                }
+            }
+            Observed::Command => {
+                for (command, count) in counters.traffic.commands() {
+                    values.push((count, vec![KeyValue::new("milter.command", command)]));
+                }
+            }
+            Observed::Reply => {
+                for (command, reply, count) in counters.traffic.replies() {
+                    let attributes = vec![
+                        KeyValue::new("milter.command", command),
+                        KeyValue::new("milter.reply", reply),
+                    ];
+                    values.push((count, attributes));
+                }
+            }
+            Observed::Reload => {
+                for (result, source, count) in counters.snapshot(0).reloads {
+                    let attributes = vec![
+                        KeyValue::new("milter.reload_result", result),
+                        KeyValue::new("milter.reload_source", source),
+                    ];
+                    values.push((count, attributes));
+                }
+            }
+        }
+        values
+    }
+}
+
+/// A histogram in seconds with the buckets of telemetry.md.
+fn histogram(meter: &Meter, name: &'static str, description: &'static str) -> Histogram<f64> {
+    meter
+        .f64_histogram(name)
+        .with_unit("s")
+        .with_description(description)
+        .with_boundaries(BUCKETS.to_vec())
+        .build()
+}
+
+/// The observable counter `kind`, which reads `counters` when the SDK
+/// collects.
+fn observable_counter(
+    meter: &Meter,
+    counters: &Arc<Counters>,
+    kind: Observed,
+) -> ObservableCounter<u64> {
+    let (name, unit, description) = kind.describe();
+    let counters = Arc::clone(counters);
+    meter
+        .u64_observable_counter(name)
+        .with_unit(unit)
+        .with_description(description)
+        .with_callback(move |observer| {
+            for (value, attributes) in kind.values(&counters) {
+                observer.observe(value, &attributes);
+            }
+        })
+        .build()
+}
+
 /// Creates the instruments of telemetry.md on `meter`.
 pub(crate) fn register<A: Send + Sync + 'static>(
     meter: &Meter,
     counters: &Arc<Counters>,
     watch: &ConfigWatch<A>,
 ) -> Instruments {
-    let histogram = |name: &'static str, description: &'static str| {
-        meter
-            .f64_histogram(name)
-            .with_unit("s")
-            .with_description(description)
-            .with_boundaries(BUCKETS.to_vec())
-            .build()
-    };
     let histograms = Arc::new(Histograms {
         connection: histogram(
+            meter,
             "milter.server.connection.duration",
             "Time from accept() to close",
         ),
         message: histogram(
+            meter,
             "milter.server.message.duration",
             "Time from SMFIC_MAIL to the final reply at end of message",
         ),
         eom: histogram(
+            meter,
             "milter.server.eom.duration",
             "Time from SMFIC_BODYEOB to the final reply",
         ),
     });
 
     let mut observed = Vec::new();
-    let mut counter =
-        |name: &'static str, unit: &'static str, description: &'static str, observe: Observe| {
-            let counters = Arc::clone(counters);
-            observed.push(
-                meter
-                    .u64_observable_counter(name)
-                    .with_unit(unit)
-                    .with_description(description)
-                    .with_callback(move |observer| {
-                        for (value, attributes) in observe(&counters) {
-                            observer.observe(value, &attributes);
-                        }
-                    })
-                    .build(),
-            );
-        };
-    counter(
-        "milter.server.connection.accepted",
-        "{connection}",
-        "Connections accepted, per listener",
-        Box::new(|counters| {
-            counters
-                .snapshot(0)
-                .listeners
-                .iter()
-                .map(|l| {
-                    (
-                        l.connections_accepted,
-                        listener_attributes(l.address).to_vec(),
-                    )
-                })
-                .collect()
-        }),
-    );
-    counter(
-        "milter.server.connection.rejected",
-        "{connection}",
-        "Connections closed at once because max_connections or max_memory was reached",
-        Box::new(|counters| {
-            counters
-                .snapshot(0)
-                .listeners
-                .iter()
-                .map(|l| {
-                    (
-                        l.connections_rejected,
-                        listener_attributes(l.address).to_vec(),
-                    )
-                })
-                .collect()
-        }),
-    );
-    counter(
-        "milter.server.connection.closed",
-        "{connection}",
-        "Connections closed, by reason",
-        Box::new(|counters| {
-            counters
-                .snapshot(0)
-                .connections_closed
-                .into_iter()
-                .map(|(reason, error, count)| {
-                    let mut attributes = vec![KeyValue::new("milter.close_reason", reason)];
-                    attributes.extend(error.map(|error| KeyValue::new("error.type", error)));
-                    (count, attributes)
-                })
-                .collect()
-        }),
-    );
-    counter(
-        "milter.server.io",
-        "By",
-        "Bytes received and sent",
-        Box::new(|counters| {
-            let traffic = &counters.traffic;
-            vec![
-                (
-                    traffic.bytes_received(),
-                    vec![KeyValue::new("network.io.direction", "receive")],
-                ),
-                (
-                    traffic.bytes_sent(),
-                    vec![KeyValue::new("network.io.direction", "transmit")],
-                ),
-            ]
-        }),
-    );
-    counter(
-        "milter.server.negotiation",
-        "{negotiation}",
-        "Completed option negotiations, by negotiated version",
-        Box::new(|counters| {
-            counters
-                .traffic
-                .negotiations()
-                .into_iter()
-                .map(|(version, count)| {
-                    let version = KeyValue::new("milter.protocol.version", i64::from(version));
-                    (count, vec![version])
-                })
-                .collect()
-        }),
-    );
-    counter(
-        "milter.server.command",
-        "{command}",
-        "Commands received from the MTA",
-        Box::new(|counters| {
-            counters
-                .traffic
-                .commands()
-                .into_iter()
-                .map(|(command, count)| (count, vec![KeyValue::new("milter.command", command)]))
-                .collect()
-        }),
-    );
-    counter(
-        "milter.server.reply",
-        "{reply}",
-        "Replies sent, by the command they answer",
-        Box::new(|counters| {
-            counters
-                .traffic
-                .replies()
-                .into_iter()
-                .map(|(command, reply, count)| {
-                    let attributes = vec![
-                        KeyValue::new("milter.command", command),
-                        KeyValue::new("milter.reply", reply),
-                    ];
-                    (count, attributes)
-                })
-                .collect()
-        }),
-    );
-    counter(
-        "milter.config.reload",
-        "{reload}",
-        "Reload attempts",
-        Box::new(|counters| {
-            counters
-                .snapshot(0)
-                .reloads
-                .into_iter()
-                .map(|(result, source, count)| {
-                    let attributes = vec![
-                        KeyValue::new("milter.reload_result", result),
-                        KeyValue::new("milter.reload_source", source),
-                    ];
-                    (count, attributes)
-                })
-                .collect()
-        }),
-    );
+    for kind in Observed::ALL {
+        observed.push(observable_counter(meter, counters, kind));
+    }
 
     let active = {
         let counters = Arc::clone(counters);
@@ -295,9 +300,10 @@ pub(crate) fn register<A: Send + Sync + 'static>(
             .with_unit("s")
             .with_description("Unix time of the last applied reload")
             .with_callback(move |observer| {
-                let last = counters.snapshot(0).last_reload;
-                if let Some(time) = last.and_then(|t| t.duration_since(UNIX_EPOCH).ok()) {
-                    observer.observe(time.as_secs_f64(), &[]);
+                if let Some(last) = counters.snapshot(0).last_reload {
+                    if let Ok(time) = last.duration_since(UNIX_EPOCH) {
+                        observer.observe(time.as_secs_f64(), &[]);
+                    }
                 }
             })
             .build()

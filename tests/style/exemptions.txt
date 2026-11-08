@@ -7,8 +7,6 @@
 # on a listed file that has nothing left to convert.
 # One path per line, from the repository root, in sorted order.
 
-src/server/mod.rs
-src/server/otel.rs
 tests/configuration.rs
 tests/configuration_env.rs
 tests/configuration_file.rs
