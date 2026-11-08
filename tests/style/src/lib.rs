@@ -216,56 +216,19 @@ fn parse_method_call(line: &str) -> Option<MethodCall> {
 }
 
 /// The problems in Clippy's `output` for the repository at `root`, one
-/// line each: a disallowed method call in a file that is not in `exempt`,
-/// and a file in `exempt` that has nothing left to convert, with neither a
-/// call in `output` nor a finding of [`scan`]. A call that a derive macro
-/// generates is not the repository's code, so it counts for neither.
-pub fn method_problems(
-    root: &Path,
-    output: &str,
-    exempt: &[String],
-) -> std::io::Result<Vec<String>> {
+/// line each: every disallowed method call, except a call that a derive
+/// macro generates, which is not the repository's code.
+pub fn method_problems(root: &Path, output: &str) -> std::io::Result<Vec<String>> {
     let mut scans: Vec<(String, Scan)> = Vec::new();
-    let mut calls = Vec::new();
-    for call in disallowed_method_calls(output) {
-        if !generated_by_derive(root, &call, &mut scans)? {
-            calls.push(call);
-        }
-    }
-
     let mut problems = Vec::new();
-    for call in &calls {
-        if !exempt.contains(&call.file) {
-            problems.push(format!(
-                "{}:{}:{}: use of a disallowed method `{}` (ADR 0008)",
-                call.file, call.line, call.column, call.method
-            ));
-        }
-    }
-
-    for file in exempt {
-        let mut has_call = false;
-        for call in &calls {
-            if &call.file == file {
-                has_call = true;
-            }
-        }
-        if has_call {
+    for call in disallowed_method_calls(output) {
+        if generated_by_derive(root, &call, &mut scans)? {
             continue;
         }
-        let source = std::fs::read_to_string(root.join(file))?;
-        let scanned = match scan(file, &source) {
-            Ok(scanned) => scanned,
-            Err(error) => {
-                problems.push(format!("{file}: {error}"));
-                continue;
-            }
-        };
-        if scanned.findings.is_empty() {
-            problems.push(format!(
-                "{file} has nothing left to convert; remove it from tests/style/exemptions.txt"
-            ));
-        }
+        problems.push(format!(
+            "{}:{}:{}: use of a disallowed method `{}` (ADR 0008)",
+            call.file, call.line, call.column, call.method
+        ));
     }
     Ok(problems)
 }
@@ -294,11 +257,6 @@ fn generated_by_derive(
 /// The repository root.
 pub fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
-}
-
-/// The exemption list, `tests/style/exemptions.txt`.
-pub fn exemptions_path() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("exemptions.txt")
 }
 
 /// Every Rust file under the checked directories of `root`, from `root`
@@ -331,23 +289,6 @@ fn collect(root: &Path, directory: &str, files: &mut Vec<String>) -> std::io::Re
         }
     }
     Ok(())
-}
-
-/// The file paths of an exemption list: one per line, with `#` comments
-/// and blank lines skipped.
-pub fn parse_exemptions(text: &str) -> Vec<String> {
-    let mut files = Vec::new();
-    for line in text.lines() {
-        let line = match line.split_once('#') {
-            Some((before, _)) => before,
-            None => line,
-        };
-        let line = line.trim();
-        if !line.is_empty() {
-            files.push(line.to_owned());
-        }
-    }
-    files
 }
 
 /// Whether `attribute` allows or expects `clippy::disallowed_methods`,

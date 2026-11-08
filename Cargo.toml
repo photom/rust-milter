@@ -66,5 +66,5 @@ manual_map = "allow"
 manual_retain = "allow"
 map_entry = "allow"
 # The methods of clippy.toml are reported only by the style check's Clippy
-# run, which skips the files on tests/style/exemptions.txt.
+# run, which skips the calls a derive macro generates (ADR 0011).
 disallowed_methods = "allow"
