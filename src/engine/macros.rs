@@ -32,50 +32,92 @@ impl Macros {
         if stage != SMFIC_UNKNOWN && !ORDER.contains(&stage) {
             return;
         }
-        match self.stages.iter_mut().find(|(s, _)| *s == stage) {
-            Some((_, old)) => *old = macros,
-            None => self.stages.push((stage, macros)),
+        for (stored, old) in &mut self.stages {
+            if *stored == stage {
+                *old = macros;
+                return;
+            }
         }
+        self.stages.push((stage, macros));
     }
 
     /// Looks `name` up in `stage` and the earlier stages, the latest first.
     /// Without a stage, or for `U`, it looks in every stage, starting with
     /// `U`.
     pub(crate) fn get(&self, name: &str, stage: Option<u8>) -> Option<&MilterText> {
-        let position = stage.and_then(|stage| ORDER.iter().position(|&s| s == stage));
+        let position = match stage {
+            Some(stage) => order_position(stage),
+            None => None,
+        };
         let searched: &[u8] = match position {
             Some(index) => &ORDER[..=index],
-            None => &ORDER,
+            None => {
+                if let Some(value) = self.lookup(SMFIC_UNKNOWN, name) {
+                    return Some(value);
+                }
+                &ORDER
+            }
         };
-        let unknown = position.is_none().then_some(SMFIC_UNKNOWN);
-        let stages = unknown.into_iter().chain(searched.iter().rev().copied());
-        stages
-            .filter_map(|stage| self.stage(stage))
-            .find_map(|macros| find(macros, name))
+        for stage in searched.iter().rev() {
+            if let Some(value) = self.lookup(*stage, name) {
+                return Some(value);
+            }
+        }
+        None
     }
 
-    fn stage(&self, stage: u8) -> Option<&[(MilterText, MilterText)]> {
-        self.stages
-            .iter()
-            .find(|(s, _)| *s == stage)
-            .map(|(_, macros)| macros.as_slice())
+    /// Looks `name` up in one stage.
+    fn lookup(&self, stage: u8, name: &str) -> Option<&MilterText> {
+        for (stored, macros) in &self.stages {
+            if *stored == stage {
+                return find(macros, name);
+            }
+        }
+        None
     }
 }
 
 /// Finds a macro by name. As in libmilter, `{x}` and `x` name the same
 /// one-letter macro.
 fn find<'a>(macros: &'a [(MilterText, MilterText)], name: &str) -> Option<&'a MilterText> {
-    let bare = name
-        .strip_prefix('{')
-        .and_then(|n| n.strip_suffix('}'))
-        .filter(|n| n.len() == 1);
-    macros.iter().find_map(|(stored, value)| {
-        let stored = stored.as_bytes();
-        let matches = stored == name.as_bytes()
-            || bare.is_some_and(|bare| stored == bare.as_bytes())
-            || (name.len() == 1 && stored == format!("{{{name}}}").as_bytes());
-        matches.then_some(value)
-    })
+    let bare = one_letter(name);
+    for (stored, value) in macros {
+        if same_macro(stored.as_bytes(), name, bare) {
+            return Some(value);
+        }
+    }
+    None
+}
+
+/// The letter inside `{x}`, when `name` is a one-letter macro in braces.
+fn one_letter(name: &str) -> Option<&str> {
+    let inner = name.strip_prefix('{')?;
+    let inner = inner.strip_suffix('}')?;
+    if inner.len() == 1 { Some(inner) } else { None }
+}
+
+/// Whether a stored macro name is `name`, or the same one-letter macro with
+/// or without braces. `bare` is the letter when `name` is written `{x}`.
+fn same_macro(stored: &[u8], name: &str, bare: Option<&str>) -> bool {
+    if stored == name.as_bytes() {
+        return true;
+    }
+    if let Some(bare) = bare {
+        if stored == bare.as_bytes() {
+            return true;
+        }
+    }
+    name.len() == 1 && stored == format!("{{{name}}}").as_bytes()
+}
+
+/// The position of a stage byte in [`ORDER`].
+fn order_position(stage: u8) -> Option<usize> {
+    for (index, known) in ORDER.iter().enumerate() {
+        if *known == stage {
+            return Some(index);
+        }
+    }
+    None
 }
 
 #[cfg(test)]

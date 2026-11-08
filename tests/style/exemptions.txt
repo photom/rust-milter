@@ -7,11 +7,6 @@
 # on a listed file that has nothing left to convert.
 # One path per line, from the repository root, in sorted order.
 
-src/engine/io.rs
-src/engine/macros.rs
-src/engine/mod.rs
-src/engine/state.rs
-src/engine/trace.rs
 src/server/accept.rs
 src/server/listeners.rs
 src/server/memory.rs

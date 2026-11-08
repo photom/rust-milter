@@ -78,7 +78,11 @@ impl<R: AsyncRead + Unpin> Inbound<R> {
             if let Some(frame) = Frame::parse(&mut self.buf, self.max)? {
                 self.first = false;
                 self.frames += 1;
-                self.frame_started = (!self.buf.is_empty()).then(Instant::now);
+                self.frame_started = if self.buf.is_empty() {
+                    None
+                } else {
+                    Some(Instant::now())
+                };
                 // The frame's data is the handler's now; only the next frame
                 // needs room in the buffer.
                 self.memory.resize(0);
@@ -87,10 +91,12 @@ impl<R: AsyncRead + Unpin> Inbound<R> {
             self.reserve_frame()?;
             let (deadline, kind) = self.deadline();
             let was_empty = self.buf.is_empty();
-            let read = tokio::time::timeout_at(deadline, self.reader.read_buf(&mut self.buf))
-                .await
-                .map_err(|_| Error::Timeout(kind))?
-                .map_err(io_error)?;
+            let reading = self.reader.read_buf(&mut self.buf);
+            let read = match tokio::time::timeout_at(deadline, reading).await {
+                Err(_) => return Err(Error::Timeout(kind)),
+                Ok(Err(error)) => return Err(io_error(error)),
+                Ok(Ok(read)) => read,
+            };
             self.bytes_read += read as u64;
             self.traffic.received(read);
             if read == 0 {
@@ -137,10 +143,10 @@ impl<R: AsyncRead + Unpin> Inbound<R> {
             if self.first {
                 return connect;
             }
-            let since = *self.idle_since.get_or_insert_with(Instant::now);
+            let since = started_now_or_before(&mut self.idle_since);
             return (since + self.timeouts.idle, TimeoutKind::Idle);
         }
-        let started = *self.frame_started.get_or_insert_with(Instant::now);
+        let started = started_now_or_before(&mut self.frame_started);
         let read = (started + self.timeouts.read, TimeoutKind::Read);
         // The connect timeout lasts until the first command is complete.
         if self.first && connect.0 < read.0 {
@@ -193,10 +199,11 @@ impl Outbound {
             self.writer.write_all(&self.buf).await?;
             self.writer.flush().await
         };
-        tokio::time::timeout(self.timeout, write)
-            .await
-            .map_err(|_| Error::Timeout(TimeoutKind::Write))?
-            .map_err(io_error)?;
+        match tokio::time::timeout(self.timeout, write).await {
+            Err(_) => return Err(Error::Timeout(TimeoutKind::Write)),
+            Ok(Err(error)) => return Err(io_error(error)),
+            Ok(Ok(())) => {}
+        }
         self.bytes_written += self.buf.len() as u64;
         self.traffic.sent(self.buf.len());
         if let Some(command) = self.command {
@@ -215,5 +222,17 @@ fn io_error(error: std::io::Error) -> Error {
             Error::ConnectionReset
         }
         _ => Error::Io(error),
+    }
+}
+
+/// The instant in `slot`, or now when it holds none, which is stored there.
+fn started_now_or_before(slot: &mut Option<Instant>) -> Instant {
+    match *slot {
+        Some(started) => started,
+        None => {
+            let now = Instant::now();
+            *slot = Some(now);
+            now
+        }
     }
 }
