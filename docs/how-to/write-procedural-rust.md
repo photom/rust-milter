@@ -6,7 +6,7 @@ rust-milter's code branches with `match`, `if let`, and `let ... else`, returns 
 
 ## Check your code
 
-Run the style check and the Clippy run that reports the disallowed methods, as in [Run the style check](run-the-tests.md#run-the-style-check). A file on `tests/style/exemptions.txt` is skipped by both. To convert one, remove it from the list first, so the checks report what is left.
+Run the style check and the Clippy run that reports the disallowed methods, as in [Run the style check](run-the-tests.md#run-the-style-check). Both check every Rust file of the repository.
 
 ## Replace an Option combinator
 

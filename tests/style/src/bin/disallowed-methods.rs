@@ -1,13 +1,12 @@
 //! Reads the output of `cargo clippy --message-format=short` with
 //! `clippy::disallowed_methods` turned on, from the file given as the only
-//! argument. Fails on a disallowed method call in a file that is not on
-//! `tests/style/exemptions.txt`, and on a listed file that has nothing left
-//! to convert. Run as in "Run the style check" in
+//! argument, and fails on every disallowed method call that a derive macro
+//! did not generate. Run as in "Run the style check" in
 //! `docs/how-to/run-the-tests.md`.
 
 use std::process::ExitCode;
 
-use rust_milter_style::{exemptions_path, method_problems, parse_exemptions, repository_root};
+use rust_milter_style::{method_problems, repository_root};
 
 fn main() -> ExitCode {
     let mut arguments = std::env::args().skip(1);
@@ -22,18 +21,10 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let list = match std::fs::read_to_string(exemptions_path()) {
-        Ok(list) => list,
-        Err(error) => {
-            eprintln!("cannot read the exemption list: {error}");
-            return ExitCode::from(2);
-        }
-    };
-    let exempt = parse_exemptions(&list);
-    let problems = match method_problems(&repository_root(), &output, &exempt) {
+    let problems = match method_problems(&repository_root(), &output) {
         Ok(problems) => problems,
         Err(error) => {
-            eprintln!("cannot read a listed file: {error}");
+            eprintln!("cannot read a reported file: {error}");
             return ExitCode::from(2);
         }
     };

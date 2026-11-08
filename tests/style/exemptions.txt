@@ -1,9 +1,0 @@
-# The Rust files that are not converted to the procedural style of ADR 0008
-# yet. The style check reports no closures or Fn bounds in them, and its
-# Clippy run reports none of the disallowed methods of clippy.toml.
-#
-# A converted file comes off the list in the same change. The list only
-# shrinks: new files follow the style from the start, and the check fails
-# on a listed file that has nothing left to convert.
-# One path per line, from the repository root, in sorted order.
-

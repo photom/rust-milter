@@ -88,46 +88,24 @@ fn tree(name: &str, files: &[(&str, &str)]) -> PathBuf {
 }
 
 #[test]
-fn sty_023_a_call_in_a_file_off_the_list_is_a_problem() {
+fn sty_023_each_call_is_a_problem() {
     let root = tree(
         "sty-023",
         &[("src/a.rs", "fn f() {}\n"), ("src/b.rs", "fn f() {}\n")],
     );
     let output = "src/a.rs:1:1: warning: use of a disallowed method `bool::then`\n\
                   src/b.rs:2:3: warning: use of a disallowed method `std::option::Option::map`\n";
-    let exempt = ["src/a.rs".to_owned()];
 
-    let problems = method_problems(&root, output, &exempt).unwrap();
+    let problems = method_problems(&root, output).unwrap();
 
-    assert_eq!(problems.len(), 1, "{problems:?}");
-    assert!(problems[0].starts_with("src/b.rs:2:3: "), "{problems:?}");
+    assert_eq!(problems.len(), 2, "{problems:?}");
+    assert!(problems[0].starts_with("src/a.rs:1:1: "), "{problems:?}");
+    assert!(problems[0].contains("bool::then"), "{problems:?}");
+    assert!(problems[1].starts_with("src/b.rs:2:3: "), "{problems:?}");
     assert!(
-        problems[0].contains("std::option::Option::map"),
+        problems[1].contains("std::option::Option::map"),
         "{problems:?}"
     );
-}
-
-#[test]
-fn sty_024_a_listed_file_with_nothing_left_to_convert_is_a_problem() {
-    let root = tree(
-        "sty-024",
-        &[
-            ("src/calls.rs", "fn f() {}\n"),
-            ("src/closure.rs", "fn f() { let g = |x: u8| x; }\n"),
-            ("src/clean.rs", "fn f() {}\n"),
-        ],
-    );
-    let output = "src/calls.rs:1:1: warning: use of a disallowed method `bool::then`\n";
-    let exempt = [
-        "src/calls.rs".to_owned(),
-        "src/clean.rs".to_owned(),
-        "src/closure.rs".to_owned(),
-    ];
-
-    let problems = method_problems(&root, output, &exempt).unwrap();
-
-    assert_eq!(problems.len(), 1, "{problems:?}");
-    assert!(problems[0].starts_with("src/clean.rs "), "{problems:?}");
 }
 
 #[test]
@@ -140,19 +118,13 @@ fn sty_026_a_call_that_a_derive_generates_is_not_a_problem() {
                   struct A {\n\
                   \x20   b: u8,\n\
                   }\n";
-    let root = tree(
-        "sty-026",
-        &[("src/a.rs", source), ("src/listed.rs", source)],
-    );
+    let root = tree("sty-026", &[("src/a.rs", source)]);
     let output = "src/a.rs:1:10: warning: use of a disallowed method `std::option::Option::map`\n\
                   src/a.rs:4:12: warning: use of a disallowed method `std::option::Option::map`\n\
-                  src/a.rs:7:5: warning: use of a disallowed method `std::option::Option::map`\n\
-                  src/listed.rs:4:12: warning: use of a disallowed method `std::option::Option::map`\n";
-    let exempt = ["src/listed.rs".to_owned()];
+                  src/a.rs:7:5: warning: use of a disallowed method `std::option::Option::map`\n";
 
-    let problems = method_problems(&root, output, &exempt).unwrap();
+    let problems = method_problems(&root, output).unwrap();
 
-    assert_eq!(problems.len(), 2, "{problems:?}");
+    assert_eq!(problems.len(), 1, "{problems:?}");
     assert!(problems[0].starts_with("src/a.rs:7:5: "), "{problems:?}");
-    assert!(problems[1].starts_with("src/listed.rs "), "{problems:?}");
 }

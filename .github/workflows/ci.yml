@@ -33,7 +33,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo clippy --workspace --all-targets --no-default-features -- -D warnings
       # The style check's Clippy run: the disallowed methods of clippy.toml,
-      # outside the files on tests/style/exemptions.txt (ADR 0008).
+      # except the calls a derive macro generates (ADR 0011).
       - name: Disallowed methods
         shell: bash
         run: |
