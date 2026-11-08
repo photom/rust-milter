@@ -24,6 +24,10 @@ Set the process limit (`ulimit -n`, or `LimitNOFILE=` in a systemd unit) to at l
 
 When descriptors run out anyway, the server backs off and keeps running; watch for "Accept error" warnings in the log.
 
+## Cap the buffer memory
+
+Set `resource_limits.max_memory` to the memory the host can spare for connection buffers. Each connection reserves 4 KB when it is accepted, and up to `per_connection_buffer` while a frame arrives. Without a cap, the read buffers can take `max_connections` times `per_connection_buffer`: about 1.25 GB with the defaults. Past the cap, new connections are closed at once, and the MTA applies its failure policy.
+
 ## Match the timeouts to the MTA
 
 1. Keep the milter's `timeouts.idle` (7210 seconds by default) longer than the longest pause the MTA allows between two SMTP commands: Sendmail's `Timeout.command` (1 hour by default) or Postfix's `smtpd_timeout` (300 seconds by default).

@@ -326,10 +326,12 @@ To support 10,000 or more concurrent connections:
 
 As the server approaches its resource limits:
 
-1. When `max_connections` is reached, the server accepts each new connection and closes it at once. The MTA sees the connection close during option negotiation and applies its own failure policy (Sendmail `F=` flags, Postfix `milter_default_action`). A TCP server cannot answer an incoming connection with `ECONNREFUSED`; only a port with no listener does that.
+1. When `max_connections` is reached, the server accepts each new connection and closes it at once. The MTA sees the connection close during option negotiation and applies its own failure policy (Sendmail `F=` flags, Postfix `milter_default_action`). A TCP server cannot answer an incoming connection with `ECONNREFUSED`; only a port with no listener does that. The server checks the limit and counts the new connection in one atomic step, so the listeners together never pass it.
 2. When `max_memory` is set and the connection buffers would exceed it, the server closes new connections at once, as at `max_connections`, and closes a connection whose buffer would have to grow past the limit (`Error::ResourceLimit`).
 
 `max_memory` counts the read buffers of the open connections. Each connection reserves 4 KB when it is accepted, and grows its reservation to the length of a frame as soon as the frame's length field arrives, before the data. The reservation falls back to 4 KB once the frame is complete. Replies and the values a handler keeps are not counted.
+
+Until its first packet has arrived, a connection accepts a packet of at most 1,024 bytes, or `per_connection_buffer` if that is smaller. Only `SMFIC_OPTNEG` is valid there, and Sendmail and Postfix send it as a 17-byte packet. A longer first packet fails with `Error::FrameTooLarge` as soon as its length field arrives, so a connection that has not negotiated holds only its 4 KB reservation ([ADR 0013](../adr/0013-the-first-packet-is-limited-to-1-kb.md)).
 
 ## Error handling
 
@@ -396,7 +398,7 @@ In `BestEffort` mode the server:
 
 Each command that arrives logs "Connection active" with `state`, the protocol state it arrives in, named as in libmilter (such as `ST_HELO`); the first one also logs "First command received". When the connection waits for the next command again, it logs "Connection idle" with the state the command left it in. A connection that sees the shutdown token logs "Connection draining" with `reason` = `server_shutdown` before it closes. A forced close logs no "Connection draining".
 
-The close log is the error form, at WARN, only for the reason `error`: a protocol error, a failed callback, an end of file in the middle of a frame, a frame longer than `per_connection_buffer`, or a socket error other than a reset. A close for the reasons `client_closed`, `server_shutdown`, `timeout`, `reset`, and `limit_reached` (a buffer that would pass `max_memory`) is the normal form at DEBUG, with `error` added for a timeout, a reset, and a limit. MTAs close idle milter connections and reset connections in normal operation, so neither is a warning.
+The close log is the error form, at WARN, only for the reason `error`: a protocol error, a failed callback, an end of file in the middle of a frame, a frame longer than `per_connection_buffer` or a first packet longer than 1,024 bytes, or a socket error other than a reset. A close for the reasons `client_closed`, `server_shutdown`, `timeout`, `reset`, and `limit_reached` (a buffer that would pass `max_memory`) is the normal form at DEBUG, with `error` added for a timeout, a reset, and a limit. MTAs close idle milter connections and reset connections in normal operation, so neither is a warning.
 
 Fields of the "connection accepted" log:
 

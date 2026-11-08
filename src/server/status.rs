@@ -186,6 +186,27 @@ impl Counters {
         }
     }
 
+    /// Counts a new open connection if fewer than `max` are open. The check
+    /// and the count are one atomic step, so accept loops on several
+    /// listeners never open more than `max` together.
+    pub(crate) fn try_open(&self, max: usize) -> bool {
+        let mut open = self.connections.load(Ordering::SeqCst);
+        loop {
+            if open >= max {
+                return false;
+            }
+            match self.connections.compare_exchange_weak(
+                open,
+                open + 1,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => return true,
+                Err(current) => open = current,
+            }
+        }
+    }
+
     /// The counts of the listener on `address`.
     pub(crate) fn listener(&self, address: SocketAddr) -> Arc<ListenerCounts> {
         let mut counts = lock(&self.listener_counts);
@@ -376,5 +397,37 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     match mutex.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::Counters;
+
+    #[test]
+    fn srv_059_opening_a_connection_checks_and_counts_in_one_step() {
+        let counters = Arc::new(Counters::new(&[]));
+        let opened = Arc::new(AtomicUsize::new(0));
+        let mut threads = Vec::new();
+        for _ in 0..8 {
+            let counters = Arc::clone(&counters);
+            let opened = Arc::clone(&opened);
+            threads.push(std::thread::spawn(move || {
+                for _ in 0..100 {
+                    if counters.try_open(10) {
+                        opened.fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+            }));
+        }
+        for thread in threads {
+            thread.join().unwrap();
+        }
+
+        assert_eq!(opened.load(Ordering::SeqCst), 10);
+        assert_eq!(counters.connections.load(Ordering::SeqCst), 10);
     }
 }

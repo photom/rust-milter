@@ -350,7 +350,7 @@ A Milter protocol frame.
 
 On the wire a frame is a 4-byte length (network byte order), the command byte, and the data. The length counts the command byte and the data.
 
-Size: the whole packet (4 + 1 + data length) must fit in the connection's `per_connection_buffer`, 128 KB by default. A longer packet fails with `Error::FrameTooLarge` before any memory is allocated for it. The default holds the largest default-size milter packet, 65,540 bytes.
+Size: the whole packet (4 + 1 + data length) must fit in the connection's `per_connection_buffer`, 128 KB by default, and the first packet of a connection, the option negotiation, in 1,024 bytes ([ADR 0013](../adr/0013-the-first-packet-is-limited-to-1-kb.md)). A longer packet fails with `Error::FrameTooLarge` before any memory is allocated for it. The default holds the largest default-size milter packet, 65,540 bytes.
 
 | Method | Description |
 |--------|-------------|
@@ -495,7 +495,7 @@ Errors are `thiserror` enums. Every error type implements `std::error::Error`, `
 | `Timeout(TimeoutKind)` | `Connect`, `Read`, `Write`, or `Idle` timeout expired | connection closed |
 | `ConnectionClosed` | The MTA closed the connection in the middle of a frame | connection closed |
 | `ConnectionReset` | The MTA reset the connection | connection closed |
-| `FrameTooLarge { length, max }` | Packet longer than `per_connection_buffer` | connection closed |
+| `FrameTooLarge { length, max }` | Packet longer than `per_connection_buffer`, or a first packet longer than 1,024 bytes | connection closed |
 | `InvalidReply(ReplyError)` | `Reply::to_frame()` refused a reply that breaks a protocol or MTA rule | the reply is not sent |
 | `Config(ConfigError)` | Invalid configuration at build time | `build()` fails |
 | `Bind { addr, source }` | A listener could not bind | `run()` fails in `FailFast` mode, and in `BestEffort` mode when no address binds |

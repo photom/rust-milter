@@ -15,6 +15,12 @@ use crate::{Error, Frame, Reply, ResourceKind, Result, TimeoutConfig, TimeoutKin
 /// Size of the length field that starts every frame.
 const LENGTH_FIELD: usize = 4;
 
+/// The longest first packet a connection accepts. Before option
+/// negotiation only `SMFIC_OPTNEG` is valid, a 17-byte packet, so a peer
+/// cannot make the server reserve `per_connection_buffer` with a 4-byte
+/// length field (ADR 0013).
+const FIRST_PACKET_MAX: usize = 1_024;
+
 /// The receiving side of a connection.
 pub(crate) struct Inbound<R> {
     reader: R,
@@ -79,7 +85,8 @@ impl<R: AsyncRead + Unpin> Inbound<R> {
     /// cancelled call loses nothing.
     pub(crate) async fn next_frame(&mut self) -> Result<Option<Frame>> {
         loop {
-            if let Some(frame) = Frame::parse(&mut self.buf, self.max)? {
+            let limit = self.limit();
+            if let Some(frame) = Frame::parse(&mut self.buf, limit)? {
                 self.first = false;
                 self.frames += 1;
                 self.frame_started = if self.buf.is_empty() {
@@ -116,6 +123,16 @@ impl<R: AsyncRead + Unpin> Inbound<R> {
         }
     }
 
+    /// The longest packet accepted now: [`FIRST_PACKET_MAX`] until the first
+    /// packet has arrived, then `per_connection_buffer`.
+    fn limit(&self) -> usize {
+        if self.first {
+            self.max.min(FIRST_PACKET_MAX)
+        } else {
+            self.max
+        }
+    }
+
     /// Bytes of a frame not yet returned have arrived: part of a frame, or
     /// a whole one sent right after the last.
     pub(crate) fn in_frame(&self) -> bool {
@@ -128,7 +145,7 @@ impl<R: AsyncRead + Unpin> Inbound<R> {
         let Some(length_field) = self.buf.first_chunk::<LENGTH_FIELD>() else {
             return Ok(());
         };
-        // `Frame::parse` has checked the length against `max` already.
+        // `Frame::parse` has checked the length against the limit already.
         let packet = LENGTH_FIELD + u32::from_be_bytes(*length_field) as usize;
         if !self.memory.resize(packet) {
             return Err(Error::ResourceLimit(ResourceKind::MaxMemory));
