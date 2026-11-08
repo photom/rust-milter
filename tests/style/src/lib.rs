@@ -1,8 +1,9 @@
 //! Checks that the Rust code of the repository keeps the procedural style
-//! of ADR 0008: no closures and no `Fn`, `FnMut`, or `FnOnce` bounds, apart
-//! from the exceptions the ADR names. It also reads the disallowed method
-//! calls of `clippy.toml` from Clippy's output. The rules are in "Style
-//! check" in `docs/reference/test-environment.md`.
+//! of ADR 0008 and ADR 0009: no closures, no `Fn`, `FnMut`, or `FnOnce`
+//! bounds, and no function pointer types, apart from the exceptions the
+//! ADRs name. It also reads the disallowed method calls of `clippy.toml`
+//! from Clippy's output. The rules are in "Style check" in
+//! `docs/reference/test-environment.md`.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -18,12 +19,11 @@ use syn::{Expr, Token};
 /// calls and `Once::call_once`.
 const CLOSURE_METHODS: [&str; 3] = ["handler", "reload_with", "call_once"];
 
-/// The builder items, by file and name, whose `Fn` bounds are allowed.
-const BUILDER_ITEMS: [(&str, &str); 4] = [
-    ("src/server/mod.rs", "Factory"),
+/// The builder methods, by file and name, whose `Fn` bounds are allowed:
+/// they take the closures that applications pass to the builder.
+const BUILDER_METHODS: [(&str, &str); 2] = [
     ("src/server/mod.rs", "handler"),
     ("src/server/mod.rs", "reload_with"),
-    ("src/server/reload.rs", "Loader"),
 ];
 
 /// The traits whose bounds are reported.
@@ -44,8 +44,10 @@ const DIRECTORIES: [&str; 3] = ["src", "tests", "examples"];
 pub enum Kind {
     /// A closure outside an allowed call.
     Closure,
-    /// A bound on the named `Fn` trait outside a builder item.
+    /// A bound on the named `Fn` trait outside a builder method.
     FnBound(String),
+    /// A function pointer type, such as `fn(u8) -> bool`.
+    FnPointer,
 }
 
 impl fmt::Display for Kind {
@@ -55,6 +57,10 @@ impl fmt::Display for Kind {
             Kind::FnBound(name) => write!(
                 f,
                 "{name} bound; take a value or a trait of your own instead (ADR 0008)"
+            ),
+            Kind::FnPointer => write!(
+                f,
+                "function pointer; name the cases with an enum and match on it (ADR 0009)"
             ),
         }
     }
@@ -368,12 +374,12 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether the item being walked is a builder item.
-    fn in_builder_item(&self) -> bool {
+    /// Whether the item being walked is a builder method.
+    fn in_builder_method(&self) -> bool {
         let Some(item) = &self.item else {
             return false;
         };
-        for (file, name) in BUILDER_ITEMS {
+        for (file, name) in BUILDER_METHODS {
             if file == self.path && name == item {
                 return true;
             }
@@ -452,12 +458,17 @@ impl<'ast> Visit<'ast> for Checker<'_> {
         if let Some(last) = bound.path.segments.last() {
             let name = last.ident.to_string();
             for fn_trait in FN_TRAITS {
-                if name == fn_trait && !self.in_builder_item() {
+                if name == fn_trait && !self.in_builder_method() {
                     self.report(bound.span(), Kind::FnBound(name.clone()));
                 }
             }
         }
         visit::visit_trait_bound(self, bound);
+    }
+
+    fn visit_type_bare_fn(&mut self, pointer: &'ast syn::TypeBareFn) {
+        self.report(pointer.span(), Kind::FnPointer);
+        visit::visit_type_bare_fn(self, pointer);
     }
 
     fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {

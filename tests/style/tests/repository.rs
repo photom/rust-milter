@@ -38,7 +38,7 @@ fn assert_none(problems: &[String]) {
 }
 
 #[test]
-fn sty_010_a_file_off_the_list_has_no_closure_and_no_fn_bound() {
+fn sty_010_a_file_off_the_list_has_no_closure_fn_bound_or_function_pointer() {
     let exempt = exemptions();
     let mut problems = Vec::new();
     for (file, scanned) in scans() {
