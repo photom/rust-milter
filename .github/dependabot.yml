@@ -8,6 +8,11 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    groups:
+      # CodeQL fails when its init and analyze steps run different versions.
+      codeql-action:
+        patterns:
+          - "github/codeql-action/*"
   - package-ecosystem: docker
     directories:
       - /tests/interop/postfix
