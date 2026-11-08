@@ -11,9 +11,10 @@ Decisions that shape rust-milter's design and specification, with their context 
 | [0005](0005-reload-closes-no-connection-and-rebinds-no-listener.md) | A reload closes no open connection and rebinds no listener | Accepted; the `backlog` decision is superseded by ADR 0007 |
 | [0006](0006-connection-timeouts-per-frame-and-libmilter-idle-default.md) | Connection timeouts are split per frame, and the idle default follows libmilter | Accepted |
 | [0007](0007-a-reload-that-changes-a-restart-setting-fails.md) | A reload that changes a setting that requires a restart fails | Accepted |
-| [0008](0008-rust-code-is-written-in-a-procedural-style.md) | Rust code is written in a procedural style | Accepted; the `Factory` and `Loader` exception and the allowance of function pointers are superseded by ADR 0009, and the `reload_with` exceptions by ADR 0010 |
+| [0008](0008-rust-code-is-written-in-a-procedural-style.md) | Rust code is written in a procedural style | Accepted; the `Factory` and `Loader` exception and the allowance of function pointers are superseded by ADR 0009, the `reload_with` exceptions by ADR 0010, and the end of the transition by ADR 0011 |
 | [0009](0009-no-stored-closures-or-function-pointers.md) | No stored closures or function pointers | Accepted; its list of exceptions is extended by ADR 0010 |
 | [0010](0010-builder-factory-type-parameter-and-loader-trait.md) | The builder keeps the handler factory in a type parameter and takes a loader trait | Accepted |
+| [0011](0011-the-disallowed-methods-run-stays-for-derive-code.md) | The disallowed-methods run stays for derive code | Accepted |
 
 Conventions:
 - One file per decision, named `NNNN-short-title.md`, numbered in order.
