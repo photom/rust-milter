@@ -307,6 +307,22 @@ pub enum ConfigError {
     },
 }
 
+impl ConfigError {
+    /// The setting, rule, or variable the error is about, for the
+    /// "Configuration error" log.
+    pub(crate) fn setting(&self) -> &str {
+        match self {
+            ConfigError::MissingBindAddress | ConfigError::DuplicateBindAddress(_) => {
+                "bind_addresses"
+            }
+            ConfigError::OutOfRange { field, .. } | ConfigError::Unsupported { field, .. } => field,
+            ConfigError::Inconsistent { rule, .. } => rule,
+            ConfigError::UnknownEnvVariable(variable)
+            | ConfigError::InvalidEnvValue { variable, .. } => variable,
+        }
+    }
+}
+
 /// Why a reload failed. Every variant leaves the server running with the
 /// previous configuration generation.
 #[derive(Debug, thiserror::Error)]
