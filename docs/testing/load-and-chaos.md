@@ -1,6 +1,6 @@
 # Test scenarios: Load and chaos
 
-Scenarios that check the server under sustained load and under failures. They run on dedicated machines or CI runners, outside `cargo test`, against a release build with a handler that answers `Continue` to every command. Load scenarios use the prefix `LOD`, chaos scenarios `CHS`. Conventions are in [README.md](README.md).
+Scenarios that check the server under sustained load and under failures. They run outside `cargo test`, in a Docker Compose stack of their own, against a release build with a handler that answers `Continue` to every command. Load scenarios use the prefix `LOD`, chaos scenarios `CHS`. Where and when they run is decided in [testing ADR 0005](adr/0005-load-and-chaos-tests-run-weekly-against-a-child-process-milter.md). Conventions are in [README.md](README.md).
 
 ## Load
 
