@@ -1,4 +1,4 @@
-//! Connection lifecycle and timeout scenarios (SRV-030 to SRV-040) from
+//! Connection lifecycle and timeout scenarios (SRV-030 to SRV-040, SRV-043) from
 //! `docs/testing/server.md`.
 
 mod support;
@@ -275,4 +275,33 @@ async fn srv_040_a_reset_ends_the_session_with_an_error() {
     assert_eq!(closed.level, tracing::Level::DEBUG);
     assert_eq!(closed.field("reason"), Some("reset"));
     assert!(logs.warnings().is_empty(), "{:?}", logs.warnings());
+}
+
+#[tokio::test]
+async fn srv_043_limits_the_first_packet_to_1_kb() {
+    let (logs, _guard) = Logs::capture();
+    let (server, _) = recording(support::config()).await;
+    let mut first = server.mta().await;
+
+    first.write_raw(&2_000u32.to_be_bytes()).await;
+    let sent = Instant::now();
+    let after = closes_after(&mut first, sent).await;
+    assert!(after < Duration::from_millis(500), "{after:?}");
+
+    // A 1,024-byte packet: the length field, the command, and 1,019 bytes.
+    let mut padded = support::mta::optneg_data(6, SMFI_CURR_ACTS, SMFI_CURR_PROT).to_vec();
+    padded.resize(1_024 - 5, 0);
+    let mut second = server.mta().await;
+    second.send(SMFIC_OPTNEG, padded).await;
+    assert_eq!(second.recv().await.unwrap().command, SMFIC_OPTNEG);
+    server.stop().await;
+
+    let mut errors = Vec::new();
+    for closed in logs.named("Connection closed") {
+        if closed.level == tracing::Level::WARN {
+            errors.push(closed.field("error").unwrap().to_owned());
+        }
+    }
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].contains("1024-byte limit"), "{errors:?}");
 }
