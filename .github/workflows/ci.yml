@@ -32,6 +32,13 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo clippy --workspace --all-targets --no-default-features -- -D warnings
+      # The style check's Clippy run: the disallowed methods of clippy.toml,
+      # outside the files on tests/style/exemptions.txt (ADR 0008).
+      - name: Disallowed methods
+        shell: bash
+        run: |
+          cargo clippy --workspace --all-targets --all-features --message-format=short --color never -- -W clippy::disallowed_methods 2>&1 | tee target/clippy-style.txt
+          cargo run -p rust-milter-style --bin disallowed-methods -- target/clippy-style.txt
 
   test-linux:
     name: Test (${{ matrix.name }})
