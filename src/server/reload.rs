@@ -148,31 +148,41 @@ impl<A: Send + 'static, T: Target<A>> Coordinator<A, T> {
             while let Ok(request) = requests.try_recv() {
                 batch.push(request);
             }
+            // Loader requests that arrive one after another fold into one
+            // reload. An explicit configuration between them runs in its
+            // place, so every request takes effect in the order it arrived.
             let mut loads = Vec::new();
             for request in batch {
                 match request {
+                    Request::Load(reply) => loads.push(reply),
                     Request::Apply(new, reply) => {
+                        self.fold(std::mem::take(&mut loads)).await;
                         let outcome = self.apply(*new).await;
                         let _ = reply.send(outcome);
                     }
-                    Request::Load(reply) => loads.push(reply),
                 }
             }
-            if loads.is_empty() {
-                continue;
-            }
-            if loads.len() > 1 {
-                tracing::debug!(pending_requests = loads.len(), "Reload coalesced");
-            }
-            let outcome = self.load().await;
-            // `reload()` counts its own requests; `SIGHUP` waits for none.
-            for reply in &loads {
-                if reply.is_none() {
-                    self.counters.reloaded(outcome.is_ok(), Source::Sighup);
-                }
-            }
-            answer(loads, outcome);
+            self.fold(loads).await;
         }
+    }
+
+    /// Runs one reload through the loader for all of `loads`, and answers
+    /// each of them with its result.
+    async fn fold(&mut self, loads: Vec<Option<oneshot::Sender<Outcome>>>) {
+        if loads.is_empty() {
+            return;
+        }
+        if loads.len() > 1 {
+            tracing::debug!(pending_requests = loads.len(), "Reload coalesced");
+        }
+        let outcome = self.load().await;
+        // `reload()` counts its own requests; `SIGHUP` waits for none.
+        for reply in &loads {
+            if reply.is_none() {
+                self.counters.reloaded(outcome.is_ok(), Source::Sighup);
+            }
+        }
+        answer(loads, outcome);
     }
 
     /// Runs the loader, then applies what it returned.
@@ -338,14 +348,21 @@ mod tests {
     struct Recording {
         gate: Option<Arc<Semaphore>>,
         published: Arc<Mutex<Vec<u64>>>,
+        /// The `max_connections` of each published configuration, which
+        /// tells the configurations apart.
+        connections: Arc<Mutex<Vec<usize>>>,
     }
 
     impl Target<()> for Recording {
-        async fn apply(&mut self, generation: u64, _new: Reloaded<()>) -> Outcome {
+        async fn apply(&mut self, generation: u64, new: Reloaded<()>) -> Outcome {
             if let Some(gate) = &self.gate {
                 gate.acquire().await.unwrap().forget();
             }
             self.published.lock().unwrap().push(generation);
+            self.connections
+                .lock()
+                .unwrap()
+                .push(new.server.max_connections);
             Ok(ReloadReport {
                 generation,
                 ..ReloadReport::default()
@@ -479,6 +496,43 @@ mod tests {
         assert_eq!(outcome.await.unwrap().unwrap().generation, 2);
         running.task.await.unwrap();
         assert_eq!(*target.published.lock().unwrap(), [2]);
+    }
+
+    /// A valid configuration that `max_connections` tells apart.
+    fn numbered(max_connections: usize) -> ServerConfig {
+        ServerConfig {
+            max_connections,
+            ..valid()
+        }
+    }
+
+    #[tokio::test]
+    async fn rld_008_requests_take_effect_in_the_order_they_arrived() {
+        let gated = Gated::new(vec![numbered(101), numbered(102), numbered(103)]);
+        let target = Recording::default();
+        let running = start(Some(gated.loader()), target.clone());
+
+        let first = running.load();
+        settle().await;
+        let before = running.load();
+        let (reply, explicit) = oneshot::channel();
+        let new = Reloaded {
+            server: numbered(900),
+            app: (),
+        };
+        running
+            .requests
+            .send(Request::Apply(Box::new(new), reply))
+            .unwrap();
+        let after = running.load();
+        settle().await;
+        gated.gate.add_permits(3);
+
+        assert_eq!(first.await.unwrap().unwrap().generation, 2);
+        assert_eq!(before.await.unwrap().unwrap().generation, 3);
+        assert_eq!(explicit.await.unwrap().unwrap().generation, 4);
+        assert_eq!(after.await.unwrap().unwrap().generation, 5);
+        assert_eq!(*target.connections.lock().unwrap(), [101, 102, 900, 103]);
     }
 
     /// An error with a source of its own, as a loader or a bind can return.
