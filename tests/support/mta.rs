@@ -243,13 +243,18 @@ pub struct OptNeg {
 
 impl OptNeg {
     fn decode(data: &[u8]) -> OptNeg {
-        let field = |i: usize| u32::from_be_bytes(data[i * 4..i * 4 + 4].try_into().unwrap());
         OptNeg {
-            version: field(0),
-            actions: field(1),
-            protocol: field(2),
+            version: field(data, 0),
+            actions: field(data, 1),
+            protocol: field(data, 2),
         }
     }
+}
+
+/// The `index`th 32-bit field of option negotiation data.
+fn field(data: &[u8], index: usize) -> u32 {
+    let start = index * 4;
+    u32::from_be_bytes(data[start..start + 4].try_into().unwrap())
 }
 
 /// `SMFIC_OPTNEG` data.

@@ -15,7 +15,7 @@ use support::{Log, Recorder, TestServer};
 
 #[tokio::test]
 async fn eng_020_continues_every_command_of_a_session_by_default() {
-    let server = TestServer::start(support::ContinueAll::new).await;
+    let server = TestServer::start(support::ContinueAll).await;
     let mut mta = server.mta().await;
     mta.negotiate().await;
 
@@ -81,7 +81,7 @@ impl Handler for AcceptsAtConnect {
 async fn eng_021_returns_to_helo_after_a_connect_level_accept() {
     let log = Log::default();
     let handler = AcceptsAtConnect(log.clone());
-    let server = TestServer::start(move |_| handler).await;
+    let server = TestServer::start(handler).await;
     let mut mta = server.mta().await;
     mta.negotiate().await;
 
@@ -125,7 +125,7 @@ impl Handler for RejectsBadRecipient {
 async fn eng_022_a_rejected_recipient_does_not_end_the_message() {
     let log = Log::default();
     let handler = RejectsBadRecipient(log.clone());
-    let server = TestServer::start(move |_| handler).await;
+    let server = TestServer::start(handler).await;
     let mut mta = server.mta().await;
     mta.reach(Reach::Mail).await;
 
@@ -166,7 +166,7 @@ impl Handler for RejectsSender {
 async fn eng_023_a_new_mail_after_a_reject_gets_a_fresh_message() {
     let log = Log::default();
     let handler = RejectsSender(log.clone());
-    let server = TestServer::start(move |_| handler).await;
+    let server = TestServer::start(handler).await;
     let mut mta = server.mta().await;
     mta.reach(Reach::Helo).await;
 
@@ -203,7 +203,7 @@ async fn eng_024_sends_a_custom_reply_with_percent_doubled() {
         (550, "5.7.1", "550 5.7.1 Try 100% later"),
     ] {
         let reply = ReplyCode::new(code, Some(enhanced), "Try 100% later").unwrap();
-        let server = TestServer::start(move |_| RepliesToRecipient(reply)).await;
+        let server = TestServer::start(RepliesToRecipient(reply)).await;
         let mut mta = server.mta().await;
         mta.reach(Reach::Mail).await;
 
@@ -237,7 +237,7 @@ impl Handler for SkipsBody {
 /// Sends three body chunks and end of message; returns the reply codes.
 async fn three_chunks(protocol: u32, log: &Log) -> Vec<u8> {
     let handler = SkipsBody(log.clone());
-    let server = TestServer::start(move |_| handler).await;
+    let server = TestServer::start(handler).await;
     let mut mta = server.mta().await;
     mta.optneg(6, SMFI_CURR_ACTS, protocol).await.unwrap();
     mta.reach_after_negotiation(Reach::Eohs).await;
@@ -280,7 +280,7 @@ async fn eng_026_skip_continues_when_the_mta_did_not_offer_it() {
 async fn eng_027_version_2_never_calls_data_or_unknown() {
     let recorder = Recorder::default();
     let log = recorder.log.clone();
-    let server = TestServer::start(move |_| recorder).await;
+    let server = TestServer::start(recorder).await;
     let mut mta = server.mta().await;
     mta.optneg(2, SMFI_V2_ACTS, SMFI_V2_PROT).await.unwrap();
 
@@ -288,10 +288,9 @@ async fn eng_027_version_2_never_calls_data_or_unknown() {
     mta.ask_continue(SMFIC_UNKNOWN, strings(&["NOOP"])).await;
 
     let events = log.events();
-    assert!(
-        !events.iter().any(|e| e == "data" || e == "unknown"),
-        "{events:?}"
-    );
+    for event in &events {
+        assert!(event != "data" && event != "unknown", "{events:?}");
+    }
     server.stop().await;
 }
 
@@ -315,7 +314,7 @@ impl Handler for AddsTwoHeaders {
 
 #[tokio::test]
 async fn eng_028_sends_modifications_in_call_order_before_the_final_reply() {
-    let server = TestServer::start(|_| AddsTwoHeaders).await;
+    let server = TestServer::start(AddsTwoHeaders).await;
     let mut mta = server.mta().await;
     mta.reach(Reach::Body).await;
 
@@ -358,7 +357,7 @@ impl Handler for AddsWithoutAction {
 async fn eng_029_a_modification_without_its_action_fails_and_sends_nothing() {
     let log = Log::default();
     let handler = AddsWithoutAction(log.clone());
-    let server = TestServer::start(move |_| handler).await;
+    let server = TestServer::start(handler).await;
     let mut mta = server.mta().await;
     mta.reach(Reach::Body).await;
 
@@ -376,6 +375,16 @@ struct ReplacesBody;
 
 const NEW_BODY_LENGTH: usize = 200_000;
 
+/// The body `ReplacesBody` writes: `NEW_BODY_LENGTH` bytes counting up
+/// modulo 251.
+fn new_body() -> Vec<u8> {
+    let mut body = Vec::with_capacity(NEW_BODY_LENGTH);
+    for i in 0..NEW_BODY_LENGTH {
+        body.push((i % 251) as u8);
+    }
+    body
+}
+
 impl Handler for ReplacesBody {
     type Session = ();
     type Message = ();
@@ -385,15 +394,14 @@ impl Handler for ReplacesBody {
     }
 
     async fn end_of_message(&self, ctx: &mut EomContext<Self>) -> Result<Decision> {
-        let body: Vec<u8> = (0..NEW_BODY_LENGTH).map(|i| (i % 251) as u8).collect();
-        ctx.replace_body(&body).await?;
+        ctx.replace_body(&new_body()).await?;
         Ok(Decision::Continue)
     }
 }
 
 #[tokio::test]
 async fn eng_030_replaces_a_large_body_in_chunks() {
-    let server = TestServer::start(|_| ReplacesBody).await;
+    let server = TestServer::start(ReplacesBody).await;
     let mut mta = server.mta().await;
     mta.reach(Reach::Body).await;
 
@@ -408,10 +416,11 @@ async fn eng_030_replaces_a_large_body_in_chunks() {
     };
 
     assert_eq!(chunks.len(), 4);
-    assert!(chunks.iter().all(|chunk| chunk.len() <= 65_535));
+    for chunk in &chunks {
+        assert!(chunk.len() <= 65_535);
+    }
     let joined: Vec<u8> = chunks.concat();
-    let expected: Vec<u8> = (0..NEW_BODY_LENGTH).map(|i| (i % 251) as u8).collect();
-    assert_eq!(joined, expected);
+    assert_eq!(joined, new_body());
     assert_eq!(final_reply.command, SMFIR_CONTINUE);
     server.stop().await;
 }
@@ -432,7 +441,7 @@ impl Handler for ReportsProgress {
 
 #[tokio::test]
 async fn eng_031_sends_progress_before_the_final_reply() {
-    let server = TestServer::start(|_| ReportsProgress).await;
+    let server = TestServer::start(ReportsProgress).await;
     let mut mta = server.mta().await;
     mta.reach(Reach::Body).await;
 
@@ -484,7 +493,7 @@ impl Handler for FailsInHeader {
 async fn eng_032_a_failing_callback_ends_the_session_with_an_error() {
     let log = Log::default();
     let handler = FailsInHeader(log.clone());
-    let server = TestServer::start(move |_| handler).await;
+    let server = TestServer::start(handler).await;
     let mut mta = server.mta().await;
     mta.reach(Reach::Data).await;
 
@@ -558,7 +567,7 @@ impl Handler for Overlaps {
 async fn eng_033_callbacks_of_one_connection_run_one_at_a_time_in_order() {
     let log = Log::default();
     let handler = Overlaps(log.clone());
-    let server = TestServer::start(move |_| handler).await;
+    let server = TestServer::start(handler).await;
     let mut mta = server.mta().await;
     mta.negotiate().await;
 
@@ -580,10 +589,11 @@ async fn eng_033_callbacks_of_one_connection_run_one_at_a_time_in_order() {
         assert_eq!(mta.recv().await.unwrap().command, SMFIR_CONTINUE);
     }
 
-    let expected: Vec<String> = ["connect", "helo", "mail", "rcpt", "end_of_message"]
-        .iter()
-        .flat_map(|name| [format!("{name} start"), format!("{name} end")])
-        .collect();
+    let mut expected = Vec::new();
+    for name in ["connect", "helo", "mail", "rcpt", "end_of_message"] {
+        expected.push(format!("{name} start"));
+        expected.push(format!("{name} end"));
+    }
     assert_eq!(log.events(), expected);
     server.stop().await;
 }

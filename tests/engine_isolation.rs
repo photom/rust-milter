@@ -27,9 +27,10 @@ impl Handler for Marks {
         ctx: &mut SessionContext<Self>,
         info: &ConnectInfo,
     ) -> Result<ConnectDecision> {
-        let auth = ctx
-            .macro_value("{auth_authen}")
-            .map(|v| v.to_string_lossy().into_owned());
+        let auth = match ctx.macro_value("{auth_authen}") {
+            Some(value) => Some(value.to_string_lossy().into_owned()),
+            None => None,
+        };
         let marker = info.hostname.to_string_lossy().into_owned();
         let old = ctx.session().replace(marker.clone());
         self.0
@@ -56,7 +57,7 @@ impl Handler for Marks {
 async fn start() -> (TestServer, Log) {
     let log = Log::default();
     let handler = Marks(log.clone());
-    (TestServer::start(move |_| handler).await, log)
+    (TestServer::start(handler).await, log)
 }
 
 #[tokio::test]
@@ -163,7 +164,12 @@ async fn eng_083_concurrent_connections_see_only_their_own_values() {
     tokio::join!(session(first, "one"), session(second, "two"));
 
     let events = log.events();
-    let mails: Vec<&String> = events.iter().filter(|e| e.starts_with("mail")).collect();
+    let mut mails = Vec::new();
+    for event in &events {
+        if event.starts_with("mail") {
+            mails.push(event);
+        }
+    }
     assert_eq!(mails.len(), 40);
     for event in mails {
         let name = if event.starts_with("mail <one") {
@@ -204,7 +210,7 @@ impl Handler for RecordsInfo {
 async fn connect_info(data: Bytes) -> Vec<String> {
     let log = Log::default();
     let handler = RecordsInfo(log.clone());
-    let server = TestServer::start(move |_| handler).await;
+    let server = TestServer::start(handler).await;
     let mut mta = server.mta().await;
     mta.negotiate().await;
     mta.ask_continue(SMFIC_CONNECT, data).await;

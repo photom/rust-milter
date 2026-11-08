@@ -38,7 +38,7 @@ async fn srv_041_connection_ids_grow_and_match_the_accept_log() {
     let (logs, _guard) = Logs::capture();
     let handler = RecordsIds::default();
     let ids = Arc::clone(&handler.0);
-    let server = TestServer::start(move |_| handler).await;
+    let server = TestServer::start(handler).await;
 
     for _ in 0..100 {
         let mut mta = server.mta().await;
@@ -48,20 +48,24 @@ async fn srv_041_connection_ids_grow_and_match_the_accept_log() {
 
     let ids = ids.lock().unwrap().clone();
     assert_eq!(ids.len(), 100);
-    assert!(ids.windows(2).all(|pair| pair[0] < pair[1]), "{ids:?}");
-    let logged: Vec<String> = logs
-        .named("Connection accepted")
-        .iter()
-        .map(|e| e.field("conn_id").unwrap().to_owned())
-        .collect();
-    let seen: Vec<String> = ids.iter().map(u64::to_string).collect();
+    for pair in ids.windows(2) {
+        assert!(pair[0] < pair[1], "{ids:?}");
+    }
+    let mut logged = Vec::new();
+    for event in logs.named("Connection accepted") {
+        logged.push(event.field("conn_id").unwrap().to_owned());
+    }
+    let mut seen = Vec::new();
+    for id in &ids {
+        seen.push(id.to_string());
+    }
     assert_eq!(logged, seen);
 }
 
 #[tokio::test]
 async fn srv_042_a_protocol_error_close_is_a_warning() {
     let (logs, _guard) = Logs::capture();
-    let server = TestServer::start(ContinueAll::new).await;
+    let server = TestServer::start(ContinueAll).await;
     let mut mta = server.mta().await;
     mta.reach(Reach::Helo).await;
 
@@ -121,7 +125,7 @@ async fn srv_070_status_follows_the_server() {
 #[tokio::test]
 async fn srv_071_logs_the_accept_and_the_close_of_a_connection() {
     let (logs, _guard) = Logs::capture();
-    let server = TestServer::start(ContinueAll::new).await;
+    let server = TestServer::start(ContinueAll).await;
     let listener = server.address().to_string();
     let mut mta = server.mta().await;
     mta.reach(Reach::Endm).await;
@@ -191,8 +195,22 @@ async fn srv_072_logs_the_server_start() {
     }
     let started = logs.one("Server started");
     assert!(started.field("pid").is_some());
-    let order: Vec<String> = logs.all().into_iter().map(|e| e.message).collect();
-    let position = |m: &str| order.iter().position(|x| x == m).unwrap();
-    assert!(position("Server starting") < position("Listener bound"));
-    assert!(position("Listener bound") < position("Server started"));
+    let mut order = Vec::new();
+    for event in logs.all() {
+        order.push(event.message);
+    }
+    let starting = position(&order, "Server starting");
+    let bound = position(&order, "Listener bound");
+    assert!(starting < bound);
+    assert!(bound < position(&order, "Server started"));
+}
+
+/// The index of the first `message` in `order`.
+fn position(order: &[String], message: &str) -> usize {
+    for (index, seen) in order.iter().enumerate() {
+        if seen == message {
+            return index;
+        }
+    }
+    panic!("no {message:?} in {order:?}");
 }

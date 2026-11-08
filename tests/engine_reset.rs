@@ -16,7 +16,7 @@ use support::{Log, Recorder, TestServer};
 async fn recording() -> (TestServer, Log) {
     let recorder = Recorder::default();
     let log = recorder.log.clone();
-    (TestServer::start(move |_| recorder).await, log)
+    (TestServer::start(recorder).await, log)
 }
 
 #[tokio::test]
@@ -83,8 +83,11 @@ async fn eng_103_a_reset_after_quit_new_connection_calls_nothing() {
 
     mta.reset();
 
-    log.settles_at(&ended.iter().map(String::as_str).collect::<Vec<_>>())
-        .await;
+    let mut events = Vec::new();
+    for event in &ended {
+        events.push(event.as_str());
+    }
+    log.settles_at(&events).await;
     server.stop().await;
 }
 
@@ -137,7 +140,7 @@ impl Handler for SlowEom {
 async fn eng_105_a_reset_while_a_callback_runs_aborts_after_it() {
     let log = Log::default();
     let handler = SlowEom(log.clone());
-    let server = TestServer::start(move |_| handler).await;
+    let server = TestServer::start(handler).await;
     let mut mta = server.mta().await;
     mta.reach(Reach::Body).await;
 

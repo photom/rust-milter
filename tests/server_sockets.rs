@@ -129,12 +129,12 @@ impl Handler for ReadsOptions {
     }
 }
 
-/// Starts a server with `configure` applied, connects, and reads the
-/// options in the first callback.
-async fn first_read(configure: impl FnOnce(&mut ServerConfig)) -> SocketReadback {
+/// Starts a server with `config`, connects, and reads the options in the
+/// first callback.
+async fn first_read(config: ServerConfig) -> SocketReadback {
     let handler = ReadsOptions::default();
     let reads = Arc::clone(&handler.0);
-    let server = TestServer::start_with(configure, move |_| handler).await;
+    let server = TestServer::start_with(config, handler).await;
     let mut mta = server.mta().await;
     mta.reach(Reach::Conn).await;
     server.stop().await;
@@ -144,7 +144,7 @@ async fn first_read(configure: impl FnOnce(&mut ServerConfig)) -> SocketReadback
 
 #[tokio::test]
 async fn srv_020_sets_nodelay_and_keepalive_by_default() {
-    let options = first_read(|_| {}).await;
+    let options = first_read(support::config()).await;
 
     assert!(options.tcp_nodelay);
     assert_eq!(
@@ -159,18 +159,19 @@ async fn srv_020_sets_nodelay_and_keepalive_by_default() {
 
 #[tokio::test]
 async fn srv_021_turns_keepalive_off() {
-    let options = first_read(|config| config.socket_options.keepalive = None).await;
+    let mut config = support::config();
+    config.socket_options.keepalive = None;
+    let options = first_read(config).await;
 
     assert_eq!(options.keepalive, None);
 }
 
 #[tokio::test]
 async fn srv_022_sets_the_buffer_sizes() {
-    let options = first_read(|config| {
-        config.socket_options.recv_buffer_size = Some(64 * 1024);
-        config.socket_options.send_buffer_size = Some(64 * 1024);
-    })
-    .await;
+    let mut config = support::config();
+    config.socket_options.recv_buffer_size = Some(64 * 1024);
+    config.socket_options.send_buffer_size = Some(64 * 1024);
+    let options = first_read(config).await;
 
     assert!(options.recv_buffer_size >= 64 * 1024, "{options:?}");
     assert!(options.send_buffer_size >= 64 * 1024, "{options:?}");
@@ -179,10 +180,10 @@ async fn srv_022_sets_the_buffer_sizes() {
 /// Runs a session through every stage, a second message that is aborted,
 /// `SMFIC_QUIT_NC`, a second session, and a shutdown; returns what each
 /// callback read.
-async fn every_state(configure: impl FnOnce(&mut ServerConfig)) -> Vec<(String, SocketReadback)> {
+async fn every_state(config: ServerConfig) -> Vec<(String, SocketReadback)> {
     let handler = ReadsOptions::default();
     let reads = Arc::clone(&handler.0);
-    let server = TestServer::start_with(configure, move |_| handler).await;
+    let server = TestServer::start_with(config, handler).await;
     let mut mta = server.mta().await;
     mta.reach(Reach::Endm).await;
     mta.ask_continue(SMFIC_UNKNOWN, strings(&["NOOP"])).await;
@@ -207,7 +208,10 @@ fn assert_every_state(
     nodelay: bool,
     keepalive: Option<KeepaliveConfig>,
 ) {
-    let callbacks: Vec<&str> = reads.iter().map(|(name, _)| name.as_str()).collect();
+    let mut callbacks = Vec::new();
+    for (name, _) in reads {
+        callbacks.push(name.as_str());
+    }
     assert_eq!(
         callbacks,
         [
@@ -237,7 +241,7 @@ fn assert_every_state(
 
 #[tokio::test]
 async fn srv_023_default_options_hold_in_every_state() {
-    let reads = every_state(|_| {}).await;
+    let reads = every_state(support::config()).await;
 
     assert_every_state(&reads, true, Some(KeepaliveConfig::default()));
 }
@@ -249,20 +253,21 @@ async fn srv_024_custom_keepalive_holds_in_every_state() {
         interval: Duration::from_secs(5),
         retries: 3,
     };
-    let configured = custom.clone();
+    let mut config = support::config();
+    config.socket_options.keepalive = Some(custom.clone());
 
-    let reads = every_state(move |config| config.socket_options.keepalive = Some(configured)).await;
+    let reads = every_state(config).await;
 
     assert_every_state(&reads, true, Some(custom));
 }
 
 #[tokio::test]
 async fn srv_025_options_turned_off_stay_off_in_every_state() {
-    let reads = every_state(|config| {
-        config.socket_options.keepalive = None;
-        config.socket_options.tcp_nodelay = false;
-    })
-    .await;
+    let mut config = support::config();
+    config.socket_options.keepalive = None;
+    config.socket_options.tcp_nodelay = false;
+
+    let reads = every_state(config).await;
 
     assert_every_state(&reads, false, None);
 }

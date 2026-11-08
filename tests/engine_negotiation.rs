@@ -14,11 +14,8 @@ struct Declares {
 }
 
 impl Declares {
-    fn server(
-        events: Events,
-        actions: Actions,
-    ) -> impl FnOnce(&rust_milter::HandlerContext<()>) -> Declares {
-        move |_| Declares { events, actions }
+    fn server(events: Events, actions: Actions) -> Declares {
+        Declares { events, actions }
     }
 }
 
@@ -76,7 +73,7 @@ async fn eng_003_answers_version_2_with_version_2_flags_only() {
 
 #[tokio::test]
 async fn eng_004_closes_without_a_reply_below_version_2() {
-    let server = TestServer::start(support::ContinueAll::new).await;
+    let server = TestServer::start(support::ContinueAll).await;
     for version in [1, 0] {
         let mut mta = server.mta().await;
 
@@ -127,7 +124,7 @@ async fn eng_007_requests_only_flags_the_mta_offered() {
 
 #[tokio::test]
 async fn eng_008_closes_on_a_short_option_negotiation() {
-    let server = TestServer::start(support::ContinueAll::new).await;
+    let server = TestServer::start(support::ContinueAll).await;
     let mut mta = server.mta().await;
 
     mta.send(SMFIC_OPTNEG, vec![0; 11]).await;
@@ -138,7 +135,7 @@ async fn eng_008_closes_on_a_short_option_negotiation() {
 
 #[tokio::test]
 async fn eng_009_answers_version_6_to_a_later_version() {
-    let server = TestServer::start(support::ContinueAll::new).await;
+    let server = TestServer::start(support::ContinueAll).await;
     let mut mta = server.mta().await;
 
     let reply = mta.optneg(7, SMFI_CURR_ACTS, SMFI_CURR_PROT).await.unwrap();

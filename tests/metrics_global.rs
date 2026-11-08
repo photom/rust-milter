@@ -6,9 +6,9 @@ mod support;
 
 use opentelemetry_sdk::metrics::{InMemoryMetricExporter, PeriodicReader, SdkMeterProvider};
 use rust_milter::{Server, ServerConfig};
-use support::ContinueAll;
 use support::mta::{Mta, Reach};
 use support::ports::PortLease;
+use support::{ContinueAll, Until};
 
 fn provider() -> (SdkMeterProvider, InMemoryMetricExporter) {
     let exporter = InMemoryMetricExporter::default();
@@ -22,14 +22,15 @@ fn provider() -> (SdkMeterProvider, InMemoryMetricExporter) {
 fn names(provider: &SdkMeterProvider, exporter: &InMemoryMetricExporter) -> Vec<String> {
     exporter.reset();
     provider.force_flush().unwrap();
-    exporter
-        .get_finished_metrics()
-        .unwrap()
-        .iter()
-        .flat_map(|resource| resource.scope_metrics())
-        .flat_map(|scope| scope.metrics())
-        .map(|metric| metric.name().to_owned())
-        .collect()
+    let mut names = Vec::new();
+    for resource in exporter.get_finished_metrics().unwrap() {
+        for scope in resource.scope_metrics() {
+            for metric in scope.metrics() {
+                names.push(metric.name().to_owned());
+            }
+        }
+    }
+    names
 }
 
 #[tokio::test]
@@ -51,11 +52,11 @@ async fn tel_004_metrics_reach_only_the_builders_provider() {
         .unwrap();
     let handle = server.handle();
     let task = tokio::spawn(server.run());
-    support::wait_until(|| handle.status().accepting).await;
+    support::wait_until(&handle, Until::Accepting).await;
     let mut mta = Mta::connect(lease.v4()).await;
     mta.reach(Reach::Endm).await;
     mta.close().await;
-    support::wait_until(|| handle.status().connections == 0).await;
+    support::wait_until(&handle, Until::Idle).await;
 
     assert!(names(&own, &own_exporter).contains(&"milter.server.command".to_owned()));
     assert!(names(&global, &global_exporter).is_empty());

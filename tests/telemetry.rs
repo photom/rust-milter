@@ -7,7 +7,7 @@
 
 mod support;
 
-use std::sync::OnceLock;
+use std::sync::{Once, OnceLock};
 use std::time::{Duration, SystemTime};
 
 use opentelemetry::logs::AnyValue;
@@ -34,31 +34,37 @@ struct Exporters {
 }
 
 static EXPORTERS: OnceLock<Exporters> = OnceLock::new();
+static INSTALL: Once = Once::new();
 
 /// Installs the global subscriber once, with simple exporters, so a span is
 /// exported as soon as it ends.
 fn exporters() -> &'static Exporters {
-    EXPORTERS.get_or_init(|| {
-        let spans = InMemorySpanExporter::default();
-        let tracer = SdkTracerProvider::builder()
-            .with_simple_exporter(spans.clone())
-            .build();
-        let logs = InMemoryLogExporter::default();
-        let logger = SdkLoggerProvider::builder()
-            .with_simple_exporter(logs.clone())
-            .build();
-        let subscriber = tracing_subscriber::registry()
-            .with(tracing_opentelemetry::layer().with_tracer(tracer.tracer("tests")))
-            .with(OpenTelemetryTracingBridge::new(&logger));
-        tracing::subscriber::set_global_default(subscriber)
-            .expect("no other global subscriber in this test binary");
-        Exporters {
-            spans,
-            logs,
-            _tracer: tracer,
-            _logger: logger,
-        }
-    })
+    INSTALL.call_once(|| {
+        let _ = EXPORTERS.set(install());
+    });
+    EXPORTERS.get().expect("the exporters are installed")
+}
+
+fn install() -> Exporters {
+    let spans = InMemorySpanExporter::default();
+    let tracer = SdkTracerProvider::builder()
+        .with_simple_exporter(spans.clone())
+        .build();
+    let logs = InMemoryLogExporter::default();
+    let logger = SdkLoggerProvider::builder()
+        .with_simple_exporter(logs.clone())
+        .build();
+    let subscriber = tracing_subscriber::registry()
+        .with(tracing_opentelemetry::layer().with_tracer(tracer.tracer("tests")))
+        .with(OpenTelemetryTracingBridge::new(&logger));
+    tracing::subscriber::set_global_default(subscriber)
+        .expect("no other global subscriber in this test binary");
+    Exporters {
+        spans,
+        logs,
+        _tracer: tracer,
+        _logger: logger,
+    }
 }
 
 /// The time a test holds its port. It opens once the server has its port
@@ -96,54 +102,84 @@ fn traces(port: u16, since: SystemTime, until: SystemTime) -> Traces {
         .spans
         .get_finished_spans()
         .expect("the span exporter can be read");
-    let ids: Vec<TraceId> = all
-        .iter()
-        .filter(|span| {
-            span.name == "milter.connection"
-                && span.start_time >= since
-                && span.start_time <= until
-                && attr(span, "server.port") == Some(Value::I64(i64::from(port)))
-        })
-        .map(|span| span.span_context.trace_id())
-        .collect();
-    let mut spans: Vec<SpanData> = all
-        .into_iter()
-        .filter(|span| ids.contains(&span.span_context.trace_id()))
-        .collect();
-    spans.sort_by_key(|span| span.start_time);
+    let mut ids = Vec::new();
+    for span in &all {
+        if span.name == "milter.connection"
+            && span.start_time >= since
+            && span.start_time <= until
+            && attr(span, "server.port") == Some(Value::I64(i64::from(port)))
+        {
+            ids.push(span.span_context.trace_id());
+        }
+    }
+    let mut spans: Vec<SpanData> = Vec::new();
+    for span in all {
+        if !ids.contains(&span.span_context.trace_id()) {
+            continue;
+        }
+        // In start order; a span that starts at the same time as another
+        // goes after it.
+        let mut at = spans.len();
+        for (index, earlier) in spans.iter().enumerate() {
+            if earlier.start_time > span.start_time {
+                at = index;
+                break;
+            }
+        }
+        spans.insert(at, span);
+    }
     Traces { spans }
 }
 
 impl Traces {
     fn named(&self, name: &str) -> Vec<&SpanData> {
-        self.spans.iter().filter(|span| span.name == name).collect()
+        let mut named = Vec::new();
+        for span in &self.spans {
+            if span.name == name {
+                named.push(span);
+            }
+        }
+        named
     }
 
     fn children(&self, parent: &SpanData) -> Vec<&SpanData> {
-        self.spans
-            .iter()
-            .filter(|span| span.parent_span_id == parent.span_context.span_id())
-            .collect()
+        let mut children = Vec::new();
+        for span in &self.spans {
+            if span.parent_span_id == parent.span_context.span_id() {
+                children.push(span);
+            }
+        }
+        children
     }
 
     /// The `milter.command` events of every span, in time order, with the
     /// span they are on.
     fn commands(&self) -> Vec<(&SpanData, &opentelemetry::trace::Event)> {
-        let mut events: Vec<_> = self
-            .spans
-            .iter()
-            .flat_map(|span| span.events.iter().map(move |event| (span, event)))
-            .filter(|(_, event)| event.name == "milter.command")
-            .collect();
-        events.sort_by_key(|(_, event)| event.timestamp);
+        let mut events: Vec<(&SpanData, &opentelemetry::trace::Event)> = Vec::new();
+        for span in &self.spans {
+            for event in span.events.iter() {
+                if event.name != "milter.command" {
+                    continue;
+                }
+                let mut at = events.len();
+                for (index, (_, earlier)) in events.iter().enumerate() {
+                    if earlier.timestamp > event.timestamp {
+                        at = index;
+                        break;
+                    }
+                }
+                events.insert(at, (span, event));
+            }
+        }
         events
     }
 
     fn command_names(&self) -> Vec<String> {
-        self.commands()
-            .iter()
-            .map(|(_, event)| text(&event.attributes, "milter.command").unwrap_or_default())
-            .collect()
+        let mut names = Vec::new();
+        for (_, event) in self.commands() {
+            names.push(text(&event.attributes, "milter.command").unwrap_or_default());
+        }
+        names
     }
 }
 
@@ -152,14 +188,35 @@ fn attr(span: &SpanData, key: &str) -> Option<Value> {
 }
 
 fn find(attributes: &[KeyValue], key: &str) -> Option<Value> {
-    attributes
-        .iter()
-        .find(|kv| kv.key.as_str() == key)
-        .map(|kv| kv.value.clone())
+    for kv in attributes {
+        if kv.key.as_str() == key {
+            return Some(kv.value.clone());
+        }
+    }
+    None
 }
 
 fn text(attributes: &[KeyValue], key: &str) -> Option<String> {
-    find(attributes, key).map(|value| value.as_str().into_owned())
+    let value = find(attributes, key)?;
+    Some(value.as_str().into_owned())
+}
+
+/// The value of `key` on each span, in order.
+fn span_texts(spans: &[&SpanData], key: &str) -> Vec<Option<String>> {
+    let mut texts = Vec::new();
+    for span in spans {
+        texts.push(span_text(span, key));
+    }
+    texts
+}
+
+/// The names of the spans, in order.
+fn span_names<'a>(spans: &[&'a SpanData]) -> Vec<&'a str> {
+    let mut names = Vec::new();
+    for span in spans {
+        names.push(span.name.as_ref());
+    }
+    names
 }
 
 fn span_text(span: &SpanData, key: &str) -> Option<String> {
@@ -168,11 +225,9 @@ fn span_text(span: &SpanData, key: &str) -> Option<String> {
 
 /// A server whose `trace_commands` is `commands`.
 async fn server_with(commands: TraceCommands) -> TestServer {
-    TestServer::start_with(
-        |config| config.telemetry.trace_commands = commands,
-        ContinueAll::new,
-    )
-    .await
+    let mut config = support::config();
+    config.telemetry.trace_commands = commands;
+    TestServer::start_with(config, ContinueAll).await
 }
 
 async fn message(mta: &mut Mta) {
@@ -185,7 +240,7 @@ async fn message(mta: &mut Mta) {
 
 #[tokio::test]
 async fn tel_020_spans_follow_connections_sessions_and_messages() {
-    let server = TestServer::start(ContinueAll::new).await;
+    let server = TestServer::start(ContinueAll).await;
     let window = Window::open(&server);
     let mut mta = server.mta().await;
     mta.reach(Reach::Helo).await;
@@ -204,24 +259,24 @@ async fn tel_020_spans_follow_connections_sessions_and_messages() {
     let connection = connections[0];
     assert_eq!(connection.span_kind, SpanKind::Server);
     let sessions = traces.children(connection);
-    let names: Vec<&str> = sessions.iter().map(|s| s.name.as_ref()).collect();
-    assert_eq!(names, ["milter.session", "milter.session"]);
+    assert_eq!(span_names(&sessions), ["milter.session", "milter.session"]);
     let first = traces.children(sessions[0]);
-    let names: Vec<&str> = first.iter().map(|s| s.name.as_ref()).collect();
-    assert_eq!(names, ["milter.message", "milter.message"]);
+    assert_eq!(span_names(&first), ["milter.message", "milter.message"]);
     assert!(traces.children(sessions[1]).is_empty());
     assert_eq!(sessions[1].span_kind, SpanKind::Internal);
-    let ids: Vec<Option<Value>> = sessions
-        .iter()
-        .map(|s| attr(s, "milter.session.id"))
-        .collect();
-    assert!(ids.iter().all(Option::is_some), "{ids:?}");
+    let mut ids = Vec::new();
+    for session in &sessions {
+        ids.push(attr(session, "milter.session.id"));
+    }
+    for id in &ids {
+        assert!(id.is_some(), "{ids:?}");
+    }
     assert_ne!(ids[0], ids[1]);
 }
 
 #[tokio::test]
 async fn tel_021_a_message_span_carries_the_queue_id() {
-    let server = TestServer::start(ContinueAll::new).await;
+    let server = TestServer::start(ContinueAll).await;
     let window = Window::open(&server);
     let mut with_id = server.mta().await;
     with_id.reach(Reach::Body).await;
@@ -235,16 +290,13 @@ async fn tel_021_a_message_span_carries_the_queue_id() {
     without.close().await;
     let traces = window.close(server).await;
     let messages = traces.named("milter.message");
-    let ids: Vec<Option<String>> = messages
-        .iter()
-        .map(|m| span_text(m, "milter.queue_id"))
-        .collect();
+    let ids = span_texts(&messages, "milter.queue_id");
     assert_eq!(ids, [Some("4XyZ12".to_owned()), None]);
 }
 
 #[tokio::test]
 async fn tel_022_the_connection_span_names_both_ends() {
-    let server = TestServer::start(ContinueAll::new).await;
+    let server = TestServer::start(ContinueAll).await;
     let window = Window::open(&server);
     let port = window.port;
     let mut mta = server.mta().await;
@@ -288,7 +340,7 @@ async fn tel_022_the_connection_span_names_both_ends() {
 
 #[tokio::test]
 async fn tel_023_a_protocol_error_marks_the_connection_span() {
-    let server = TestServer::start(ContinueAll::new).await;
+    let server = TestServer::start(ContinueAll).await;
     let window = Window::open(&server);
     let mut mta = server.mta().await;
     mta.negotiate().await;
@@ -364,7 +416,7 @@ async fn tel_024_trace_commands_sets_which_commands_become_events() {
 
 #[tokio::test]
 async fn tel_025_span_names_are_fixed() {
-    let server = TestServer::start(ContinueAll::new).await;
+    let server = TestServer::start(ContinueAll).await;
     let window = Window::open(&server);
     let mut mta = server.mta().await;
     mta.reach(Reach::Endm).await;
@@ -401,7 +453,7 @@ impl Handler for Annotating {
 
 #[tokio::test]
 async fn tel_026_a_handler_attribute_lands_on_the_session_span() {
-    let server = TestServer::start(|_| Annotating).await;
+    let server = TestServer::start(Annotating).await;
     let window = Window::open(&server);
     let mut mta = server.mta().await;
     mta.reach(Reach::Helo).await;
@@ -451,7 +503,7 @@ impl Handler for Deciding {
 
 #[tokio::test]
 async fn tel_027_session_and_message_spans_record_the_final_decision() {
-    let server = TestServer::start(|_| Deciding).await;
+    let server = TestServer::start(Deciding).await;
     let window = Window::open(&server);
     let mut rejected = server.mta().await;
     rejected.negotiate().await;
@@ -488,21 +540,26 @@ async fn tel_027_session_and_message_spans_record_the_final_decision() {
     mta.send(SMFIC_ABORT, Bytes::new()).await;
     mta.close().await;
     let traces = window.close(server).await;
-    let sessions: Vec<Option<String>> = traces
-        .named("milter.session")
-        .iter()
-        .map(|s| span_text(s, "milter.reply"))
-        .collect();
+    let sessions = span_texts(&traces.named("milter.session"), "milter.reply");
     assert_eq!(sessions, [Some("reject".to_owned()), None]);
-    let messages: Vec<Option<String>> = traces
-        .named("milter.message")
-        .iter()
-        .map(|m| span_text(m, "milter.reply"))
-        .collect();
+    let messages = span_texts(&traces.named("milter.message"), "milter.reply");
     assert_eq!(
         messages,
         [Some("accept".to_owned()), Some("accept".to_owned()), None]
     );
+}
+
+/// The first `milter.command` event for `name`, with its span.
+fn command_event<'a>(
+    events: &[(&'a SpanData, &'a opentelemetry::trace::Event)],
+    name: &str,
+) -> (&'a SpanData, &'a opentelemetry::trace::Event) {
+    for (span, event) in events {
+        if text(&event.attributes, "milter.command").as_deref() == Some(name) {
+            return (span, event);
+        }
+    }
+    panic!("no {name} event");
 }
 
 #[tokio::test]
@@ -518,26 +575,19 @@ async fn tel_028_command_events_go_to_the_innermost_span() {
     let session = traces.named("milter.session")[0];
     let connection = traces.named("milter.connection")[0];
     let events = traces.commands();
-    let on = |name: &str| {
-        events
-            .iter()
-            .find(|(_, event)| text(&event.attributes, "milter.command").as_deref() == Some(name))
-            .copied()
-            .unwrap_or_else(|| panic!("no {name} event"))
-    };
-    let (span, mail) = on("mail");
+    let (span, mail) = command_event(&events, "mail");
     assert_eq!(span.span_context.span_id(), message.span_context.span_id());
     assert_eq!(
         text(&mail.attributes, "milter.reply").as_deref(),
         Some("continue")
     );
-    let (span, abort) = on("abort");
+    let (span, abort) = command_event(&events, "abort");
     assert_eq!(span.span_context.span_id(), message.span_context.span_id());
     assert_eq!(
         text(&abort.attributes, "milter.reply").as_deref(),
         Some("noreply")
     );
-    let (span, _) = on("connect");
+    let (span, _) = command_event(&events, "connect");
     assert_eq!(span.span_context.span_id(), session.span_context.span_id());
     for (_, event) in &events {
         assert!(
@@ -548,11 +598,12 @@ async fn tel_028_command_events_go_to_the_innermost_span() {
             "{event:?}"
         );
     }
-    let negotiated: Vec<_> = connection
-        .events
-        .iter()
-        .filter(|event| event.name == "milter.negotiated")
-        .collect();
+    let mut negotiated = Vec::new();
+    for event in connection.events.iter() {
+        if event.name == "milter.negotiated" {
+            negotiated.push(event);
+        }
+    }
     assert_eq!(negotiated.len(), 1);
     assert_eq!(
         find(&negotiated[0].attributes, "milter.protocol.version"),
@@ -562,11 +613,9 @@ async fn tel_028_command_events_go_to_the_innermost_span() {
 
 #[tokio::test]
 async fn tel_029_a_timeout_or_a_reset_is_no_span_error() {
-    let server = TestServer::start_with(
-        |config| config.timeouts.idle = Duration::from_secs(1),
-        ContinueAll::new,
-    )
-    .await;
+    let mut config = support::config();
+    config.timeouts.idle = Duration::from_secs(1);
+    let server = TestServer::start_with(config, ContinueAll).await;
     let window = Window::open(&server);
     let mut idle = server.mta().await;
     idle.negotiate().await;
@@ -640,11 +689,9 @@ impl Handler for Marking {
 
 #[tokio::test]
 async fn tel_030_no_smtp_data_reaches_spans_events_or_logs() {
-    let server = TestServer::start_with(
-        |config| config.telemetry.trace_commands = TraceCommands::All,
-        |_| Marking,
-    )
-    .await;
+    let mut config = support::config();
+    config.telemetry.trace_commands = TraceCommands::All;
+    let server = TestServer::start_with(config, Marking).await;
     let window = Window::open(&server);
     let mut mta = server.mta().await;
     mta.negotiate().await;
@@ -711,11 +758,10 @@ async fn tel_030_no_smtp_data_reaches_spans_events_or_logs() {
             found.extend(markers_in(&format!("{event:?}"), &event.name));
         }
     }
-    let ids: Vec<TraceId> = traces
-        .spans
-        .iter()
-        .map(|s| s.span_context.trace_id())
-        .collect();
+    let mut ids = Vec::new();
+    for span in &traces.spans {
+        ids.push(span.span_context.trace_id());
+    }
     for log in logs_of(&ids) {
         found.extend(markers_in(&format!("{:?}", log.record), "log record"));
     }
@@ -728,27 +774,55 @@ async fn tel_030_no_smtp_data_reaches_spans_events_or_logs() {
 }
 
 fn markers_in(text: &str, place: &str) -> Vec<String> {
-    MARKERS
-        .iter()
-        .filter(|marker| text.contains(*marker))
-        .map(|marker| format!("{marker} in {place}: {text}"))
-        .collect()
+    let mut found = Vec::new();
+    for marker in MARKERS {
+        if text.contains(marker) {
+            found.push(format!("{marker} in {place}: {text}"));
+        }
+    }
+    found
 }
 
 fn logs_of(
     traces: &[TraceId],
 ) -> Vec<opentelemetry_sdk::logs::in_memory_exporter::LogDataWithResource> {
-    exporters()
+    let emitted = exporters()
         .logs
         .get_emitted_logs()
-        .expect("the log exporter can be read")
-        .into_iter()
-        .filter(|log| {
-            log.record
-                .trace_context()
-                .is_some_and(|context| traces.contains(&context.trace_id))
-        })
-        .collect()
+        .expect("the log exporter can be read");
+    let mut logs = Vec::new();
+    for log in emitted {
+        if let Some(context) = log.record.trace_context() {
+            if traces.contains(&context.trace_id) {
+                logs.push(log);
+            }
+        }
+    }
+    logs
+}
+
+/// The span of the log record whose body is `body`.
+fn span_of(
+    logs: &[opentelemetry_sdk::logs::in_memory_exporter::LogDataWithResource],
+    body: &str,
+) -> Option<SpanId> {
+    for log in logs {
+        if matches!(log.record.body(), Some(AnyValue::String(text)) if text.as_str() == body) {
+            let context = log.record.trace_context()?;
+            return Some(context.span_id);
+        }
+    }
+    None
+}
+
+/// Whether the log record has a `milter.command` attribute naming `mail`.
+fn is_mail_command(log: &opentelemetry_sdk::logs::in_memory_exporter::LogDataWithResource) -> bool {
+    for (key, value) in log.record.attributes_iter() {
+        if key.as_str() == "milter.command" && format!("{value:?}").contains("mail") {
+            return true;
+        }
+    }
+    false
 }
 
 #[tokio::test]
@@ -763,27 +837,18 @@ async fn tel_031_log_records_carry_the_span_they_were_written_in() {
     let connection = traces.named("milter.connection")[0];
     let ids = [connection.span_context.trace_id()];
     let logs = logs_of(&ids);
-    let span_of = |body: &str| -> Option<SpanId> {
-        logs.iter()
-            .find(|log| {
-                matches!(log.record.body(), Some(AnyValue::String(text)) if text.as_str() == body)
-            })
-            .and_then(|log| log.record.trace_context().map(|context| context.span_id))
-    };
-    let mail = logs
-        .iter()
-        .find(|log| {
-            log.record.attributes_iter().any(|(key, value)| {
-                key.as_str() == "milter.command" && format!("{value:?}").contains("mail")
-            })
-        })
-        .expect("the mail command event as a log record");
+    let mut mail = None;
+    for log in &logs {
+        if is_mail_command(log) {
+            mail = Some(log);
+            break;
+        }
+    }
+    let mail = mail.expect("the mail command event as a log record");
+    let context = mail.record.trace_context().expect("a trace context");
+    assert_eq!(context.span_id, message.span_context.span_id());
     assert_eq!(
-        mail.record.trace_context().map(|context| context.span_id),
-        Some(message.span_context.span_id())
-    );
-    assert_eq!(
-        span_of("Connection closed"),
+        span_of(&logs, "Connection closed"),
         Some(connection.span_context.span_id())
     );
 }

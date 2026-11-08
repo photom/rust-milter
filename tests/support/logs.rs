@@ -28,7 +28,7 @@ pub struct CaptureGuard;
 
 impl Drop for CaptureGuard {
     fn drop(&mut self) {
-        CURRENT.with(|current| current.borrow_mut().take());
+        CURRENT.take();
     }
 }
 
@@ -43,7 +43,10 @@ pub struct Captured {
 impl Captured {
     /// A field's value, as `tracing` formats it.
     pub fn field(&self, name: &str) -> Option<&str> {
-        self.fields.get(name).map(String::as_str)
+        match self.fields.get(name) {
+            Some(value) => Some(value.as_str()),
+            None => None,
+        }
     }
 }
 
@@ -60,7 +63,7 @@ impl Logs {
                 .expect("no other global subscriber in the tests");
         });
         let logs = Logs::default();
-        CURRENT.with(|current| *current.borrow_mut() = Some(logs.clone()));
+        CURRENT.set(Some(logs.clone()));
         (logs, CaptureGuard)
     }
 
@@ -70,10 +73,13 @@ impl Logs {
 
     /// The events with this message.
     pub fn named(&self, message: &str) -> Vec<Captured> {
-        self.all()
-            .into_iter()
-            .filter(|e| e.message == message)
-            .collect()
+        let mut named = Vec::new();
+        for event in self.all() {
+            if event.message == message {
+                named.push(event);
+            }
+        }
+        named
     }
 
     /// The one event with this message; panics if there is not exactly one.
@@ -85,10 +91,13 @@ impl Logs {
 
     /// The events above DEBUG: INFO is allowed, WARN and ERROR are not.
     pub fn warnings(&self) -> Vec<Captured> {
-        self.all()
-            .into_iter()
-            .filter(|e| e.level == Level::WARN || e.level == Level::ERROR)
-            .collect()
+        let mut warnings = Vec::new();
+        for event in self.all() {
+            if event.level == Level::WARN || event.level == Level::ERROR {
+                warnings.push(event);
+            }
+        }
+        warnings
     }
 }
 
@@ -97,18 +106,18 @@ struct Forward;
 
 impl<S: Subscriber> Layer<S> for Forward {
     fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
-        CURRENT.with(|current| {
-            let Some(logs) = current.borrow().clone() else {
-                return;
-            };
-            let mut fields = Fields::default();
-            event.record(&mut fields);
-            let message = fields.0.remove("message").unwrap_or_default();
-            logs.0.lock().unwrap().push(Captured {
-                level: *event.metadata().level(),
-                message,
-                fields: fields.0,
-            });
+        let current = CURRENT.take();
+        CURRENT.set(current.clone());
+        let Some(logs) = current else {
+            return;
+        };
+        let mut fields = Fields::default();
+        event.record(&mut fields);
+        let message = fields.0.remove("message").unwrap_or_default();
+        logs.0.lock().unwrap().push(Captured {
+            level: *event.metadata().level(),
+            message,
+            fields: fields.0,
         });
     }
 }
