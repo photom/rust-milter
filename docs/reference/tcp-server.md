@@ -262,19 +262,16 @@ rust-milter is a library and never exits the process itself. These are the exit 
 
 ### Shutdown coordination
 
-The shutdown coordinator manages these parts:
+The shutdown coordinator works with three cancellation tokens and a task tracker:
 
-| Component | Description |
-|-----------|-------------|
-| Cancellation token | Coordinated shutdown signal propagation |
-| Broadcast channel | Shutdown notifications with reason |
-| Active connection counter | Track connections for drain completion |
-| Completion notifier | Signal when all connections are closed |
+| Part | What it does |
+|------|--------------|
+| Stop token | Cancelled when the shutdown starts (step 3): the accept loops end and the reload coordinator stops |
+| Shutdown token | Cancelled when the grace period ends (step 5); handlers see it as `shutdown()` in their context |
+| Force token | Cancelled when the drain timeout expires, by `force_shutdown()`, or by a second shutdown signal: every connection closes at once |
+| Connection task tracker | Tracks the open connections, so the grace period and the drain end early when the last one closes |
 
-Shutdown reasons:
-- signal, with the signal number
-- manual, from a programmatic shutdown
-- error, with the error description
+A shutdown starts for one of two reasons, which the "Shutdown signal received" and "Shutdown requested" logs record: a signal, with its number and name, or a call to `ServerHandle::shutdown()` or `force_shutdown()` (`manual`). No error starts a shutdown: once `run()` has bound the listeners and registered the signal handlers, it returns only after a shutdown.
 
 ### Shutdown timeline
 

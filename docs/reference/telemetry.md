@@ -158,7 +158,7 @@ What each one counts:
 | `milter.reload_result` | `applied`, `failed` |
 | `milter.reload_source` | `sighup`, `api` |
 
-Every attribute is an enum in the code, so a new value needs a code change and an update to this table.
+The code keeps each attribute's values in a fixed table, so a new value needs a code change and an update to this table.
 
 ## Traces
 
@@ -265,7 +265,7 @@ When OpenTelemetry metrics are converted to Prometheus, dots become underscores,
 ## Performance
 
 - Counters and gauges are observable instruments that read the status atomics at collection time. Recording a connection or a command costs one atomic increment, with or without the `otel` feature.
-- Each counter attribute has a fixed set of values, so the status counters are fixed arrays of atomics indexed by the attribute enums. No map or lock sits on the hot path.
+- Each counter attribute has a fixed set of values, so the status counters are fixed arrays of atomics indexed by position in those tables. No map or lock sits on the hot path.
 - Histograms are synchronous and record once per connection, message, or end of message, never per header or body chunk.
 - Span creation follows the application's sampler. With `trace_commands` set to `all`, a message with many headers produces many events; keep it for debugging.
 

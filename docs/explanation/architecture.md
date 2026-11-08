@@ -119,7 +119,7 @@ Responsibilities:
 - negotiate options: protocol version (2 to 6), action flags from `Handler::actions()`, protocol flags from `Handler::events()`
 - track the protocol state with libmilter's transition rules, recover from a command in a wrong state where libmilter recovers, and close the connection where libmilter would leave the MTA waiting ([ADR 0001](../adr/0001-commands-in-wrong-state-recover-like-libmilter-or-close.md))
 - store macros per stage and clear them when the session ends
-- create the handler's `Session` value at `SMFIC_CONNECT` and its `Message` value at `SMFIC_MAIL` (or at the first command of a message when the handler leaves `MAIL` out of `events()`), and drop them when the session or message ends
+- create the handler's `Session` value when a callback first asks for it in a session, and its `Message` value at `SMFIC_MAIL` (or at the first command of a message when the handler leaves `MAIL` out of `events()`), and drop them when the session or message ends
 - call the matching handler callback for each command, and turn its decision into the protocol reply, or into no reply where the protocol forbids one
 - offer the modification methods only at end of message, and check that their actions were negotiated
 
@@ -181,7 +181,7 @@ Telemetry never records SMTP session data. The metric names, span structure, and
 ### 11. Error types
 
 Responsibilities:
-- define typed error enums: `Error`, `ConfigError`, `ReloadError`, `ProtocolError`, `AddressError`
+- define typed error enums: `Error`, `ConfigError`, `ReloadError`, `ProtocolError`, `ReplyError`, `AddressError`
 - keep the cause of each error in `source()`
 
 The variants are listed in [api-specification.md](../reference/api-specification.md#errors).
@@ -363,9 +363,9 @@ The Connection component owns the transport state. The protocol engine owns the 
 
 ### Memory
 
-- each connection has one read buffer and one write buffer that grow up to `per_connection_buffer` (default 128 KB, minimum 65,540 bytes, the largest default-size milter packet)
+- each connection has one read buffer that grows up to `per_connection_buffer` (default 128 KB, minimum 65,540 bytes, the largest default-size milter packet), and one write buffer that holds one reply at a time
 - frame data is shared without copying through `bytes::Bytes`
-- `max_memory` caps the total of all connection buffers
+- `max_memory` caps the total of the read buffers; the write buffers and the values handlers keep are not counted
 
 ### File descriptors
 
@@ -379,7 +379,7 @@ All limits and defaults are in [configuration.md](../reference/configuration.md)
 
 Practices the implementation follows inside the data plane:
 - `tokio::select!` with the shutdown token wherever a task waits, so cancellation is prompt and safe.
-- Buffered I/O on each connection, with buffers reused for the life of the connection and bounded by `per_connection_buffer`.
+- Buffered I/O on each connection, with buffers reused for the life of the connection; the read buffer is bounded by `per_connection_buffer`.
 - `bytes::Bytes` for frame data, so body chunks and header values are shared rather than copied.
 - No blocking calls on runtime threads; CPU-heavy work, if a handler needs it, goes to `tokio::task::spawn_blocking`.
 - File descriptors released as soon as a connection closes; on exhaustion the accept loop backs off instead of failing.
