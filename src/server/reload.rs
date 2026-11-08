@@ -262,9 +262,11 @@ fn copy(outcome: &Outcome) -> Outcome {
 
 /// The text of an error and of its `source()` chain, for the copies of a
 /// shared error.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{message}")]
 struct Copied {
     message: String,
+    #[source]
     source: Option<Box<Copied>>,
 }
 
@@ -278,21 +280,6 @@ impl Copied {
             copied.source = Some(Box::new(Copied::of(source)));
         }
         copied
-    }
-}
-
-impl std::fmt::Display for Copied {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.message)
-    }
-}
-
-impl std::error::Error for Copied {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match &self.source {
-            Some(source) => Some(source.as_ref()),
-            None => None,
-        }
     }
 }
 
@@ -492,5 +479,46 @@ mod tests {
         assert_eq!(outcome.await.unwrap().unwrap().generation, 2);
         running.task.await.unwrap();
         assert_eq!(*target.published.lock().unwrap(), [2]);
+    }
+
+    /// An error with a source of its own, as a loader or a bind can return.
+    #[derive(Debug, thiserror::Error)]
+    #[error("cannot read milter.toml")]
+    struct Unreadable(#[source] std::io::Error);
+
+    /// The message of `error`, then the message of each error in its
+    /// `source()` chain.
+    fn messages(error: &(dyn std::error::Error + 'static)) -> Vec<String> {
+        let mut messages = vec![error.to_string()];
+        let mut next = error.source();
+        while let Some(source) = next {
+            messages.push(source.to_string());
+            next = source.source();
+        }
+        messages
+    }
+
+    #[test]
+    fn rld_007_a_copied_error_keeps_the_messages_of_its_source_chain() {
+        let not_found = std::io::Error::new(std::io::ErrorKind::NotFound, "no such file");
+        let loaded: Outcome = Err(ReloadError::Load(Box::new(Unreadable(not_found))));
+        let taken = Unreadable(std::io::Error::other("port 8891 is taken"));
+        let bound: Outcome = Err(ReloadError::Bind {
+            addr: "127.0.0.1:8891".parse().unwrap(),
+            source: std::io::Error::new(std::io::ErrorKind::AddrInUse, taken),
+        });
+
+        for original in [loaded, bound] {
+            let copied = copy(&original);
+
+            let (Err(original), Err(copied)) = (&original, &copied) else {
+                panic!("both outcomes are errors");
+            };
+            assert_eq!(messages(copied), messages(original));
+            assert!(messages(original).len() >= 3, "{original:?}");
+            if let ReloadError::Bind { source, .. } = copied {
+                assert_eq!(source.kind(), std::io::ErrorKind::AddrInUse);
+            }
+        }
     }
 }
