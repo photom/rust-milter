@@ -29,6 +29,11 @@ impl Listen for TcpListener {
     }
 }
 
+/// What takes on the connections an accept loop accepts.
+pub(super) trait OnAccept<S> {
+    fn accepted(&mut self, stream: S, peer: SocketAddr);
+}
+
 /// The pause after each consecutive accept error.
 #[derive(Debug, Default)]
 struct Backoff {
@@ -55,11 +60,11 @@ impl Backoff {
 /// `ECONNABORTED`, a client that gave up before `accept()` returned, is
 /// retried at once. Every other error, such as `EMFILE` or `ENFILE`, pauses
 /// the loop with [`Backoff`], so a failing listener never spins.
-pub(super) async fn accept_loop<L: Listen>(
+pub(super) async fn accept_loop<L: Listen, O: OnAccept<L::Stream>>(
     mut listener: L,
     address: SocketAddr,
     shutdown: &CancellationToken,
-    mut on_accept: impl FnMut(L::Stream, SocketAddr),
+    on_accept: &mut O,
 ) {
     let mut backoff = Backoff::default();
     loop {
@@ -70,7 +75,7 @@ pub(super) async fn accept_loop<L: Listen>(
         match accepted {
             Ok((stream, peer)) => {
                 backoff.reset();
-                on_accept(stream, peer);
+                on_accept.accepted(stream, peer);
             }
             Err(error) if error.kind() == io::ErrorKind::ConnectionAborted => {
                 tracing::debug!(listener = %address, error = %error, "Accept error");
@@ -115,9 +120,20 @@ mod tests {
         async fn accept(&mut self) -> io::Result<((), SocketAddr)> {
             self.calls.lock().unwrap().push(Instant::now());
             match self.script.pop_front() {
-                Some(result) => result.map(|()| ((), "192.0.2.9:4711".parse().unwrap())),
+                Some(Ok(())) => Ok(((), "192.0.2.9:4711".parse().unwrap())),
+                Some(Err(error)) => Err(error),
                 None => std::future::pending().await,
             }
+        }
+    }
+
+    /// Counts the connections handed on.
+    #[derive(Default)]
+    struct Count(usize);
+
+    impl OnAccept<()> for Count {
+        fn accepted(&mut self, (): (), _peer: SocketAddr) {
+            self.0 += 1;
         }
     }
 
@@ -143,15 +159,13 @@ mod tests {
         let logs = Arc::new(Mutex::new(Vec::new()));
         let _guard = capture(Arc::clone(&logs));
         let shutdown = CancellationToken::new();
-        let mut accepted = 0;
+        let mut accepted = Count::default();
 
         let looping = accept_loop(
             fake,
             "127.0.0.1:61000".parse().unwrap(),
             &shutdown,
-            |(), _| {
-                accepted += 1;
-            },
+            &mut accepted,
         );
         // The paused clock advances through the pauses; the last accept
         // waits forever, so the timeout ends the run.
@@ -159,9 +173,12 @@ mod tests {
 
         let calls = calls.lock().unwrap();
         assert_eq!(calls.len(), length + 1, "every scripted result was used");
-        let pauses = calls.windows(2).map(|pair| pair[1] - pair[0]).collect();
+        let mut pauses = Vec::new();
+        for pair in calls.windows(2) {
+            pauses.push(pair[1] - pair[0]);
+        }
         let logs = logs.lock().unwrap().clone();
-        (pauses, accepted, logs)
+        (pauses, accepted.0, logs)
     }
 
     type Captured = Arc<Mutex<Vec<(tracing::Level, String)>>>;
@@ -175,7 +192,7 @@ mod tests {
 
     impl Drop for Guard {
         fn drop(&mut self) {
-            CURRENT.with(|current| current.borrow_mut().take());
+            CURRENT.take();
         }
     }
 
@@ -187,7 +204,7 @@ mod tests {
             let subscriber = tracing_subscriber::registry().with(Capture);
             tracing::subscriber::set_global_default(subscriber).unwrap();
         });
-        CURRENT.with(|current| *current.borrow_mut() = Some(logs));
+        CURRENT.set(Some(logs));
         Guard
     }
 
@@ -199,7 +216,9 @@ mod tests {
             event: &tracing::Event<'_>,
             _ctx: tracing_subscriber::layer::Context<'_, S>,
         ) {
-            let Some(logs) = CURRENT.with(|current| current.borrow().clone()) else {
+            let current = CURRENT.take();
+            CURRENT.set(current.clone());
+            let Some(logs) = current else {
                 return;
             };
             struct Errors(String);
@@ -223,7 +242,11 @@ mod tests {
     }
 
     fn ms(values: &[u64]) -> Vec<Duration> {
-        values.iter().map(|&v| Duration::from_millis(v)).collect()
+        let mut pauses = Vec::new();
+        for &value in values {
+            pauses.push(Duration::from_millis(value));
+        }
+        pauses
     }
 
     #[tokio::test(start_paused = true)]
@@ -241,17 +264,21 @@ mod tests {
 
         assert_eq!(pauses, ms(&[100, 200, 400, 800, 0, 100]));
         assert_eq!(accepted, 1);
-        let warnings: Vec<&str> = logs
-            .iter()
-            .filter(|(level, _)| *level == tracing::Level::WARN)
-            .map(|(_, count)| count.as_str())
-            .collect();
+        let mut warnings = Vec::new();
+        for (level, count) in &logs {
+            if *level == tracing::Level::WARN {
+                warnings.push(count.as_str());
+            }
+        }
         assert_eq!(warnings, ["1", "2", "3", "4", "1"]);
     }
 
     #[tokio::test(start_paused = true)]
     async fn srv_054_the_pause_stays_at_one_second() {
-        let script = (0..10).map(|_| os_error(ENFILE)).collect();
+        let mut script = Vec::new();
+        for _ in 0..10 {
+            script.push(os_error(ENFILE));
+        }
 
         let (pauses, _, _) = run(script).await;
 
