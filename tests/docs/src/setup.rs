@@ -23,12 +23,19 @@ pub fn prepare(document: &str) -> Result<String, String> {
         if line.trim() == START {
             let (setup, after) = setup_comment(&lines, index)?;
             let mut next = after;
-            while lines.get(next).is_some_and(|l| l.trim().is_empty()) {
+            while next < lines.len() && lines[next].trim().is_empty() {
                 push(&mut out, lines[next]);
                 next += 1;
             }
-            let fence = lines.get(next).and_then(|l| Fence::open(l));
-            let Some(fence) = fence.filter(|f| f.is_rust()) else {
+            let mut rust_fence = None;
+            if let Some(line) = lines.get(next) {
+                if let Some(fence) = Fence::open(line) {
+                    if fence.is_rust() {
+                        rust_fence = Some(fence);
+                    }
+                }
+            }
+            let Some(fence) = rust_fence else {
                 return Err(format!(
                     "line {}: a setup comment must come right before a Rust block",
                     index + 1
@@ -92,27 +99,45 @@ impl<'a> Fence<'a> {
         let indent = indentation(line);
         let rest = &line[indent.len()..];
         let ticks = rest.len() - rest.trim_start_matches('`').len();
-        (ticks >= 3).then(|| Fence {
+        if ticks < 3 {
+            return None;
+        }
+        Some(Fence {
             indent,
             ticks,
             info: rest[ticks..].trim(),
         })
     }
 
-    fn attributes(&self) -> impl Iterator<Item = &'a str> {
-        self.info
-            .split([',', ' ', '\t'])
-            .filter(|attribute| !attribute.is_empty())
+    fn attributes(&self) -> Vec<&'a str> {
+        let mut attributes = Vec::new();
+        for attribute in self.info.split([',', ' ', '\t']) {
+            if !attribute.is_empty() {
+                attributes.push(attribute);
+            }
+        }
+        attributes
     }
 
     fn is_rust(&self) -> bool {
-        self.attributes().next() == Some("rust")
+        self.attributes().first() == Some(&"rust")
+    }
+
+    /// Whether the block already has an attribute that keeps rustdoc from
+    /// running it: `ignore`, `no_run`, or `compile_fail`.
+    fn skips_run(&self) -> bool {
+        for attribute in self.attributes() {
+            if matches!(attribute, "ignore" | "no_run" | "compile_fail") {
+                return true;
+            }
+        }
+        false
     }
 
     /// Whether `line` closes this block.
     fn closed_by(&self, line: &str) -> bool {
         let line = line.trim();
-        line.len() >= self.ticks && line.bytes().all(|byte| byte == b'`')
+        line.len() >= self.ticks && line.trim_start_matches('`').is_empty()
     }
 }
 
@@ -132,10 +157,7 @@ fn block(
             start + 1
         ));
     }
-    let skip = fence
-        .attributes()
-        .any(|attribute| matches!(attribute, "ignore" | "no_run" | "compile_fail"));
-    if fence.is_rust() && !skip {
+    if fence.is_rust() && !fence.skips_run() {
         push(out, &format!("{},no_run", lines[start].trim_end()));
     } else {
         push(out, lines[start]);
