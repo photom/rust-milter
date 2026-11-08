@@ -181,7 +181,7 @@ How to run the stack is in [Run the tests](../how-to/run-the-tests.md#run-the-in
 
 ## CI
 
-GitHub Actions runs these jobs on every push to `main` and on every pull request. The tools are chosen in [testing ADR 0002](../testing/adr/0002-ci-scans-with-cargo-deny-clippy-and-codeql.md).
+GitHub Actions runs these jobs on every push to `main` and on every pull request, except the advisory check, which runs on a schedule. The tools are chosen in [testing ADR 0002](../testing/adr/0002-ci-scans-with-cargo-deny-clippy-and-codeql.md), and the daily advisory check in [testing ADR 0005](../testing/adr/0005-dependency-advisories-are-checked-daily.md).
 
 | Job | Workflow | Checks |
 |-----|----------|--------|
@@ -193,6 +193,7 @@ GitHub Actions runs these jobs on every push to `main` and on every pull request
 | Dependencies | `ci.yml` | cargo-deny: known vulnerabilities, yanked crates, licenses, and sources, as set in `deny.toml` |
 | Interoperability | `ci.yml` | The `INT` tests in the [interoperability environment](#interoperability-environment) |
 | CodeQL | `codeql.yml` | CodeQL's Rust analysis; also runs weekly |
+| Advisories | `advisories.yml` | cargo-deny's advisory check alone, every day at 05:23 UTC and on demand |
 
 Every action is pinned to a full commit SHA. Dependabot proposes updates to Cargo dependencies, the pinned actions, and the interop base images every week (`.github/dependabot.yml`).
 

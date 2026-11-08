@@ -1,0 +1,24 @@
+name: Advisories
+
+# The dependency check of ci.yml runs only on a push or a pull request. A
+# new RustSec advisory against a locked dependency appears without either,
+# so this workflow checks the advisories every day (testing ADR 0005).
+on:
+  schedule:
+    - cron: "23 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  advisories:
+    name: Advisories (cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check
+          arguments: --all-features
+          command-arguments: advisories
