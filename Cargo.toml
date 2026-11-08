@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "tests/docs", "tests/interop", "tests/style"]
+members = [".", "tests/docs", "tests/interop", "tests/load", "tests/style"]
 default-members = [".", "tests/docs", "tests/style"]
 resolver = "3"
 
