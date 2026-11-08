@@ -1,0 +1,32 @@
+name: Load and chaos
+
+# The LOD and CHS scenarios (testing ADR 0005): at full length weekly and on
+# demand, and in the short mode on pull requests that change the load tests.
+on:
+  schedule:
+    - cron: "41 2 * * 6"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "tests/load/**"
+      - ".github/workflows/load.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: load-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  load:
+    name: Load and chaos
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      RUST_MILTER_LOAD_SHORT: ${{ github.event_name == 'pull_request' && 'on' || 'off' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: docker compose -f tests/load/compose.yaml run --build --rm runner
+      - if: always()
+        run: docker compose -f tests/load/compose.yaml down --volumes

@@ -14,6 +14,7 @@ The fixed TCP ports that rust-milter's tests listen on, how tests share them, an
 - [Documentation check](#documentation-check)
 - [Style check](#style-check)
 - [Interoperability environment](#interoperability-environment)
+- [Load and chaos environment](#load-and-chaos-environment)
 - [CI](#ci)
 - [Toolchain](#toolchain)
 
@@ -179,9 +180,61 @@ Rules:
 
 How to run the stack is in [Run the tests](../how-to/run-the-tests.md#run-the-interoperability-tests).
 
+## Load and chaos environment
+
+The load and chaos scenarios (`LOD`, `CHS`) run in a Docker Compose stack defined in `tests/load/compose.yaml` ([testing ADR 0005](../testing/adr/0005-load-and-chaos-tests-run-weekly-against-a-child-process-milter.md)).
+
+```mermaid
+flowchart LR
+    subgraph runner["Compose service runner (no network)"]
+        tests["LOD and CHS tests<br/>and the load generator"]
+        milter["load-milter<br/>child process, port 8891 on loopback"]
+    end
+    tests -->|"milter protocol over loopback"| milter
+    tests -->|"status requests on standard input"| milter
+    milter -->|"status lines on standard output"| tests
+```
+
+| Part | Role |
+|------|------|
+| `runner` service | The official `rust` image, at the tag in `tests/load/runner/Dockerfile`, with the repository copied in. It builds the tests in release mode when the image is built, while the build can still reach the network, then runs them one at a time with no network |
+| `rust-milter-load` crate | `tests/load`, not published. Its library is the load generator, which speaks the MTA side of the protocol. Its tests are the scenarios, `#[ignore]`d, named by scenario ID |
+| `load-milter` binary | The milter under test, built in release mode with a handler that continues at every stage. Each test starts it as a child process and kills it at the end |
+
+The milter under test:
+
+| Property | Value |
+|----------|-------|
+| Configuration | The defaults, with `bind_addresses` = `127.0.0.1:8891` and the variables with the prefix `LOAD_MILTER_` that the test sets, read with `ServerConfig::from_env` |
+| Status | Each line `status` on its standard input gets one line on its standard output: `accepting`, `connections`, `accepted`, `rejected`, and `generation`, as `name=value` pairs separated by spaces |
+| End | It shuts down when its standard input closes, and the test kills it when the test ends |
+| Readings | The test counts the milter's open file descriptors in `/proc/<pid>/fd` |
+
+The service:
+
+| Setting | Value |
+|---------|-------|
+| Network | None (`network_mode: none`). The tests and the milter talk over loopback |
+| File descriptor limit | 65,536, soft and hard, enough for both ends of 10,000 connections |
+| `RUST_MILTER_LOAD_SHORT` | `on` selects the short mode; `off` or no value selects the full mode. Any other value fails the test |
+
+Modes:
+
+| Mode | Used by | Durations |
+|------|---------|-----------|
+| Full | The weekly run and manual runs | As written in the scenarios |
+| Short | Pull requests that change `tests/load/` or `.github/workflows/load.yml` | LOD-002: 1 minute instead of 10. Connection counts, rates, and pass criteria stay as written |
+
+Rules:
+1. The scenarios run one at a time (`--test-threads=1`), because each starts its own milter on port 8891, and because concurrent load would skew the measurements.
+2. The tests and the milter run in release mode.
+3. A scenario that needs neither a partition nor a lowered file descriptor limit can also run outside the stack, on Linux.
+
+How to run the stack is in [Run the tests](../how-to/run-the-tests.md#run-the-load-and-chaos-tests).
+
 ## CI
 
-GitHub Actions runs these jobs on every push to `main` and on every pull request. The tools are chosen in [testing ADR 0002](../testing/adr/0002-ci-scans-with-cargo-deny-clippy-and-codeql.md).
+GitHub Actions runs these jobs on every push to `main` and on every pull request, except where the table says otherwise. The tools are chosen in [testing ADR 0002](../testing/adr/0002-ci-scans-with-cargo-deny-clippy-and-codeql.md).
 
 | Job | Workflow | Checks |
 |-----|----------|--------|
@@ -193,9 +246,10 @@ GitHub Actions runs these jobs on every push to `main` and on every pull request
 | Dependencies | `ci.yml` | cargo-deny: known vulnerabilities, yanked crates, licenses, and sources, as set in `deny.toml` |
 | Interoperability | `ci.yml` | The `INT` tests in the [interoperability environment](#interoperability-environment) |
 | CodeQL | `codeql.yml` | CodeQL's Rust analysis; also runs weekly |
+| Load and chaos | `load.yml` | The `LOD` and `CHS` tests in the [load and chaos environment](#load-and-chaos-environment). Runs weekly and on manual dispatch at full length, and on pull requests that change `tests/load/` or `load.yml` in the short mode, not on pushes to `main` |
 
-Every action is pinned to a full commit SHA. Dependabot proposes updates to Cargo dependencies, the pinned actions, and the interop base images every week (`.github/dependabot.yml`).
+Every action is pinned to a full commit SHA. Dependabot proposes updates to Cargo dependencies, the pinned actions, and the base images of the interop and load stacks every week (`.github/dependabot.yml`).
 
 ## Toolchain
 
-The library's minimum supported Rust version stays 1.85. The test support code locks files with `std::fs::File::try_lock`, stable since Rust 1.89, so running the tests needs Rust 1.89 or later. `rust-toolchain.toml` is the only file that sets the toolchain version. It applies to work in the repository, to every CI job except MSRV, and to the interop runner, whatever the tag of the runner's image. The MSRV check in CI builds the library without its tests.
+The library's minimum supported Rust version stays 1.85. The test support code locks files with `std::fs::File::try_lock`, stable since Rust 1.89, so running the tests needs Rust 1.89 or later. `rust-toolchain.toml` is the only file that sets the toolchain version. It applies to work in the repository, to every CI job except MSRV, and to the interop and load runners, whatever the tag of the runner's image. The MSRV check in CI builds the library without its tests.

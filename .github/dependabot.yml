@@ -19,5 +19,6 @@ updates:
       - /tests/interop/sendmail
       - /tests/interop/runner
       - /tests/interop/dns
+      - /tests/load/runner
     schedule:
       interval: weekly

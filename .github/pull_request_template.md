@@ -15,6 +15,7 @@
 - [ ] `cargo test --workspace`
 - [ ] `cargo deny --all-features check`
 - [ ] Interoperability tests (`docker compose -f tests/interop/compose.yaml run --build --rm runner`)
+- [ ] Load and chaos tests, if `tests/load/` changed (`RUST_MILTER_LOAD_SHORT=on docker compose -f tests/load/compose.yaml run --build --rm runner`)
 
 ## Checklist
 

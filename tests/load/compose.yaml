@@ -1,0 +1,22 @@
+# Load and chaos stack: see docs/reference/test-environment.md
+# ("Load and chaos environment") and testing ADR 0005. Run with:
+#   docker compose -f tests/load/compose.yaml run --build --rm runner
+# Set RUST_MILTER_LOAD_SHORT=on for the short mode.
+name: rust-milter-load
+
+services:
+  # The tests and the milter under test, which each test starts as a child
+  # process. They talk over loopback.
+  runner:
+    build:
+      context: ../..
+      dockerfile: tests/load/runner/Dockerfile
+    # No network: nothing in the stack can reach anything outside it.
+    network_mode: none
+    # Room for both ends of 10,000 connections (LOD-001).
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    environment:
+      RUST_MILTER_LOAD_SHORT: ${RUST_MILTER_LOAD_SHORT:-off}
