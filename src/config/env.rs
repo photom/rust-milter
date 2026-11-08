@@ -174,7 +174,6 @@ fn set(config: &mut ServerConfig, path: &str, value: &str) -> Result<Effect, Fai
         "SOCKET_OPTIONS__IPV6_ONLY" => socket.ipv6_only = boolean(value)?,
         "SHUTDOWN__GRACE_PERIOD" => config.shutdown.grace_period = duration(value)?,
         "SHUTDOWN__DRAIN_TIMEOUT" => config.shutdown.drain_timeout = duration(value)?,
-        "RESOURCE_LIMITS__MAX_FDS" => limits.max_fds = Some(number(value)?),
         "RESOURCE_LIMITS__MAX_MEMORY" => limits.max_memory = Some(number(value)?),
         "RESOURCE_LIMITS__PER_CONNECTION_BUFFER" => limits.per_connection_buffer = number(value)?,
         "TELEMETRY__TRACE_COMMANDS" => config.telemetry.trace_commands = trace_commands(value)?,
