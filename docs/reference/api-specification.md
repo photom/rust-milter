@@ -500,7 +500,7 @@ Errors are `thiserror` enums. Every error type implements `std::error::Error`, `
 | `Config(ConfigError)` | Invalid configuration at build time | `build()` fails |
 | `Bind { addr, source }` | A listener could not bind | `run()` fails in `FailFast` mode |
 | `Signals(std::io::Error)` | `run()` could not register the handlers for `SIGTERM`, `SIGINT`, `SIGQUIT`, and `SIGHUP` | `run()` fails |
-| `ResourceLimit(ResourceKind)` | `MaxConnections`, `MaxFds`, or `MaxMemory` reached | connection rejected or closed |
+| `ResourceLimit(ResourceKind)` | `MaxConnections` or `MaxMemory` reached | connection rejected or closed |
 | `ShuttingDown` | The operation is not allowed during shutdown | none |
 
 ### ConfigError
@@ -511,7 +511,7 @@ Errors are `thiserror` enums. Every error type implements `std::error::Error`, `
 | `MissingBindAddress` | `bind_addresses` is empty |
 | `DuplicateBindAddress(SocketAddr)` | The same address appears twice |
 | `Address(AddressError)` | An address string could not be parsed |
-| `Inconsistent { rule, detail }` | A cross-field rule failed, such as `max_fds` too small for `max_connections` |
+| `Inconsistent { rule, detail }` | A cross-field rule failed, such as `max_memory` smaller than `per_connection_buffer` |
 | `Unsupported { field, reason }` | The platform does not support a setting, such as `reuse_port` |
 | `UnknownEnvVariable(String)` | An environment variable with the configured prefix names no setting |
 | `InvalidEnvValue { variable, reason }` | An environment variable's value cannot be parsed; the value itself is not included |

@@ -1,4 +1,4 @@
-//! File format scenarios (CFG-040 to CFG-051) from
+//! File format scenarios (CFG-040 to CFG-053) from
 //! `docs/testing/configuration.md`. They need the `serde` feature.
 
 #![cfg(feature = "serde")]
@@ -124,7 +124,6 @@ fn cfg_048_writes_every_field_and_reads_back_the_same_configuration() {
     config.socket_options.send_buffer_size = Some(65_536);
     config.socket_options.reuse_port = true;
     config.shutdown.grace_period = Duration::ZERO;
-    config.resource_limits.max_fds = Some(1_000);
     config.resource_limits.max_memory = Some(1 << 30);
     config.telemetry.trace_commands = TraceCommands::None;
 
@@ -151,7 +150,6 @@ fn cfg_048_writes_every_field_and_reads_back_the_same_configuration() {
         "ipv6_only",
         "grace_period",
         "drain_timeout",
-        "max_fds",
         "max_memory",
         "per_connection_buffer",
         "trace_commands",
@@ -214,4 +212,14 @@ fn cfg_052_round_trips_an_ipv6_scope_id() {
     let text = toml::to_string(&config).unwrap();
 
     assert_eq!(from_toml(&text).unwrap(), config, "TOML:\n{text}");
+}
+
+#[test]
+fn cfg_053_rejects_the_removed_max_fds_key() {
+    let error = from_toml(&document("[resource_limits]\nmax_fds = 20000\n")).unwrap_err();
+
+    assert!(
+        error.to_string().contains("max_fds"),
+        "the error does not name the key: {error}"
+    );
 }

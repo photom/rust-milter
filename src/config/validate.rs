@@ -15,10 +15,6 @@ const MINUTE: Duration = Duration::from_secs(60);
 const HOUR: Duration = Duration::from_secs(3600);
 const DAY: Duration = Duration::from_secs(86_400);
 
-/// File descriptors kept free beyond connections and listeners, so the
-/// server can always accept, log, and close.
-const SPARE_FDS: usize = 10;
-
 /// Whether the platform has `SO_REUSEPORT`.
 const REUSE_PORT_SUPPORTED: bool = cfg!(any(
     target_os = "linux",
@@ -35,8 +31,8 @@ impl ServerConfig {
     /// Checks the configuration against the validation rules in
     /// `docs/reference/configuration.md`: every value in its range,
     /// `bind_addresses` not empty and without duplicates, no IPv4 address
-    /// next to a dual-stack `[::]` on its port, `max_fds` and `max_memory`
-    /// large enough, and `reuse_port` only where the platform supports it.
+    /// next to a dual-stack `[::]` on its port, `max_memory` large enough,
+    /// and `reuse_port` only where the platform supports it.
     ///
     /// The server runs the same checks when it is built and on every reload.
     pub fn validate(&self) -> Result<(), ConfigError> {
@@ -184,18 +180,6 @@ impl ServerConfig {
 
     fn check_limits(&self) -> Result<(), ConfigError> {
         let limits = &self.resource_limits;
-        if let Some(max_fds) = limits.max_fds {
-            let needed = self.max_connections + self.bind_addresses.len() + SPARE_FDS;
-            if max_fds < needed {
-                return Err(ConfigError::Inconsistent {
-                    rule: "max_fds",
-                    detail: format!(
-                        "max_fds is {max_fds}; it must be at least max_connections + \
-                         listeners + {SPARE_FDS} = {needed}"
-                    ),
-                });
-            }
-        }
         if let Some(max_memory) = limits.max_memory {
             if max_memory < limits.per_connection_buffer {
                 return Err(ConfigError::Inconsistent {

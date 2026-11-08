@@ -130,8 +130,6 @@ impl std::fmt::Display for TimeoutKind {
 pub enum ResourceKind {
     /// `max_connections`.
     MaxConnections,
-    /// `resource_limits.max_fds`.
-    MaxFds,
     /// `resource_limits.max_memory`.
     MaxMemory,
 }
@@ -140,7 +138,6 @@ impl std::fmt::Display for ResourceKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             ResourceKind::MaxConnections => "max_connections",
-            ResourceKind::MaxFds => "max_fds",
             ResourceKind::MaxMemory => "max_memory",
         })
     }
@@ -280,7 +277,7 @@ pub enum ConfigError {
     /// A rule across several settings failed.
     #[error("{rule}: {detail}")]
     Inconsistent {
-        /// The rule, such as `max_fds`.
+        /// The rule, such as `max_memory`.
         rule: &'static str,
         /// What the values are and what the rule needs.
         detail: String,

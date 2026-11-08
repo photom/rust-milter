@@ -20,8 +20,7 @@ The milter protocol has no authentication and no encryption: anyone who can reac
 
 Each MTA connection uses one file descriptor, and each listener one more.
 
-1. Set the process limit (`ulimit -n`, or `LimitNOFILE=` in a systemd unit) to at least `max_connections` plus the number of listeners plus 10; for the default `max_connections` of 10,000 and one listener, use at least 10,011.
-2. If you set `resource_limits.max_fds`, keep it at least `max_connections` plus the listeners plus 10. The configuration is rejected otherwise.
+Set the process limit (`ulimit -n`, or `LimitNOFILE=` in a systemd unit) to at least `max_connections` plus the number of listeners plus 10. For the default `max_connections` of 10,000 and one listener, use at least 10,011. rust-milter has no descriptor setting of its own, so this limit is the only one.
 
 When descriptors run out anyway, the server backs off and keeps running; watch for "Accept error" warnings in the log.
 
