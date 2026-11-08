@@ -14,8 +14,8 @@ use std::time::{Duration, Instant};
 use rust_milter::protocol::*;
 use rust_milter::{
     BindMode, Bytes, CancellationToken, ConfigError, ConfigWatch, Decision, EomContext, Handler,
-    HandlerContext, MessageContext, MilterText, ReloadError, Reloaded, Result, Server,
-    ServerConfig, ServerHandle,
+    HandlerContext, MessageContext, MilterText, ReloadError, ReloadLoader, Reloaded, Result,
+    Server, ServerConfig, ServerHandle,
 };
 use support::logs::Logs;
 use support::mta::{Mta, connect_data, strings};
@@ -44,6 +44,23 @@ fn on(addresses: &[SocketAddr]) -> ServerConfig {
     }
 }
 
+/// A loader that returns the prepared results in turn.
+struct ScriptLoader<A> {
+    script: Script<A>,
+}
+
+impl<A: Send + Sync + 'static> ReloadLoader<A> for ScriptLoader<A> {
+    type Error = io::Error;
+
+    async fn load(&self) -> std::result::Result<Reloaded<A>, io::Error> {
+        let next = self.script.lock().unwrap().pop_front();
+        match next {
+            Some(next) => next,
+            None => panic!("a prepared configuration"),
+        }
+    }
+}
+
 /// A running server, built with an optional loader.
 struct Running<A = ()> {
     handle: ServerHandle<A>,
@@ -63,14 +80,7 @@ where
 {
     let builder = Server::builder().config(config).app_config(app);
     let builder = match loader {
-        Some(script) => builder.reload_with(move || {
-            let next = script
-                .lock()
-                .unwrap()
-                .pop_front()
-                .expect("a prepared configuration");
-            async move { next }
-        }),
+        Some(script) => builder.reload_with(ScriptLoader { script }),
         None => builder,
     };
     let server = builder
