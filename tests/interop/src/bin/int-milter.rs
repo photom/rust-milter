@@ -7,7 +7,7 @@
 
 use std::process::ExitCode;
 
-use rust_milter::{Handler, Reloaded, Server};
+use rust_milter::{Handler, ReloadLoader, Reloaded, Server, ServerConfig};
 use rust_milter_interop::Milter;
 
 /// Implements no callback, so every stage continues.
@@ -18,17 +18,29 @@ impl Handler for Continues {
     type Message = ();
 }
 
+/// A loader that returns the configuration the milter started with.
+struct SameConfig {
+    config: ServerConfig,
+}
+
+impl ReloadLoader<()> for SameConfig {
+    type Error = std::io::Error;
+
+    async fn load(&self) -> Result<Reloaded<()>, std::io::Error> {
+        Ok(Reloaded {
+            server: self.config.clone(),
+            app: (),
+        })
+    }
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     let config = Milter::config();
-    let reloaded = config.clone();
     let built = Server::builder()
-        .config(config)
+        .config(config.clone())
         .handler(|_| Continues)
-        .reload_with(move || {
-            let server = reloaded.clone();
-            async move { Ok::<_, std::io::Error>(Reloaded { server, app: () }) }
-        })
+        .reload_with(SameConfig { config })
         .build();
     let server = match built {
         Ok(server) => server,
