@@ -17,12 +17,13 @@ Ordered as the components will be built:
 | [reload.md](reload.md) | Configuration reload, listener changes, application configuration | `RLD` |
 | [telemetry.md](telemetry.md) | Metrics, traces, and the data rules | `TEL` |
 | [documentation.md](documentation.md) | Example code in the tutorials and how-to guides compiles in CI | `DOC` |
+| [style.md](style.md) | The procedural style of the Rust code | `STY` |
 | [interoperability.md](interoperability.md) | rust-milter behind real Postfix and Sendmail | `INT` |
 | [load-and-chaos.md](load-and-chaos.md) | Sustained load and failure injection | `LOD`, `CHS` |
 
 Decisions about test environments, CI, and test tooling are recorded in [testing ADRs](adr/).
 
-`cargo test` runs the files up to documentation.md. The interoperability, load, and chaos scenarios run in their own environments. The milter client sample is not part of the product; CI only builds it.
+`cargo test` runs the files up to style.md. The interoperability, load, and chaos scenarios run in their own environments. The milter client sample is not part of the product; CI only builds it.
 
 ## Format
 

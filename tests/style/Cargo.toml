@@ -1,0 +1,17 @@
+[package]
+name = "rust-milter-style"
+version = "0.0.0"
+description = "Checks that rust-milter's Rust code keeps the procedural style of ADR 0008"
+publish = false
+rust-version = "1.89"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Line numbers in the reports need span locations outside a procedural macro.
+proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
+syn = { version = "2", default-features = false, features = ["full", "parsing", "printing", "visit"] }

@@ -11,6 +11,7 @@ Decisions that shape rust-milter's design and specification, with their context 
 | [0005](0005-reload-closes-no-connection-and-rebinds-no-listener.md) | A reload closes no open connection and rebinds no listener | Accepted; the `backlog` decision is superseded by ADR 0007 |
 | [0006](0006-connection-timeouts-per-frame-and-libmilter-idle-default.md) | Connection timeouts are split per frame, and the idle default follows libmilter | Accepted |
 | [0007](0007-a-reload-that-changes-a-restart-setting-fails.md) | A reload that changes a setting that requires a restart fails | Accepted |
+| [0008](0008-rust-code-is-written-in-a-procedural-style.md) | Rust code is written in a procedural style | Accepted |
 
 Conventions:
 - One file per decision, named `NNNN-short-title.md`, numbered in order.

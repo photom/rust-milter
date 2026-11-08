@@ -1,6 +1,6 @@
 [workspace]
-members = [".", "tests/docs", "tests/interop"]
-default-members = [".", "tests/docs"]
+members = [".", "tests/docs", "tests/interop", "tests/style"]
+default-members = [".", "tests/docs", "tests/style"]
 resolver = "3"
 
 [workspace.package]
@@ -55,3 +55,16 @@ missing_docs = "warn"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
+# These lints suggest a method that takes a closure, such as map, filter,
+# find, retain, or entry().or_insert_with(). rust-milter writes the match
+# or the loop instead (ADR 0008).
+manual_filter = "allow"
+manual_filter_map = "allow"
+manual_find = "allow"
+manual_find_map = "allow"
+manual_map = "allow"
+manual_retain = "allow"
+map_entry = "allow"
+# The methods of clippy.toml are reported only by the style check's Clippy
+# run, which skips the files on tests/style/exemptions.txt.
+disallowed_methods = "allow"
