@@ -35,7 +35,14 @@ impl MilterText {
     ///
     /// Returns `None`, and leaves `data` unchanged, when no NUL follows.
     pub(crate) fn take(data: &mut Bytes) -> Option<MilterText> {
-        let end = data.iter().position(|&byte| byte == 0)?;
+        let mut end = None;
+        for (index, byte) in data.iter().enumerate() {
+            if *byte == 0 {
+                end = Some(index);
+                break;
+            }
+        }
+        let end = end?;
         let text = data.split_to(end);
         data.advance(1);
         Some(MilterText(text))

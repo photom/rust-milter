@@ -65,13 +65,12 @@ impl ReplyCode {
             let line = line.as_ref();
             let escaped = line.replace('%', "%%");
             check_line(&escaped)?;
-            if enhanced_code.is_none()
-                && line
-                    .as_bytes()
-                    .first()
-                    .is_some_and(|b| b.is_ascii_digit() && *b != class)
-            {
-                return Err(ReplyError::EnhancedCodeMismatch);
+            if enhanced_code.is_none() {
+                if let Some(first) = line.as_bytes().first() {
+                    if first.is_ascii_digit() && *first != class {
+                        return Err(ReplyError::EnhancedCodeMismatch);
+                    }
+                }
             }
             if index > 0 {
                 wire.push_str("\r\n");
@@ -95,15 +94,27 @@ impl From<ReplyCode> for Reply {
     }
 }
 
+/// Whether `part` is one to `max` ASCII digits.
+fn is_digits(part: &str, max: usize) -> bool {
+    if !(1..=max).contains(&part.len()) {
+        return false;
+    }
+    for byte in part.bytes() {
+        if !byte.is_ascii_digit() {
+            return false;
+        }
+    }
+    true
+}
+
 /// Requires the form `d.ddd.ddd`, one class digit and one to three digits in
 /// the other parts, with the same class as the reply code.
 fn check_enhanced_code(code: u16, enhanced: &str) -> Result<(), ReplyError> {
     let parts: Vec<&str> = enhanced.split('.').collect();
-    let digits = |part: &str, max: usize| {
-        (1..=max).contains(&part.len()) && part.bytes().all(|byte| byte.is_ascii_digit())
-    };
-    let well_formed =
-        parts.len() == 3 && digits(parts[0], 1) && digits(parts[1], 3) && digits(parts[2], 3);
+    let well_formed = parts.len() == 3
+        && is_digits(parts[0], 1)
+        && is_digits(parts[1], 3)
+        && is_digits(parts[2], 3);
     if !well_formed {
         return Err(ReplyError::InvalidEnhancedCode);
     }

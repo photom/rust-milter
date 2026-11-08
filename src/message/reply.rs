@@ -266,9 +266,13 @@ fn check_required(text: &str) -> std::result::Result<(), ReplyError> {
 /// Requires the name of a new header to be printable ASCII without a colon,
 /// as RFC 5322 defines a field name: the characters 33 to 126 except 58.
 fn check_new_header_name(name: &str) -> std::result::Result<(), ReplyError> {
-    let valid = |byte: u8| (33..=126).contains(&byte) && byte != b':';
-    if name.is_empty() || !name.bytes().all(valid) {
+    if name.is_empty() {
         return Err(ReplyError::InvalidHeaderName);
+    }
+    for byte in name.bytes() {
+        if !(33..=126).contains(&byte) || byte == b':' {
+            return Err(ReplyError::InvalidHeaderName);
+        }
     }
     Ok(())
 }
@@ -277,9 +281,13 @@ fn check_new_header_name(name: &str) -> std::result::Result<(), ReplyError> {
 /// non-ASCII bytes, so only an empty name, a colon, whitespace, and control
 /// characters are refused.
 fn check_delivered_header_name(name: &str) -> std::result::Result<(), ReplyError> {
-    let invalid = |c: char| c == ':' || c.is_whitespace() || c.is_control();
-    if name.is_empty() || name.chars().any(invalid) {
+    if name.is_empty() {
         return Err(ReplyError::InvalidHeaderName);
+    }
+    for c in name.chars() {
+        if c == ':' || c.is_whitespace() || c.is_control() {
+            return Err(ReplyError::InvalidHeaderName);
+        }
     }
     Ok(())
 }
@@ -290,9 +298,13 @@ fn check_delivered_header_name(name: &str) -> std::result::Result<(), ReplyError
 /// parsers that read a blank line there.
 fn check_header_value(value: &str) -> std::result::Result<(), ReplyError> {
     check_text(value)?;
-    let folds = |line: &str| line.starts_with([' ', '\t']) && !line.trim().is_empty();
-    if value.contains('\r') || !value.split('\n').skip(1).all(folds) {
+    if value.contains('\r') {
         return Err(ReplyError::HeaderLineBreak);
+    }
+    for line in value.split('\n').skip(1) {
+        if !line.starts_with([' ', '\t']) || line.trim().is_empty() {
+            return Err(ReplyError::HeaderLineBreak);
+        }
     }
     Ok(())
 }
@@ -302,7 +314,10 @@ fn check_header_value(value: &str) -> std::result::Result<(), ReplyError> {
 /// and a space on the last, and no digit after that other than the code's
 /// first digit. Postfix snapshots also require the same code on every line.
 fn check_reply_lines(text: &str) -> std::result::Result<(), ReplyError> {
-    let lines: Vec<&[u8]> = text.split("\r\n").map(str::as_bytes).collect();
+    let mut lines: Vec<&[u8]> = Vec::new();
+    for line in text.split("\r\n") {
+        lines.push(line.as_bytes());
+    }
     let code = lines[0].get(..3);
     for (index, line) in lines.iter().enumerate() {
         let separator = if index + 1 == lines.len() { b' ' } else { b'-' };
@@ -317,11 +332,10 @@ fn check_reply_lines(text: &str) -> std::result::Result<(), ReplyError> {
         if !well_formed {
             return Err(ReplyError::MalformedReplyText);
         }
-        if line
-            .get(4)
-            .is_some_and(|next| next.is_ascii_digit() && *next != line[0])
-        {
-            return Err(ReplyError::EnhancedCodeMismatch);
+        if let Some(next) = line.get(4) {
+            if next.is_ascii_digit() && *next != line[0] {
+                return Err(ReplyError::EnhancedCodeMismatch);
+            }
         }
     }
     Ok(())
