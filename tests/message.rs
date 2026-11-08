@@ -13,10 +13,11 @@ fn frame(command: u8, data: &[u8]) -> Frame {
 
 /// Concatenates the 4-byte big-endian forms of `values`.
 fn be32(values: &[u32]) -> Vec<u8> {
-    values
-        .iter()
-        .flat_map(|value| value.to_be_bytes())
-        .collect()
+    let mut bytes = Vec::new();
+    for value in values {
+        bytes.extend_from_slice(&value.to_be_bytes());
+    }
+    bytes
 }
 
 fn assert_malformed(result: rust_milter::Result<Command>, command: u8) {
@@ -68,7 +69,19 @@ fn cmd_003_keeps_zero_actions_and_protocol_flags() {
 
 /// The raw bytes of each text, for comparing `MilterText` lists.
 fn texts(values: &[MilterText]) -> Vec<&[u8]> {
-    values.iter().map(MilterText::as_bytes).collect()
+    let mut texts = Vec::new();
+    for value in values {
+        texts.push(value.as_bytes());
+    }
+    texts
+}
+
+/// The raw bytes of an optional text.
+fn bytes_of(value: &Option<MilterText>) -> Option<&[u8]> {
+    match value {
+        Some(text) => Some(text.as_bytes()),
+        None => None,
+    }
 }
 
 // Command decoding: macros
@@ -83,10 +96,10 @@ fn cmd_010_decodes_macros_in_order() {
     };
 
     assert_eq!(stage, b'C');
-    let pairs: Vec<(&[u8], &[u8])> = macros
-        .iter()
-        .map(|(name, value)| (name.as_bytes(), value.as_bytes()))
-        .collect();
+    let mut pairs: Vec<(&[u8], &[u8])> = Vec::new();
+    for (name, value) in &macros {
+        pairs.push((name.as_bytes(), value.as_bytes()));
+    }
     assert_eq!(
         pairs,
         vec![
@@ -150,10 +163,7 @@ fn cmd_020_decodes_an_ipv4_connection() {
     assert_eq!(hostname.as_bytes(), b"mail.void.invalid");
     assert_eq!(family, AddressFamily::Inet);
     assert_eq!(port, Some(25));
-    assert_eq!(
-        address.as_ref().map(MilterText::as_bytes),
-        Some(&b"192.0.2.1"[..])
-    );
+    assert_eq!(bytes_of(&address), Some(&b"192.0.2.1"[..]));
 }
 
 #[test]
@@ -173,10 +183,7 @@ fn cmd_021_decodes_an_ipv6_connection() {
         panic!("not a Connect command: {command:?}");
     };
     assert_eq!(family, AddressFamily::Inet6);
-    assert_eq!(
-        address.as_ref().map(MilterText::as_bytes),
-        Some(&b"2001:db8::1"[..])
-    );
+    assert_eq!(bytes_of(&address), Some(&b"2001:db8::1"[..]));
 }
 
 #[test]
@@ -216,10 +223,7 @@ fn cmd_023_decodes_a_local_client() {
     };
     assert_eq!(family, AddressFamily::Unix);
     assert_eq!(port, Some(0));
-    assert_eq!(
-        address.as_ref().map(MilterText::as_bytes),
-        Some(&b"/run/smtp.sock"[..])
-    );
+    assert_eq!(bytes_of(&address), Some(&b"/run/smtp.sock"[..]));
 }
 
 #[test]
@@ -676,8 +680,11 @@ fn rcd_012_rejects_a_multi_line_reply_without_lines() {
 /// `docs/reference/milter-protocol.md`, written out here so the test does not
 /// reuse the library's own check.
 fn passes_postfix_line_rules(wire: &str) -> bool {
-    let lines: Vec<&[u8]> = wire.split("\r\n").map(str::as_bytes).collect();
-    lines.iter().enumerate().all(|(index, line)| {
+    let mut lines: Vec<&[u8]> = Vec::new();
+    for line in wire.split("\r\n") {
+        lines.push(line.as_bytes());
+    }
+    for (index, line) in lines.iter().enumerate() {
         let separator = if index + 1 == lines.len() { b' ' } else { b'-' };
         // milter8_valid_smtp_reply: a digit after the separator must be the
         // code's first digit.
@@ -685,13 +692,17 @@ fn passes_postfix_line_rules(wire: &str) -> bool {
             Some(next) if next.is_ascii_digit() => *next == line[0],
             _ => true,
         };
-        line.len() >= 4
+        let valid = line.len() >= 4
             && matches!(line[0], b'4' | b'5')
             && line[1].is_ascii_digit()
             && line[2].is_ascii_digit()
             && line[3] == separator
-            && enhanced_matches
-    })
+            && enhanced_matches;
+        if !valid {
+            return false;
+        }
+    }
+    true
 }
 
 /// Sendmail's check: every `%` starts a `%%` pair.
@@ -705,20 +716,17 @@ fn passes_sendmail_percent_check(wire: &str) -> bool {
     true
 }
 
-fn enhanced_code() -> impl Strategy<Value = Option<String>> {
-    proptest::option::of(
-        (0u16..10, 0u16..1_200, 0u16..1_200)
-            .prop_map(|(class, subject, detail)| format!("{class}.{subject}.{detail}")),
-    )
-}
-
 proptest! {
     #[test]
     fn rcd_010_every_valid_reply_code_passes_both_mtas_rules(
         code in 380u16..620,
-        enhanced in enhanced_code(),
+        enhanced in proptest::option::of((0u16..10, 0u16..1_200, 0u16..1_200)),
         lines in proptest::collection::vec("[ a-zA-Z0-9%.:-]{0,40}", 0..35),
     ) {
+        let enhanced = match enhanced {
+            Some((class, subject, detail)) => Some(format!("{class}.{subject}.{detail}")),
+            None => None,
+        };
         let Ok(reply_code) = ReplyCode::multi_line(code, enhanced.as_deref(), &lines) else {
             return Ok(());
         };

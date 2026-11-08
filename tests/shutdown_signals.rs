@@ -93,18 +93,20 @@ async fn child_main() {
     if setup == "invalid" {
         config.backlog = 0;
     }
-    let file = std::env::var(FILE).ok().map(PathBuf::from);
+    let file = match std::env::var(FILE) {
+        Ok(path) => Some(PathBuf::from(path)),
+        Err(_) => None,
+    };
     let code = if setup == "slow_eom" {
         serve(build(config, file, SlowEom)).await
     } else {
         serve(build(config, file, support::ContinueAll)).await
     };
     for event in logs.all() {
-        let fields: Vec<String> = event
-            .fields
-            .iter()
-            .map(|(name, value)| format!("{name}={value}"))
-            .collect();
+        let mut fields = Vec::new();
+        for (name, value) in &event.fields {
+            fields.push(format!("{name}={value}"));
+        }
         println!(
             "\nLOG|{}|{}|{}",
             event.level,
@@ -238,10 +240,9 @@ impl Child {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
-            let line = self
-                .lines
-                .recv_timeout(left)
-                .unwrap_or_else(|_| panic!("the child prints {text:?}"));
+            let Ok(line) = self.lines.recv_timeout(left) else {
+                panic!("the child prints {text:?}");
+            };
             if line.contains(text) {
                 return;
             }
@@ -281,10 +282,16 @@ impl Child {
                 continue;
             };
             let mut parts = line[start + 4..].split('|');
+            let level = parts.next().unwrap().to_owned();
+            let message = parts.next().unwrap().to_owned();
+            let mut fields = Vec::new();
+            for part in parts {
+                fields.push(part.to_owned());
+            }
             events.push(Event {
-                level: parts.next().unwrap().to_owned(),
-                message: parts.next().unwrap().to_owned(),
-                fields: parts.map(str::to_owned).collect(),
+                level,
+                message,
+                fields,
             });
         }
         (status.code(), events)
@@ -293,7 +300,12 @@ impl Child {
 
 /// The one event with `message`.
 fn one<'a>(events: &'a [Event], message: &str) -> &'a Event {
-    let found: Vec<&Event> = events.iter().filter(|e| e.message == message).collect();
+    let mut found = Vec::new();
+    for event in events {
+        if event.message == message {
+            found.push(event);
+        }
+    }
     assert_eq!(found.len(), 1, "{message:?}");
     found[0]
 }
@@ -425,7 +437,7 @@ impl Drop for LoaderFile {
 
 /// Whether one of `event`'s fields is `field`.
 fn has(event: &Event, field: &str) -> bool {
-    event.fields.iter().any(|f| f == field)
+    event.fields.contains(&field.to_owned())
 }
 
 #[tokio::test]
@@ -454,8 +466,10 @@ async fn sht_025_sighup_during_a_drain_is_ignored() {
     let ignored = one(&events, "SIGHUP ignored");
     assert_eq!(ignored.level, "WARN");
     assert!(has(ignored, "reason=shutting_down"));
-    assert!(events.iter().all(|e| e.message != "Loader called"));
-    assert!(events.iter().all(|e| e.message != "Reload requested"));
+    for event in &events {
+        assert_ne!(event.message, "Loader called");
+        assert_ne!(event.message, "Reload requested");
+    }
 }
 
 #[tokio::test]

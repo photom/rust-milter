@@ -156,11 +156,13 @@ fn cfg_048_writes_every_field_and_reads_back_the_same_configuration() {
         "per_connection_buffer",
         "trace_commands",
     ] {
-        assert!(
-            text.lines()
-                .any(|line| line.starts_with(&format!("{key} ="))),
-            "{key} is missing from:\n{text}"
-        );
+        let mut found = false;
+        for line in text.lines() {
+            if line.starts_with(&format!("{key} =")) {
+                found = true;
+            }
+        }
+        assert!(found, "{key} is missing from:\n{text}");
     }
 }
 

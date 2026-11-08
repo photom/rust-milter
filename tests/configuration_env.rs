@@ -140,151 +140,84 @@ fn cfg_089_checks_formats_only_and_leaves_ranges_to_validation() {
     ));
 }
 
-/// One setting: its path, a value for its variable, and the change that value
-/// makes to the defaults.
-struct Setting {
-    path: &'static str,
-    value: &'static str,
-    expect: fn(&mut ServerConfig),
+/// Every setting: its path, and a value for its variable. [`expect`] makes
+/// the change that value makes to the defaults.
+const SETTINGS: [(&str, &str); 24] = [
+    ("bind_addresses", "127.0.0.1:9999"),
+    ("bind_mode", "best_effort"),
+    ("backlog", "2048"),
+    ("max_connections", "500"),
+    ("timeouts.connect", "42s"),
+    ("timeouts.read", "42s"),
+    ("timeouts.write", "42s"),
+    ("timeouts.idle", "42s"),
+    ("socket_options.tcp_nodelay", "false"),
+    ("socket_options.keepalive", "false"),
+    ("socket_options.recv_buffer_size", "4096"),
+    ("socket_options.send_buffer_size", "4096"),
+    ("socket_options.reuse_addr", "false"),
+    ("socket_options.reuse_port", "true"),
+    ("socket_options.ipv6_only", "true"),
+    ("socket_options.keepalive.time", "42s"),
+    ("socket_options.keepalive.interval", "42s"),
+    ("socket_options.keepalive.retries", "3"),
+    ("shutdown.grace_period", "42s"),
+    ("shutdown.drain_timeout", "42s"),
+    ("resource_limits.max_fds", "20000"),
+    ("resource_limits.max_memory", "1048576"),
+    ("resource_limits.per_connection_buffer", "262144"),
+    ("telemetry.trace_commands", "all"),
+];
+
+/// Changes `config` as the value of `SETTINGS` for `path` does.
+fn expect(path: &str, config: &mut ServerConfig) {
+    const D: Duration = Duration::from_secs(42);
+    match path {
+        "bind_addresses" => config.bind_addresses = vec!["127.0.0.1:9999".parse().unwrap()],
+        "bind_mode" => config.bind_mode = BindMode::BestEffort,
+        "backlog" => config.backlog = 2_048,
+        "max_connections" => config.max_connections = 500,
+        "timeouts.connect" => config.timeouts.connect = D,
+        "timeouts.read" => config.timeouts.read = D,
+        "timeouts.write" => config.timeouts.write = D,
+        "timeouts.idle" => config.timeouts.idle = D,
+        "socket_options.tcp_nodelay" => config.socket_options.tcp_nodelay = false,
+        "socket_options.keepalive" => config.socket_options.keepalive = None,
+        "socket_options.recv_buffer_size" => config.socket_options.recv_buffer_size = Some(4_096),
+        "socket_options.send_buffer_size" => config.socket_options.send_buffer_size = Some(4_096),
+        "socket_options.reuse_addr" => config.socket_options.reuse_addr = false,
+        "socket_options.reuse_port" => config.socket_options.reuse_port = true,
+        "socket_options.ipv6_only" => config.socket_options.ipv6_only = true,
+        "socket_options.keepalive.time" => keepalive(config).time = D,
+        "socket_options.keepalive.interval" => keepalive(config).interval = D,
+        "socket_options.keepalive.retries" => keepalive(config).retries = 3,
+        "shutdown.grace_period" => config.shutdown.grace_period = D,
+        "shutdown.drain_timeout" => config.shutdown.drain_timeout = D,
+        "resource_limits.max_fds" => config.resource_limits.max_fds = Some(20_000),
+        "resource_limits.max_memory" => config.resource_limits.max_memory = Some(1_048_576),
+        "resource_limits.per_connection_buffer" => {
+            config.resource_limits.per_connection_buffer = 262_144
+        }
+        "telemetry.trace_commands" => config.telemetry.trace_commands = TraceCommands::All,
+        other => panic!("no expected change for {other}"),
+    }
 }
 
-fn every_setting() -> Vec<Setting> {
-    const D: Duration = Duration::from_secs(42);
-    fn keepalive(c: &mut ServerConfig) -> &mut rust_milter::KeepaliveConfig {
-        c.socket_options.keepalive.as_mut().unwrap()
-    }
-    vec![
-        Setting {
-            path: "bind_addresses",
-            value: "127.0.0.1:9999",
-            expect: |c| c.bind_addresses = vec!["127.0.0.1:9999".parse().unwrap()],
-        },
-        Setting {
-            path: "bind_mode",
-            value: "best_effort",
-            expect: |c| c.bind_mode = BindMode::BestEffort,
-        },
-        Setting {
-            path: "backlog",
-            value: "2048",
-            expect: |c| c.backlog = 2_048,
-        },
-        Setting {
-            path: "max_connections",
-            value: "500",
-            expect: |c| c.max_connections = 500,
-        },
-        Setting {
-            path: "timeouts.connect",
-            value: "42s",
-            expect: |c| c.timeouts.connect = D,
-        },
-        Setting {
-            path: "timeouts.read",
-            value: "42s",
-            expect: |c| c.timeouts.read = D,
-        },
-        Setting {
-            path: "timeouts.write",
-            value: "42s",
-            expect: |c| c.timeouts.write = D,
-        },
-        Setting {
-            path: "timeouts.idle",
-            value: "42s",
-            expect: |c| c.timeouts.idle = D,
-        },
-        Setting {
-            path: "socket_options.tcp_nodelay",
-            value: "false",
-            expect: |c| c.socket_options.tcp_nodelay = false,
-        },
-        Setting {
-            path: "socket_options.keepalive",
-            value: "false",
-            expect: |c| c.socket_options.keepalive = None,
-        },
-        Setting {
-            path: "socket_options.recv_buffer_size",
-            value: "4096",
-            expect: |c| c.socket_options.recv_buffer_size = Some(4_096),
-        },
-        Setting {
-            path: "socket_options.send_buffer_size",
-            value: "4096",
-            expect: |c| c.socket_options.send_buffer_size = Some(4_096),
-        },
-        Setting {
-            path: "socket_options.reuse_addr",
-            value: "false",
-            expect: |c| c.socket_options.reuse_addr = false,
-        },
-        Setting {
-            path: "socket_options.reuse_port",
-            value: "true",
-            expect: |c| c.socket_options.reuse_port = true,
-        },
-        Setting {
-            path: "socket_options.ipv6_only",
-            value: "true",
-            expect: |c| c.socket_options.ipv6_only = true,
-        },
-        Setting {
-            path: "socket_options.keepalive.time",
-            value: "42s",
-            expect: |c| keepalive(c).time = D,
-        },
-        Setting {
-            path: "socket_options.keepalive.interval",
-            value: "42s",
-            expect: |c| keepalive(c).interval = D,
-        },
-        Setting {
-            path: "socket_options.keepalive.retries",
-            value: "3",
-            expect: |c| keepalive(c).retries = 3,
-        },
-        Setting {
-            path: "shutdown.grace_period",
-            value: "42s",
-            expect: |c| c.shutdown.grace_period = D,
-        },
-        Setting {
-            path: "shutdown.drain_timeout",
-            value: "42s",
-            expect: |c| c.shutdown.drain_timeout = D,
-        },
-        Setting {
-            path: "resource_limits.max_fds",
-            value: "20000",
-            expect: |c| c.resource_limits.max_fds = Some(20_000),
-        },
-        Setting {
-            path: "resource_limits.max_memory",
-            value: "1048576",
-            expect: |c| c.resource_limits.max_memory = Some(1_048_576),
-        },
-        Setting {
-            path: "resource_limits.per_connection_buffer",
-            value: "262144",
-            expect: |c| c.resource_limits.per_connection_buffer = 262_144,
-        },
-        Setting {
-            path: "telemetry.trace_commands",
-            value: "all",
-            expect: |c| c.telemetry.trace_commands = TraceCommands::All,
-        },
-    ]
+fn keepalive(config: &mut ServerConfig) -> &mut rust_milter::KeepaliveConfig {
+    config.socket_options.keepalive.as_mut().unwrap()
 }
 
 /// The setting paths in the reference tables of `configuration.md`: every
 /// row with a reload class, under the part its section describes.
 fn documented_settings() -> BTreeSet<String> {
     let doc = include_str!("../docs/reference/configuration.md");
-    let reference = doc
+    let rest = doc
         .split("## ServerConfig reference")
         .nth(1)
-        .and_then(|rest| rest.split("## Builder-only settings").next())
+        .expect("configuration.md has the reference tables");
+    let reference = rest
+        .split("## Builder-only settings")
+        .next()
         .expect("configuration.md has the reference tables");
 
     let mut settings = BTreeSet::new();
@@ -303,7 +236,10 @@ fn documented_settings() -> BTreeSet<String> {
             };
             continue;
         }
-        let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+        let mut cells = Vec::new();
+        for cell in line.split('|') {
+            cells.push(cell.trim());
+        }
         // | `field` | `Type` | default | valid values | reload class |
         if cells.len() == 7 && cells[1].starts_with('`') && !cells[5].is_empty() {
             settings.insert(format!("{part}{}", cells[1].trim_matches('`')));
@@ -314,21 +250,24 @@ fn documented_settings() -> BTreeSet<String> {
 
 #[test]
 fn cfg_090_every_documented_setting_has_a_working_variable() {
-    let tested: BTreeSet<String> = every_setting().iter().map(|s| s.path.to_owned()).collect();
+    let mut tested = BTreeSet::new();
+    for (path, _) in SETTINGS {
+        tested.insert(path.to_owned());
+    }
     assert_eq!(
         tested,
         documented_settings(),
         "the test's settings differ from the tables in configuration.md"
     );
 
-    for setting in every_setting() {
-        let variable = format!("{PREFIX}{}", setting.path.replace('.', "__").to_uppercase());
+    for (path, value) in SETTINGS {
+        let variable = format!("{PREFIX}{}", path.replace('.', "__").to_uppercase());
         let mut expected = ServerConfig::default();
-        (setting.expect)(&mut expected);
+        expect(path, &mut expected);
 
-        let config = from_vars(&[(&variable, setting.value)]);
+        let config = from_vars(&[(&variable, value)]);
 
-        assert_eq!(config, Ok(expected), "{variable}={}", setting.value);
+        assert_eq!(config, Ok(expected), "{variable}={value}");
     }
 }
 

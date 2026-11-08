@@ -5,8 +5,11 @@ use std::time::Duration;
 
 use rust_milter::{AddressError, ConfigError, KeepaliveConfig, ServerConfig};
 
-const KB: usize = 1024;
-const MB: usize = 1024 * 1024;
+const KB: u64 = 1024;
+const MB: u64 = 1024 * 1024;
+/// A millisecond and a second, in the microseconds of [`BOUNDS`].
+const MS: u64 = 1_000;
+const S: u64 = 1_000_000;
 
 /// A valid configuration: one bind address, every other field at its
 /// default.
@@ -17,144 +20,89 @@ fn valid() -> ServerConfig {
     }
 }
 
-/// One way to set a bounded field to a test value.
-type Setter = fn(&mut ServerConfig);
+/// For every bounded field: its path, values at its minimum and maximum,
+/// and values just outside them where the type can hold such a value.
+/// [`set`] gives each field its value: the port of the one bind address,
+/// a duration in microseconds, or a number.
+const BOUNDS: [(&str, &[u64], &[u64]); 15] = [
+    ("bind_addresses", &[1, 65_535], &[0]),
+    ("backlog", &[1, 65_535], &[0, 65_536]),
+    ("max_connections", &[1, 1_000_000], &[0, 1_000_001]),
+    ("timeouts.connect", &[MS, 300 * S], &[999, 300_001 * MS]),
+    ("timeouts.read", &[MS, 3_600 * S], &[999, 3_600_001 * MS]),
+    ("timeouts.write", &[MS, 3_600 * S], &[999, 3_600_001 * MS]),
+    (
+        "timeouts.idle",
+        &[S, 86_400 * S],
+        &[999 * MS, 86_400_001 * MS],
+    ),
+    (
+        "socket_options.recv_buffer_size",
+        &[KB, 64 * MB],
+        &[KB - 1, 64 * MB + 1],
+    ),
+    (
+        "socket_options.send_buffer_size",
+        &[KB, 64 * MB],
+        &[KB - 1, 64 * MB + 1],
+    ),
+    (
+        "socket_options.keepalive.time",
+        &[S, 86_400 * S],
+        &[999 * MS, 86_400_001 * MS],
+    ),
+    (
+        "socket_options.keepalive.interval",
+        &[S, 3_600 * S],
+        &[999 * MS, 3_600_001 * MS],
+    ),
+    ("socket_options.keepalive.retries", &[1, 30], &[0, 31]),
+    // The minimum is 0 s, which a Duration cannot go below.
+    ("shutdown.grace_period", &[0, 60 * S], &[60_001 * MS]),
+    (
+        "shutdown.drain_timeout",
+        &[S, 300 * S],
+        &[999 * MS, 300_001 * MS],
+    ),
+    (
+        "resource_limits.per_connection_buffer",
+        &[65_540, 16 * MB],
+        &[65_539, 16 * MB + 1],
+    ),
+];
 
-/// For every bounded field: its path, configurations at its minimum and
-/// maximum, and configurations just outside them where the type can hold
-/// such a value.
-struct Bounds {
-    field: &'static str,
-    in_range: Vec<Setter>,
-    out_of_range: Vec<Setter>,
-}
-
-fn bounded_fields() -> Vec<Bounds> {
-    vec![
-        Bounds {
-            field: "bind_addresses",
-            in_range: vec![
-                |c| c.bind_addresses = vec!["127.0.0.1:1".parse().unwrap()],
-                |c| c.bind_addresses = vec!["127.0.0.1:65535".parse().unwrap()],
-            ],
-            out_of_range: vec![|c| c.bind_addresses = vec!["127.0.0.1:0".parse().unwrap()]],
-        },
-        Bounds {
-            field: "backlog",
-            in_range: vec![|c| c.backlog = 1, |c| c.backlog = 65_535],
-            out_of_range: vec![|c| c.backlog = 0, |c| c.backlog = 65_536],
-        },
-        Bounds {
-            field: "max_connections",
-            in_range: vec![|c| c.max_connections = 1, |c| c.max_connections = 1_000_000],
-            out_of_range: vec![|c| c.max_connections = 0, |c| c.max_connections = 1_000_001],
-        },
-        Bounds {
-            field: "timeouts.connect",
-            in_range: vec![|c| c.timeouts.connect = Duration::from_millis(1), |c| {
-                c.timeouts.connect = Duration::from_secs(300)
-            }],
-            out_of_range: vec![|c| c.timeouts.connect = Duration::from_micros(999), |c| {
-                c.timeouts.connect = Duration::from_millis(300_001)
-            }],
-        },
-        Bounds {
-            field: "timeouts.read",
-            in_range: vec![|c| c.timeouts.read = Duration::from_millis(1), |c| {
-                c.timeouts.read = Duration::from_secs(3_600)
-            }],
-            out_of_range: vec![|c| c.timeouts.read = Duration::from_micros(999), |c| {
-                c.timeouts.read = Duration::from_millis(3_600_001)
-            }],
-        },
-        Bounds {
-            field: "timeouts.write",
-            in_range: vec![|c| c.timeouts.write = Duration::from_millis(1), |c| {
-                c.timeouts.write = Duration::from_secs(3_600)
-            }],
-            out_of_range: vec![|c| c.timeouts.write = Duration::from_micros(999), |c| {
-                c.timeouts.write = Duration::from_millis(3_600_001)
-            }],
-        },
-        Bounds {
-            field: "timeouts.idle",
-            in_range: vec![|c| c.timeouts.idle = Duration::from_secs(1), |c| {
-                c.timeouts.idle = Duration::from_secs(86_400)
-            }],
-            out_of_range: vec![|c| c.timeouts.idle = Duration::from_millis(999), |c| {
-                c.timeouts.idle = Duration::from_millis(86_400_001)
-            }],
-        },
-        Bounds {
-            field: "socket_options.recv_buffer_size",
-            in_range: vec![|c| c.socket_options.recv_buffer_size = Some(KB), |c| {
-                c.socket_options.recv_buffer_size = Some(64 * MB)
-            }],
-            out_of_range: vec![|c| c.socket_options.recv_buffer_size = Some(KB - 1), |c| {
-                c.socket_options.recv_buffer_size = Some(64 * MB + 1)
-            }],
-        },
-        Bounds {
-            field: "socket_options.send_buffer_size",
-            in_range: vec![|c| c.socket_options.send_buffer_size = Some(KB), |c| {
-                c.socket_options.send_buffer_size = Some(64 * MB)
-            }],
-            out_of_range: vec![|c| c.socket_options.send_buffer_size = Some(KB - 1), |c| {
-                c.socket_options.send_buffer_size = Some(64 * MB + 1)
-            }],
-        },
-        Bounds {
-            field: "socket_options.keepalive.time",
-            in_range: vec![|c| keepalive(c).time = Duration::from_secs(1), |c| {
-                keepalive(c).time = Duration::from_secs(86_400)
-            }],
-            out_of_range: vec![|c| keepalive(c).time = Duration::from_millis(999), |c| {
-                keepalive(c).time = Duration::from_millis(86_400_001)
-            }],
-        },
-        Bounds {
-            field: "socket_options.keepalive.interval",
-            in_range: vec![|c| keepalive(c).interval = Duration::from_secs(1), |c| {
-                keepalive(c).interval = Duration::from_secs(3_600)
-            }],
-            out_of_range: vec![
-                |c| keepalive(c).interval = Duration::from_millis(999),
-                |c| keepalive(c).interval = Duration::from_millis(3_600_001),
-            ],
-        },
-        Bounds {
-            field: "socket_options.keepalive.retries",
-            in_range: vec![|c| keepalive(c).retries = 1, |c| keepalive(c).retries = 30],
-            out_of_range: vec![|c| keepalive(c).retries = 0, |c| keepalive(c).retries = 31],
-        },
-        Bounds {
-            field: "shutdown.grace_period",
-            // The minimum is 0 s, which a Duration cannot go below.
-            in_range: vec![|c| c.shutdown.grace_period = Duration::ZERO, |c| {
-                c.shutdown.grace_period = Duration::from_secs(60)
-            }],
-            out_of_range: vec![|c| c.shutdown.grace_period = Duration::from_millis(60_001)],
-        },
-        Bounds {
-            field: "shutdown.drain_timeout",
-            in_range: vec![|c| c.shutdown.drain_timeout = Duration::from_secs(1), |c| {
-                c.shutdown.drain_timeout = Duration::from_secs(300)
-            }],
-            out_of_range: vec![
-                |c| c.shutdown.drain_timeout = Duration::from_millis(999),
-                |c| c.shutdown.drain_timeout = Duration::from_millis(300_001),
-            ],
-        },
-        Bounds {
-            field: "resource_limits.per_connection_buffer",
-            in_range: vec![|c| c.resource_limits.per_connection_buffer = 65_540, |c| {
-                c.resource_limits.per_connection_buffer = 16 * MB
-            }],
-            out_of_range: vec![|c| c.resource_limits.per_connection_buffer = 65_539, |c| {
-                c.resource_limits.per_connection_buffer = 16 * MB + 1
-            }],
-        },
-    ]
+/// Sets the bounded `field` of `config` to `value`, as [`BOUNDS`] reads it.
+fn set(field: &str, value: u64, config: &mut ServerConfig) {
+    let micros = Duration::from_micros(value);
+    match field {
+        "bind_addresses" => {
+            let port = u16::try_from(value).unwrap();
+            config.bind_addresses = vec![SocketAddr::from(([127, 0, 0, 1], port))];
+        }
+        "backlog" => config.backlog = value.try_into().unwrap(),
+        "max_connections" => config.max_connections = value.try_into().unwrap(),
+        "timeouts.connect" => config.timeouts.connect = micros,
+        "timeouts.read" => config.timeouts.read = micros,
+        "timeouts.write" => config.timeouts.write = micros,
+        "timeouts.idle" => config.timeouts.idle = micros,
+        "socket_options.recv_buffer_size" => {
+            config.socket_options.recv_buffer_size = Some(value.try_into().unwrap());
+        }
+        "socket_options.send_buffer_size" => {
+            config.socket_options.send_buffer_size = Some(value.try_into().unwrap());
+        }
+        "socket_options.keepalive.time" => keepalive(config).time = micros,
+        "socket_options.keepalive.interval" => keepalive(config).interval = micros,
+        "socket_options.keepalive.retries" => {
+            keepalive(config).retries = value.try_into().unwrap();
+        }
+        "shutdown.grace_period" => config.shutdown.grace_period = micros,
+        "shutdown.drain_timeout" => config.shutdown.drain_timeout = micros,
+        "resource_limits.per_connection_buffer" => {
+            config.resource_limits.per_connection_buffer = value.try_into().unwrap();
+        }
+        other => panic!("{other} is not a bounded field"),
+    }
 }
 
 /// The keepalive settings, which the default configuration has.
@@ -183,17 +131,16 @@ fn cfg_002_accepts_one_bind_address_and_the_defaults() {
 
 #[test]
 fn cfg_003_rejects_each_bounded_field_outside_its_range() {
-    for bounds in bounded_fields() {
-        for (case, set) in bounds.out_of_range.iter().enumerate() {
+    for (bounded, _, out_of_range) in BOUNDS {
+        for (case, value) in out_of_range.iter().enumerate() {
             let mut config = valid();
-            set(&mut config);
+            set(bounded, *value, &mut config);
 
             let result = config.validate();
 
             assert!(
-                matches!(&result, Err(ConfigError::OutOfRange { field, .. }) if *field == bounds.field),
-                "{} case {case}: got {result:?}",
-                bounds.field
+                matches!(&result, Err(ConfigError::OutOfRange { field, .. }) if *field == bounded),
+                "{bounded} case {case}: got {result:?}"
             );
         }
     }
@@ -201,12 +148,12 @@ fn cfg_003_rejects_each_bounded_field_outside_its_range() {
 
 #[test]
 fn cfg_004_accepts_each_bounded_field_at_its_limits() {
-    for bounds in bounded_fields() {
-        for (case, set) in bounds.in_range.iter().enumerate() {
+    for (bounded, in_range, _) in BOUNDS {
+        for (case, value) in in_range.iter().enumerate() {
             let mut config = valid();
-            set(&mut config);
+            set(bounded, *value, &mut config);
 
-            assert_eq!(config.validate(), Ok(()), "{} case {case}", bounds.field);
+            assert_eq!(config.validate(), Ok(()), "{bounded} case {case}");
         }
     }
 }
@@ -270,11 +217,17 @@ fn cfg_008_requires_max_memory_to_hold_one_connection_buffer() {
     ));
 }
 
+/// The addresses in `list`.
+fn addresses(list: &[&str]) -> Vec<SocketAddr> {
+    let mut addresses = Vec::new();
+    for address in list {
+        addresses.push(address.parse().unwrap());
+    }
+    addresses
+}
+
 #[test]
 fn cfg_028_rejects_dual_stack_wildcard_next_to_ipv4_on_the_same_port() {
-    let addresses = |list: &[&str]| -> Vec<std::net::SocketAddr> {
-        list.iter().map(|a| a.parse().unwrap()).collect()
-    };
     let mut config = valid();
 
     for conflict in [
