@@ -446,7 +446,11 @@ impl<H: Handler, A: Send + Sync + 'static> Accepting<H, A> {
         let entered = span.enter();
 
         let max_connections = config.max_connections;
-        if counters.connections.load(Ordering::SeqCst) >= max_connections {
+        let Some(open) = Open::try_new(
+            Arc::clone(&self.shared),
+            Arc::clone(counts),
+            max_connections,
+        ) else {
             self.reject(counts, accepted_at);
             tracing::warn!(
                 conn_id = id,
@@ -455,8 +459,9 @@ impl<H: Handler, A: Send + Sync + 'static> Accepting<H, A> {
                 "Connection rejected (limit)"
             );
             return;
-        }
+        };
         let Some(memory) = Reservation::new(&self.budget) else {
+            drop(open);
             self.reject(counts, accepted_at);
             tracing::warn!(
                 limit_type = "max_memory",
@@ -497,7 +502,6 @@ impl<H: Handler, A: Send + Sync + 'static> Accepting<H, A> {
             listener = %listener,
             "Connection accepted"
         );
-        let open = Open::new(Arc::clone(&self.shared), Arc::clone(counts));
         let trace = Trace {
             sessions: Arc::clone(&self.sessions),
             commands: config.telemetry.trace_commands,
@@ -546,10 +550,18 @@ struct Open<A> {
 }
 
 impl<A> Open<A> {
-    fn new(shared: Arc<Shared<A>>, listener: Arc<ListenerCounts>) -> Open<A> {
-        shared.counters.connections.fetch_add(1, Ordering::SeqCst);
+    /// Counts a new connection as open, or returns `None` when
+    /// `max_connections` are open already.
+    fn try_new(
+        shared: Arc<Shared<A>>,
+        listener: Arc<ListenerCounts>,
+        max_connections: usize,
+    ) -> Option<Open<A>> {
+        if !shared.counters.try_open(max_connections) {
+            return None;
+        }
         listener.opened();
-        Open { shared, listener }
+        Some(Open { shared, listener })
     }
 }
 
