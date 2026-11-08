@@ -100,7 +100,7 @@ The public API of the rust-milter server library: its types, traits, errors, and
 Lifecycle:
 1. `build()` validates the configuration. A validation error is returned here, before any socket is opened.
 2. `run()` binds the listeners according to `bind_mode`, registers the `SIGTERM`, `SIGINT`, `SIGQUIT`, and `SIGHUP` handlers, and starts accepting.
-3. A shutdown signal, `ServerHandle::shutdown()`, or a fatal error ends `run()`.
+3. A shutdown signal, `ServerHandle::shutdown()`, or `ServerHandle::force_shutdown()` ends `run()`. Once the listeners are bound and the signal handlers registered, no error ends it: accept errors back off, and a connection error closes only that connection.
 
 ### ServerHandle
 
@@ -164,7 +164,7 @@ A listener's counts continue when a reload keeps its address, and start at zero 
 
 | Type | Bounds | Lifetime |
 |------|--------|----------|
-| `Session` | `Default + Send + 'static` | Created by the library with `Default` when an SMTP session starts (`SMFIC_CONNECT`), dropped when it ends (`SMFIC_QUIT`, `SMFIC_QUIT_NC`, or connection close) |
+| `Session` | `Default + Send + 'static` | Created by the library with `Default` the first time a callback calls `session()` in an SMTP session, and dropped when the session ends (`SMFIC_QUIT`, `SMFIC_QUIT_NC`, or connection close) |
 | `Message` | `Default + Send + 'static` | Created by the library with `Default` at `SMFIC_MAIL`, or at the first command of a message when the handler left `MAIL` out of `events()`; dropped after the final reply at end of message, after a decision that ends the message earlier (`Accept` from any message callback, or `Reject`, `TempFail`, `Reply`, or `Discard` from one other than `rcpt`, which reset the protocol state to `ST_HELO` as in libmilter), on `SMFIC_ABORT`, or when the session ends |
 
 All per-session and per-message data belongs in these types. The library drops them at the end of each session and message, which enforces the session isolation rule.
@@ -498,10 +498,11 @@ Errors are `thiserror` enums. Every error type implements `std::error::Error`, `
 | `FrameTooLarge { length, max }` | Packet longer than `per_connection_buffer` | connection closed |
 | `InvalidReply(ReplyError)` | `Reply::to_frame()` refused a reply that breaks a protocol or MTA rule | the reply is not sent |
 | `Config(ConfigError)` | Invalid configuration at build time | `build()` fails |
-| `Bind { addr, source }` | A listener could not bind | `run()` fails in `FailFast` mode |
+| `Bind { addr, source }` | A listener could not bind | `run()` fails in `FailFast` mode, and in `BestEffort` mode when no address binds |
 | `Signals(std::io::Error)` | `run()` could not register the handlers for `SIGTERM`, `SIGINT`, `SIGQUIT`, and `SIGHUP` | `run()` fails |
 | `ResourceLimit(ResourceKind)` | `MaxConnections` or `MaxMemory` reached | connection rejected or closed |
-| `ShuttingDown` | The operation is not allowed during shutdown | none |
+
+A reload during shutdown fails with `ReloadError::ShuttingDown`, not with an `Error`.
 
 ### ConfigError
 
@@ -510,11 +511,12 @@ Errors are `thiserror` enums. Every error type implements `std::error::Error`, `
 | `OutOfRange { field, value, allowed }` | A value outside its range in [configuration.md](configuration.md); `field` is the setting's path, such as `timeouts.connect`, `value` the value as text, and `allowed` the range |
 | `MissingBindAddress` | `bind_addresses` is empty |
 | `DuplicateBindAddress(SocketAddr)` | The same address appears twice |
-| `Address(AddressError)` | An address string could not be parsed |
 | `Inconsistent { rule, detail }` | A cross-field rule failed, such as `max_memory` smaller than `per_connection_buffer` |
 | `Unsupported { field, reason }` | The platform does not support a setting, such as `reuse_port` |
 | `UnknownEnvVariable(String)` | An environment variable with the configured prefix names no setting |
 | `InvalidEnvValue { variable, reason }` | An environment variable's value cannot be parsed; the value itself is not included |
+
+`ServerConfig::parse_bind_address` returns an `AddressError` of its own. The file format and the environment variables report an address that does not parse as their own error, which names the address's position or text: a serde error, or `ConfigError::InvalidEnvValue`.
 
 `AddressError`: `InvalidFormat` (including `unix:` and `local:` addresses and Postfix's `inet:host:port`), `InvalidHost` (not an IP address of the form's family, or a scope ID that is not a number), `InvalidPort` (not 1 to 65535).
 
@@ -613,7 +615,7 @@ Deprecation:
 Zero copy: frame data, body chunks, and `MilterText` values share `bytes::Bytes` buffers. Text is copied only when a handler converts it, for example with `to_string_lossy()`.
 
 Allocation:
-- per connection: one read buffer and one write buffer, growing up to `per_connection_buffer`
+- per connection: one read buffer, which grows up to `per_connection_buffer` and counts against `max_memory`, and one write buffer, which holds one reply at a time and counts against neither. The largest reply the library builds is a 65,540-byte body chunk; a header or address that a handler sends can make a reply longer
 - shared: the published configuration (`Arc`), the status counters
 
 Latency targets per frame: P50 < 100 µs, P99 < 1 ms, P99.9 < 10 ms.
@@ -629,7 +631,7 @@ Toolchain and platforms:
 - Linux, macOS, or BSD
 - file descriptors: at least `max_connections` + listeners + 10
 
-Recommended for production: 4 or more CPU cores; memory for up to two buffers of `per_connection_buffer` per connection (about 2.5 GB for 10,000 connections at the default 128 KB), or `max_memory` set to cap the total; and `ulimit -n` of at least `max_connections` plus the listeners plus 10 (10,011 for the defaults with one listener).
+Recommended for production: 4 or more CPU cores; memory for one `per_connection_buffer` and one 65,540-byte reply per connection (about 2 GB for 10,000 connections at the default 128 KB), or `max_memory` set to cap the read buffers; and `ulimit -n` of at least `max_connections` plus the listeners plus 10 (10,011 for the defaults with one listener).
 
 ## Possible future additions
 
