@@ -62,13 +62,21 @@ pub(crate) const VERSIONS: [u32; 5] = [2, 3, 4, 5, 6];
 
 /// The position of a command code in [`COMMANDS`].
 pub(crate) fn command_index(code: u8) -> Option<usize> {
-    COMMANDS.iter().position(|(known, _)| *known == code)
+    for (index, (known, _)) in COMMANDS.iter().enumerate() {
+        if *known == code {
+            return Some(index);
+        }
+    }
+    None
 }
 
 /// The `milter.command` value of a command code.
 pub(crate) fn command_name(code: u8) -> &'static str {
     // `Command::from_frame` rejects every other code before an event.
-    command_index(code).map_or("unknown_command", |index| COMMANDS[index].1)
+    match command_index(code) {
+        Some(index) => COMMANDS[index].1,
+        None => "unknown_command",
+    }
 }
 
 /// The position of a reply's `milter.reply` value in [`REPLIES`].
@@ -141,8 +149,10 @@ impl Traffic {
     }
 
     pub(crate) fn negotiated(&self, version: u32) {
-        if let Some(index) = VERSIONS.iter().position(|v| *v == version) {
-            self.negotiations[index].fetch_add(1, Ordering::Relaxed);
+        for (index, known) in VERSIONS.iter().enumerate() {
+            if *known == version {
+                self.negotiations[index].fetch_add(1, Ordering::Relaxed);
+            }
         }
     }
 
@@ -164,22 +174,26 @@ impl Traffic {
 
     /// The negotiations that happened, by version.
     pub(crate) fn negotiations(&self) -> Vec<(u32, u64)> {
-        VERSIONS
-            .iter()
-            .zip(&self.negotiations)
-            .map(|(version, count)| (*version, count.load(Ordering::Relaxed)))
-            .filter(|(_, count)| *count > 0)
-            .collect()
+        let mut negotiations = Vec::new();
+        for (version, count) in VERSIONS.iter().zip(&self.negotiations) {
+            let count = count.load(Ordering::Relaxed);
+            if count > 0 {
+                negotiations.push((*version, count));
+            }
+        }
+        negotiations
     }
 
     /// The commands received, by command.
     pub(crate) fn commands(&self) -> Vec<(&'static str, u64)> {
-        COMMANDS
-            .iter()
-            .zip(&self.commands)
-            .map(|((_, name), count)| (*name, count.load(Ordering::Relaxed)))
-            .filter(|(_, count)| *count > 0)
-            .collect()
+        let mut commands = Vec::new();
+        for ((_, name), count) in COMMANDS.iter().zip(&self.commands) {
+            let count = count.load(Ordering::Relaxed);
+            if count > 0 {
+                commands.push((*name, count));
+            }
+        }
+        commands
     }
 
     /// The replies sent, by command and reply.
