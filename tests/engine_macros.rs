@@ -19,7 +19,10 @@ struct Reads {
 
 impl Reads {
     fn record(&self, callback: &str, value: Option<&MilterText>) {
-        let value = value.map_or("none".into(), |v| v.to_string_lossy().into_owned());
+        let value = match value {
+            Some(value) => value.to_string_lossy().into_owned(),
+            None => "none".to_owned(),
+        };
         self.log.push(format!("{callback}={value}"));
     }
 }
@@ -69,7 +72,7 @@ async fn start(name: &'static str) -> (TestServer, Log) {
         name,
         log: log.clone(),
     };
-    (TestServer::start(move |_| handler).await, log)
+    (TestServer::start(handler).await, log)
 }
 
 #[tokio::test]
@@ -139,7 +142,7 @@ async fn eng_042_later_stages_see_the_mail_macros() {
 
 #[tokio::test]
 async fn eng_043_macros_of_postfix_stages_get_no_reply() {
-    let server = TestServer::start(support::ContinueAll::new).await;
+    let server = TestServer::start(support::ContinueAll).await;
     let mut mta = server.mta().await;
     mta.reach(Reach::Rcpt).await;
 
@@ -167,7 +170,7 @@ impl Handler for NoHeaders {
 
 #[tokio::test]
 async fn eng_044_a_header_stage_macro_without_headers_is_harmless() {
-    let server = TestServer::start(|_| NoHeaders).await;
+    let server = TestServer::start(NoHeaders).await;
     let mut mta = server.mta().await;
     let reply = mta.negotiate().await;
     assert_eq!(reply.protocol, SMFIP_NOHDRS);
