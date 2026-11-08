@@ -188,25 +188,6 @@ fn cfg_006_requires_room_for_one_full_default_size_packet() {
 }
 
 #[test]
-fn cfg_007_requires_max_fds_to_cover_connections_listeners_and_10() {
-    let mut config = valid();
-    config.bind_addresses = vec![
-        "127.0.0.1:8891".parse().unwrap(),
-        "[::1]:8891".parse().unwrap(),
-    ];
-    config.max_connections = 1_000;
-
-    config.resource_limits.max_fds = Some(1_011);
-    assert!(
-        matches!(config.validate(), Err(ConfigError::Inconsistent { .. })),
-        "1,011 must fail"
-    );
-
-    config.resource_limits.max_fds = Some(1_012);
-    assert_eq!(config.validate(), Ok(()));
-}
-
-#[test]
 fn cfg_008_requires_max_memory_to_hold_one_connection_buffer() {
     let mut config = valid();
     config.resource_limits.max_memory = Some(config.resource_limits.per_connection_buffer - 1);

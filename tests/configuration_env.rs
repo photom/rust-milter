@@ -1,4 +1,4 @@
-//! Environment variable scenarios (CFG-080 to CFG-093) from
+//! Environment variable scenarios (CFG-080 to CFG-093, and CFG-096) from
 //! `docs/testing/configuration.md`. They use `from_vars` and `apply_vars`, so
 //! they never change the process environment.
 
@@ -142,7 +142,7 @@ fn cfg_089_checks_formats_only_and_leaves_ranges_to_validation() {
 
 /// Every setting: its path, and a value for its variable. [`expect`] makes
 /// the change that value makes to the defaults.
-const SETTINGS: [(&str, &str); 24] = [
+const SETTINGS: [(&str, &str); 23] = [
     ("bind_addresses", "127.0.0.1:9999"),
     ("bind_mode", "best_effort"),
     ("backlog", "2048"),
@@ -163,7 +163,6 @@ const SETTINGS: [(&str, &str); 24] = [
     ("socket_options.keepalive.retries", "3"),
     ("shutdown.grace_period", "42s"),
     ("shutdown.drain_timeout", "42s"),
-    ("resource_limits.max_fds", "20000"),
     ("resource_limits.max_memory", "1048576"),
     ("resource_limits.per_connection_buffer", "262144"),
     ("telemetry.trace_commands", "all"),
@@ -193,7 +192,6 @@ fn expect(path: &str, config: &mut ServerConfig) {
         "socket_options.keepalive.retries" => keepalive(config).retries = 3,
         "shutdown.grace_period" => config.shutdown.grace_period = D,
         "shutdown.drain_timeout" => config.shutdown.drain_timeout = D,
-        "resource_limits.max_fds" => config.resource_limits.max_fds = Some(20_000),
         "resource_limits.max_memory" => config.resource_limits.max_memory = Some(1_048_576),
         "resource_limits.per_connection_buffer" => {
             config.resource_limits.per_connection_buffer = 262_144
@@ -309,6 +307,16 @@ fn cfg_093_requires_variable_names_in_upper_case() {
         from_vars(&[("RUST_MILTER_max_connections", "500")]),
         Err(ConfigError::UnknownEnvVariable(
             "RUST_MILTER_max_connections".to_owned()
+        ))
+    );
+}
+
+#[test]
+fn cfg_096_rejects_the_removed_max_fds_variable() {
+    assert_eq!(
+        from_vars(&[("RUST_MILTER_RESOURCE_LIMITS__MAX_FDS", "20000")]),
+        Err(ConfigError::UnknownEnvVariable(
+            "RUST_MILTER_RESOURCE_LIMITS__MAX_FDS".to_owned()
         ))
     );
 }
