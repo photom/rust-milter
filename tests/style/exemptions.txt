@@ -7,13 +7,6 @@
 # on a listed file that has nothing left to convert.
 # One path per line, from the repository root, in sorted order.
 
-src/config/address.rs
-src/config/env.rs
-src/config/file_format.rs
-src/config/mod.rs
-src/config/reload.rs
-src/config/text.rs
-src/config/validate.rs
 src/engine/io.rs
 src/engine/macros.rs
 src/engine/mod.rs

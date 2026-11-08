@@ -9,9 +9,17 @@ pub(crate) const DURATION_FORMAT: &str = "write a whole number and ms, s, m, or 
 
 /// Reads a whole number followed by `ms`, `s`, `m`, or `h`.
 pub(crate) fn parse_duration(text: &str) -> Result<Duration, &'static str> {
-    let digits = text.len() - text.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+    let mut digits = 0;
+    for byte in text.bytes() {
+        if !byte.is_ascii_digit() {
+            break;
+        }
+        digits += 1;
+    }
     let (number, unit) = text.split_at(digits);
-    let number: u64 = number.parse().map_err(|_| DURATION_FORMAT)?;
+    let Ok(number) = number.parse::<u64>() else {
+        return Err(DURATION_FORMAT);
+    };
     let seconds_per_unit = match unit {
         "ms" => return Ok(Duration::from_millis(number)),
         "s" => 1,
@@ -19,10 +27,10 @@ pub(crate) fn parse_duration(text: &str) -> Result<Duration, &'static str> {
         "h" => 3_600,
         _ => return Err(DURATION_FORMAT),
     };
-    number
-        .checked_mul(seconds_per_unit)
-        .map(Duration::from_secs)
-        .ok_or(DURATION_FORMAT)
+    match number.checked_mul(seconds_per_unit) {
+        Some(seconds) => Ok(Duration::from_secs(seconds)),
+        None => Err(DURATION_FORMAT),
+    }
 }
 
 /// Writes a duration in the largest unit that represents it exactly.

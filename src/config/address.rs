@@ -20,7 +20,7 @@ impl ServerConfig {
             let (port, host) = split_libmilter(rest)?;
             let host = match host {
                 None => Ipv4Addr::UNSPECIFIED,
-                Some(host) => host.parse().map_err(|_| AddressError::InvalidHost)?,
+                Some(host) => parse_ipv4(host)?,
             };
             return Ok(SocketAddr::new(IpAddr::V4(host), parse_port(port)?));
         }
@@ -37,12 +37,14 @@ impl ServerConfig {
         }
 
         let (host, port) = text.rsplit_once(':').ok_or(AddressError::InvalidFormat)?;
-        if let Some(v6) = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
+        if let Some(v6) = bracketed(host) {
             let (host, scope_id) = parse_ipv6(v6)?;
             return Ok(SocketAddrV6::new(host, parse_port(port)?, 0, scope_id).into());
         }
-        let host: Ipv4Addr = host.parse().map_err(|_| AddressError::InvalidHost)?;
-        Ok(SocketAddr::new(IpAddr::V4(host), parse_port(port)?))
+        Ok(SocketAddr::new(
+            IpAddr::V4(parse_ipv4(host)?),
+            parse_port(port)?,
+        ))
     }
 }
 
@@ -60,15 +62,35 @@ fn split_libmilter(text: &str) -> Result<(&str, Option<&str>), AddressError> {
 
 /// Parses an IPv6 address with an optional numeric scope ID, `addr%id`.
 fn parse_ipv6(text: &str) -> Result<(Ipv6Addr, u32), AddressError> {
-    let (address, scope_id) = match text.split_once('%') {
-        Some((address, scope)) => (
-            address,
-            scope.parse().map_err(|_| AddressError::InvalidHost)?,
-        ),
-        None => (text, 0),
+    let (address, scope) = match text.split_once('%') {
+        Some((address, scope)) => (address, Some(scope)),
+        None => (text, None),
     };
-    let address = address.parse().map_err(|_| AddressError::InvalidHost)?;
-    Ok((address, scope_id))
+    let scope_id = match scope {
+        None => 0,
+        Some(scope) => match scope.parse() {
+            Ok(scope_id) => scope_id,
+            Err(_) => return Err(AddressError::InvalidHost),
+        },
+    };
+    match address.parse() {
+        Ok(address) => Ok((address, scope_id)),
+        Err(_) => Err(AddressError::InvalidHost),
+    }
+}
+
+/// Parses an IPv4 address.
+fn parse_ipv4(text: &str) -> Result<Ipv4Addr, AddressError> {
+    match text.parse() {
+        Ok(address) => Ok(address),
+        Err(_) => Err(AddressError::InvalidHost),
+    }
+}
+
+/// The text between `[` and `]`, when `host` is bracketed.
+fn bracketed(host: &str) -> Option<&str> {
+    let inner = host.strip_prefix('[')?;
+    inner.strip_suffix(']')
 }
 
 /// Parses a port from 1 to 65535.

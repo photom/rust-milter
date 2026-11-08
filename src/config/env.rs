@@ -60,10 +60,6 @@ impl ServerConfig {
             let Some(path) = name.strip_prefix(prefix) else {
                 continue;
             };
-            let invalid = |reason: String| ConfigError::InvalidEnvValue {
-                variable: name.to_owned(),
-                reason,
-            };
             match set(&mut next, path, value.as_ref()) {
                 Ok(Effect::Set) => {}
                 Ok(Effect::KeepaliveOff) => keepalive_off = true,
@@ -71,7 +67,12 @@ impl ServerConfig {
                 Err(Failure::Unknown) => {
                     return Err(ConfigError::UnknownEnvVariable(name.to_owned()));
                 }
-                Err(Failure::Invalid(reason)) => return Err(invalid(reason)),
+                Err(Failure::Invalid(reason)) => {
+                    return Err(ConfigError::InvalidEnvValue {
+                        variable: name.to_owned(),
+                        reason,
+                    });
+                }
             }
         }
         if keepalive_off && keepalive_set {
@@ -102,12 +103,12 @@ fn process_vars(prefix: &str) -> Result<Vec<(String, String)>, ConfigError> {
                 name.to_string_lossy().into_owned(),
             ));
         };
-        let value = value
-            .into_string()
-            .map_err(|_| ConfigError::InvalidEnvValue {
+        let Ok(value) = value.into_string() else {
+            return Err(ConfigError::InvalidEnvValue {
                 variable: name.to_owned(),
                 reason: "the value is not valid UTF-8".to_owned(),
-            })?;
+            });
+        };
         vars.push((name.to_owned(), value));
     }
     Ok(vars)
@@ -184,14 +185,14 @@ fn set(config: &mut ServerConfig, path: &str, value: &str) -> Result<Effect, Fai
 
 /// Comma-separated addresses; spaces around items are ignored.
 fn bind_addresses(value: &str) -> Result<Vec<std::net::SocketAddr>, String> {
-    value
-        .split(',')
-        .enumerate()
-        .map(|(index, item)| {
-            ServerConfig::parse_bind_address(item.trim())
-                .map_err(|error| format!("address {}: {error}", index + 1))
-        })
-        .collect()
+    let mut addresses = Vec::new();
+    for (index, item) in value.split(',').enumerate() {
+        match ServerConfig::parse_bind_address(item.trim()) {
+            Ok(address) => addresses.push(address),
+            Err(error) => return Err(format!("address {}: {error}", index + 1)),
+        }
+    }
+    Ok(addresses)
 }
 
 fn bind_mode(value: &str) -> Result<BindMode, String> {
@@ -221,11 +222,15 @@ fn boolean(value: &str) -> Result<bool, String> {
 
 /// A whole number. The parse error's text never contains the value.
 fn number<T: FromStr<Err = std::num::ParseIntError>>(value: &str) -> Result<T, String> {
-    value
-        .parse()
-        .map_err(|error: std::num::ParseIntError| format!("expected a whole number: {error}"))
+    match value.parse() {
+        Ok(number) => Ok(number),
+        Err(error) => Err(format!("expected a whole number: {error}")),
+    }
 }
 
 fn duration(value: &str) -> Result<std::time::Duration, String> {
-    text::parse_duration(value).map_err(str::to_owned)
+    match text::parse_duration(value) {
+        Ok(duration) => Ok(duration),
+        Err(reason) => Err(reason.to_owned()),
+    }
 }

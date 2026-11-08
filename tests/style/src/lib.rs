@@ -85,6 +85,22 @@ pub struct Scan {
     /// Whether an attribute anywhere in the file allows or expects
     /// `clippy::disallowed_methods`.
     pub allows_disallowed_methods: bool,
+    /// The first and last lines of each `derive` attribute, alone or inside
+    /// `cfg_attr`. Clippy reports a call that a derive macro generates on
+    /// these lines.
+    pub derive_lines: Vec<(usize, usize)>,
+}
+
+impl Scan {
+    /// Whether `line` belongs to a `derive` attribute.
+    pub fn is_derive_line(&self, line: usize) -> bool {
+        for (first, last) in &self.derive_lines {
+            if *first <= line && line <= *last {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 /// Checks the source of the file `path`, given from the repository root.
@@ -96,6 +112,7 @@ pub fn scan(path: &str, source: &str) -> syn::Result<Scan> {
         item: None,
         findings: Vec::new(),
         allows_disallowed_methods: false,
+        derive_lines: Vec::new(),
     };
     checker.visit_file(&file);
     let mut findings = checker.findings;
@@ -104,6 +121,7 @@ pub fn scan(path: &str, source: &str) -> syn::Result<Scan> {
     Ok(Scan {
         findings,
         allows_disallowed_methods: checker.allows_disallowed_methods,
+        derive_lines: checker.derive_lines,
     })
 }
 
@@ -200,13 +218,21 @@ fn parse_method_call(line: &str) -> Option<MethodCall> {
 /// The problems in Clippy's `output` for the repository at `root`, one
 /// line each: a disallowed method call in a file that is not in `exempt`,
 /// and a file in `exempt` that has nothing left to convert, with neither a
-/// call in `output` nor a finding of [`scan`].
+/// call in `output` nor a finding of [`scan`]. A call that a derive macro
+/// generates is not the repository's code, so it counts for neither.
 pub fn method_problems(
     root: &Path,
     output: &str,
     exempt: &[String],
 ) -> std::io::Result<Vec<String>> {
-    let calls = disallowed_method_calls(output);
+    let mut scans: Vec<(String, Scan)> = Vec::new();
+    let mut calls = Vec::new();
+    for call in disallowed_method_calls(output) {
+        if !generated_by_derive(root, &call, &mut scans)? {
+            calls.push(call);
+        }
+    }
+
     let mut problems = Vec::new();
     for call in &calls {
         if !exempt.contains(&call.file) {
@@ -242,6 +268,27 @@ pub fn method_problems(
         }
     }
     Ok(problems)
+}
+
+/// Whether a derive macro generated `call`: Clippy reports it on the lines
+/// of a `derive` attribute. `scans` keeps the files read so far.
+fn generated_by_derive(
+    root: &Path,
+    call: &MethodCall,
+    scans: &mut Vec<(String, Scan)>,
+) -> std::io::Result<bool> {
+    for (file, scanned) in scans.iter() {
+        if *file == call.file {
+            return Ok(scanned.is_derive_line(call.line));
+        }
+    }
+    let source = std::fs::read_to_string(root.join(&call.file))?;
+    let Ok(scanned) = scan(&call.file, &source) else {
+        return Ok(false);
+    };
+    let generated = scanned.is_derive_line(call.line);
+    scans.push((call.file.clone(), scanned));
+    Ok(generated)
 }
 
 /// The repository root.
@@ -326,6 +373,27 @@ fn allows_disallowed_methods(attribute: &syn::Attribute) -> bool {
     false
 }
 
+/// Whether `attribute` is `#[derive(...)]`, or a `cfg_attr` that holds one.
+fn is_derive(attribute: &syn::Attribute) -> bool {
+    if attribute.path().is_ident("derive") {
+        return true;
+    }
+    if !attribute.path().is_ident("cfg_attr") {
+        return false;
+    }
+    let Ok(list) = attribute.meta.require_list() else {
+        return false;
+    };
+    for token in list.tokens.clone() {
+        if let proc_macro2::TokenTree::Ident(ident) = token
+            && ident == "derive"
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// The arguments of a macro that takes expressions separated by commas.
 struct Arguments(Punctuated<Expr, Token![,]>);
 
@@ -345,6 +413,8 @@ struct Checker<'a> {
     findings: Vec<Finding>,
     /// Whether an attribute allows or expects `clippy::disallowed_methods`.
     allows_disallowed_methods: bool,
+    /// The lines of each `derive` attribute.
+    derive_lines: Vec<(usize, usize)>,
 }
 
 impl Checker<'_> {
@@ -410,6 +480,10 @@ impl<'ast> Visit<'ast> for Checker<'_> {
     fn visit_attribute(&mut self, attribute: &'ast syn::Attribute) {
         if allows_disallowed_methods(attribute) {
             self.allows_disallowed_methods = true;
+        }
+        if is_derive(attribute) {
+            let span = attribute.span();
+            self.derive_lines.push((span.start().line, span.end().line));
         }
         visit::visit_attribute(self, attribute);
     }
