@@ -322,7 +322,6 @@ To support 10,000 or more concurrent connections:
 
 | Limit | Description |
 |-------|-------------|
-| `max_fds` | Maximum file descriptors (connections + internal) |
 | `max_memory` | Memory limit for buffers (approximate) |
 | `per_connection_buffer` | Per-connection buffer limit |
 
