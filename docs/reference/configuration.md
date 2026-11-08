@@ -84,7 +84,7 @@ The reasons behind the reload classes are explained in [Configuration snapshots 
 | `timeouts.connect`, `timeouts.read`, `timeouts.write`, `timeouts.idle` | `new_connections` |
 | `socket_options.tcp_nodelay`, `keepalive`, `recv_buffer_size`, `send_buffer_size` | `new_connections` |
 | `shutdown.grace_period`, `shutdown.drain_timeout` | `immediate` (read when a shutdown starts) |
-| `resource_limits.max_fds`, `resource_limits.max_memory` | `immediate` (checked at accept and allocation time) |
+| `resource_limits.max_memory` | `immediate` (checked at accept and allocation time) |
 | `resource_limits.per_connection_buffer` | `new_connections` |
 | `telemetry.trace_commands` | `new_connections` |
 | Application configuration | `immediate` publication; handlers choose when to read it |
@@ -159,7 +159,6 @@ Time a handler spends in a callback counts against none of them; the MTA's own m
 
 | Field | Type | Default | Valid values | Reload class |
 |-------|------|---------|--------------|--------------|
-| `max_fds` | `Option<usize>` | `None` (system limit) | at least `max_connections` + listeners + 10 | `immediate` |
 | `max_memory` | `Option<usize>` | `None` (unlimited) | at least `per_connection_buffer` | `immediate` |
 | `per_connection_buffer` | `usize` | 128 KB | 65,540 bytes to 16 MB | `new_connections` |
 
@@ -202,15 +201,14 @@ The same rules run at startup and on every reload, and `ServerConfig::validate()
 1. Every field is within the range in the reference tables.
 2. `bind_addresses` is not empty and has no duplicates.
 3. `per_connection_buffer` is at least 65,540 bytes.
-4. If `max_fds` is set, it is at least `max_connections` + the number of listeners + 10, so the server can always accept, log, and close.
-5. If `max_memory` is set, it is at least `per_connection_buffer`.
-6. If `reuse_port` is true, the platform supports `SO_REUSEPORT`.
-7. If `ipv6_only` is false, `bind_addresses` does not hold `[::]` and an IPv4 address on the same port. A dual-stack `[::]` listener already receives the IPv4 connections on its port, so the second bind fails on Linux and behaves differently on other systems. Set `ipv6_only` to true to listen on both, or keep only `[::]`.
+4. If `max_memory` is set, it is at least `per_connection_buffer`.
+5. If `reuse_port` is true, the platform supports `SO_REUSEPORT`.
+6. If `ipv6_only` is false, `bind_addresses` does not hold `[::]` and an IPv4 address on the same port. A dual-stack `[::]` listener already receives the IPv4 connections on its port, so the second bind fails on Linux and behaves differently on other systems. Set `ipv6_only` to true to listen on both, or keep only `[::]`.
 
 On reload only:
 
-8. The new configuration must leave at least one listener (see [hot-reload.md](hot-reload.md)).
-9. No `restart` setting differs from the running configuration. Otherwise the reload fails with `RestartRequired`, which names each one that does.
+7. The new configuration must leave at least one listener (see [hot-reload.md](hot-reload.md)).
+8. No `restart` setting differs from the running configuration. Otherwise the reload fails with `RestartRequired`, which names each one that does.
 
 ## File format (serde feature)
 

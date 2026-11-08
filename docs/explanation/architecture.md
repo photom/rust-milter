@@ -148,7 +148,7 @@ Who reads what:
 | Shutdown coordinator | `shutdown.*` | when a shutdown starts |
 | Handler | application configuration via `ConfigWatch` | once per session or per message |
 
-What a changed setting does on reload, and which settings need a restart, is specified in [configuration.md](../reference/configuration.md#reload-classes). In short: the listener set, `max_connections`, the shutdown timings, `max_fds`, and `max_memory` apply at once; timeouts, socket options, `per_connection_buffer`, and `trace_commands` apply to new connections; `backlog`, `reuse_addr`, `reuse_port`, `ipv6_only`, and everything set only on the builder require a restart, and a reload that changes one of those settings fails.
+What a changed setting does on reload, and which settings need a restart, is specified in [configuration.md](../reference/configuration.md#reload-classes). In short: the listener set, `max_connections`, the shutdown timings, and `max_memory` apply at once; timeouts, socket options, `per_connection_buffer`, and `trace_commands` apply to new connections; `backlog`, `reuse_addr`, `reuse_port`, `ipv6_only`, and everything set only on the builder require a restart, and a reload that changes one of those settings fails.
 
 ### 8. Reload coordinator
 
@@ -370,7 +370,7 @@ The Connection component owns the transport state. The protocol engine owns the 
 ### File descriptors
 
 - one FD per open connection and one per listener
-- `max_fds` must leave room for `max_connections` plus the listeners plus 10
+- the process limit (`ulimit -n`) must leave room for `max_connections` plus the listeners plus 10; rust-milter has no setting of its own for it ([ADR 0012](../adr/0012-no-file-descriptor-limit-setting.md))
 - on `EMFILE` or `ENFILE` the accept loop backs off and retries
 
 All limits and defaults are in [configuration.md](../reference/configuration.md).
