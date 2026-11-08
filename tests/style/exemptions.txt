@@ -19,8 +19,6 @@ src/engine/macros.rs
 src/engine/mod.rs
 src/engine/state.rs
 src/engine/trace.rs
-src/handler/context.rs
-src/handler/flags.rs
 src/server/accept.rs
 src/server/listeners.rs
 src/server/memory.rs

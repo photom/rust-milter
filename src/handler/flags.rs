@@ -50,11 +50,12 @@ macro_rules! flag_set {
         impl fmt::Debug for $name {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 let names: &[(&str, $name)] = &[$((stringify!($flag), $name::$flag),)*];
-                let set: Vec<&str> = names
-                    .iter()
-                    .filter(|(_, flag)| self.contains(*flag))
-                    .map(|(name, _)| *name)
-                    .collect();
+                let mut set: Vec<&str> = Vec::new();
+                for (name, flag) in names {
+                    if self.contains(*flag) {
+                        set.push(*name);
+                    }
+                }
                 write!(f, "{}({})", stringify!($name), set.join(" | "))
             }
         }

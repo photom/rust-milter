@@ -189,7 +189,7 @@ impl<H: Handler> EomContext<H> {
             Actions::ADD_RECIPIENTS_WITH_ARGS,
             Reply::AddRecipientWithArgs {
                 rcpt: recipient.to_owned(),
-                args: args.map(str::to_owned),
+                args: owned(args),
             },
         )
         .await
@@ -210,7 +210,7 @@ impl<H: Handler> EomContext<H> {
             Actions::CHANGE_FROM,
             Reply::ChangeFrom {
                 from: sender.to_owned(),
-                args: args.map(str::to_owned),
+                args: owned(args),
             },
         )
         .await
@@ -250,5 +250,13 @@ impl<H: Handler> EomContext<H> {
         } else {
             Err(Error::ActionNotNegotiated(action))
         }
+    }
+}
+
+/// `text` as an owned string, or `None`.
+fn owned(text: Option<&str>) -> Option<String> {
+    match text {
+        Some(text) => Some(text.to_owned()),
+        None => None,
     }
 }
