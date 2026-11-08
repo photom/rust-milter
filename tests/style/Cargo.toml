@@ -14,4 +14,4 @@ workspace = true
 [dependencies]
 # Line numbers in the reports need span locations outside a procedural macro.
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
-syn = { version = "2", default-features = false, features = ["full", "parsing", "printing", "visit"] }
+syn = { version = "3", default-features = false, features = ["full", "parsing", "printing", "visit"] }
