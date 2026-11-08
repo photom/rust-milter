@@ -760,6 +760,20 @@ mod otel {
         server.stop().await;
     }
 
+    /// A loader that returns the prepared server configurations in turn.
+    struct PreparedLoader {
+        results: std::sync::Arc<std::sync::Mutex<Vec<ServerConfig>>>,
+    }
+
+    impl rust_milter::ReloadLoader<()> for PreparedLoader {
+        type Error = io::Error;
+
+        async fn load(&self) -> io::Result<Reloaded<()>> {
+            let server = self.results.lock().unwrap().remove(0);
+            Ok(Reloaded { server, app: () })
+        }
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn tel_016_reload_metrics_count_by_result_and_source() {
@@ -782,15 +796,7 @@ mod otel {
         let server = Server::builder()
             .config(config)
             .meter_provider(metrics.provider.clone())
-            .reload_with(move || {
-                let next = results.lock().unwrap().remove(0);
-                async move {
-                    Ok::<_, io::Error>(Reloaded {
-                        server: next,
-                        app: (),
-                    })
-                }
-            })
+            .reload_with(PreparedLoader { results })
             .handler(ContinueAll::new)
             .build()
             .unwrap();
