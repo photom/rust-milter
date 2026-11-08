@@ -14,14 +14,14 @@ use support::logs::Logs;
 use support::mta::{Mta, Reach, strings};
 use support::{Log, Recorder, TestServer};
 
-fn timeouts(connect: u64, read: u64, write: u64, idle: u64) -> impl FnOnce(&mut ServerConfig) {
-    move |config| {
-        let t = &mut config.timeouts;
-        t.connect = Duration::from_millis(connect);
-        t.read = Duration::from_millis(read);
-        t.write = Duration::from_millis(write);
-        t.idle = Duration::from_millis(idle);
-    }
+fn timeouts(connect: u64, read: u64, write: u64, idle: u64) -> ServerConfig {
+    let mut config = support::config();
+    let t = &mut config.timeouts;
+    t.connect = Duration::from_millis(connect);
+    t.read = Duration::from_millis(read);
+    t.write = Duration::from_millis(write);
+    t.idle = Duration::from_millis(idle);
+    config
 }
 
 /// How long until the milter closes the connection.
@@ -30,13 +30,10 @@ async fn closes_after(mta: &mut Mta, since: Instant) -> Duration {
     since.elapsed()
 }
 
-async fn recording(configure: impl FnOnce(&mut ServerConfig)) -> (TestServer, Log) {
+async fn recording(config: ServerConfig) -> (TestServer, Log) {
     let recorder = Recorder::default();
     let log = recorder.log.clone();
-    (
-        TestServer::start_with(configure, move |_| recorder).await,
-        log,
-    )
+    (TestServer::start_with(config, recorder).await, log)
 }
 
 #[tokio::test]
@@ -174,7 +171,7 @@ impl Handler for SlowMail {
 
 #[tokio::test]
 async fn srv_036_time_in_a_callback_counts_against_no_timeout() {
-    let server = TestServer::start_with(timeouts(10_000, 200, 200, 1_000), |_| SlowMail).await;
+    let server = TestServer::start_with(timeouts(10_000, 200, 200, 1_000), SlowMail).await;
     let mut mta = server.mta().await;
     mta.reach(Reach::Helo).await;
     let sent = Instant::now();
@@ -207,7 +204,8 @@ impl Handler for HugeBody {
             Err(other) => format!("{other:?}"),
         };
         self.0.push(outcome);
-        result.map(|()| Decision::Continue)
+        result?;
+        Ok(Decision::Continue)
     }
 }
 
@@ -215,14 +213,9 @@ impl Handler for HugeBody {
 async fn srv_037_a_write_to_an_mta_that_stops_reading_times_out() {
     let log = Log::default();
     let handler = HugeBody(log.clone());
-    let server = TestServer::start_with(
-        |config| {
-            timeouts(10_000, 30_000, 200, 60_000)(config);
-            config.socket_options.send_buffer_size = Some(4 * 1024);
-        },
-        move |_| handler,
-    )
-    .await;
+    let mut config = timeouts(10_000, 30_000, 200, 60_000);
+    config.socket_options.send_buffer_size = Some(4 * 1024);
+    let server = TestServer::start_with(config, handler).await;
     let addr = server.address();
     let mut mta = Mta::connect_with_small_receive_buffer(addr).await;
     mta.reach(Reach::Body).await;
@@ -240,7 +233,7 @@ async fn srv_037_a_write_to_an_mta_that_stops_reading_times_out() {
 
 #[tokio::test]
 async fn srv_038_closes_at_once_on_a_frame_longer_than_the_buffer() {
-    let (server, _) = recording(|_| {}).await;
+    let (server, _) = recording(support::config()).await;
     let mut mta = server.mta().await;
     mta.reach(Reach::Helo).await;
 
@@ -254,7 +247,7 @@ async fn srv_038_closes_at_once_on_a_frame_longer_than_the_buffer() {
 
 #[tokio::test]
 async fn srv_039_end_of_file_halfway_through_a_frame_ends_the_session_with_an_error() {
-    let (server, log) = recording(|_| {}).await;
+    let (server, log) = recording(support::config()).await;
     let mut mta = server.mta().await;
     mta.reach(Reach::Helo).await;
 
@@ -269,7 +262,7 @@ async fn srv_039_end_of_file_halfway_through_a_frame_ends_the_session_with_an_er
 #[tokio::test]
 async fn srv_040_a_reset_ends_the_session_with_an_error() {
     let (logs, _guard) = Logs::capture();
-    let (server, log) = recording(|_| {}).await;
+    let (server, log) = recording(support::config()).await;
     let mut mta = server.mta().await;
     mta.reach(Reach::Helo).await;
 
