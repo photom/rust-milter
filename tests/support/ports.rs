@@ -41,7 +41,10 @@ impl PortLease {
     /// tests are off or `::1` cannot be bound.
     pub fn v6_or_skip(&self) -> Option<SocketAddr> {
         let addr = SocketAddr::from((Ipv6Addr::LOCALHOST, self.port));
-        let setting = std::env::var("RUST_MILTER_TEST_IPV6").unwrap_or_else(|_| "auto".into());
+        let setting = match std::env::var("RUST_MILTER_TEST_IPV6") {
+            Ok(setting) => setting,
+            Err(_) => "auto".to_owned(),
+        };
         let available = TcpListener::bind(addr).is_ok();
         match (setting.as_str(), available) {
             ("off", _) | ("auto", false) => {
@@ -54,17 +57,18 @@ impl PortLease {
     }
 }
 
-fn range() -> (u16, u16) {
-    let read = |name: &str, default: u16| {
-        std::env::var(name)
-            .ok()
-            .map(|value| {
-                value
-                    .parse()
-                    .unwrap_or_else(|_| panic!("{name} is not a number"))
-            })
-            .unwrap_or(default)
+/// The number in the environment variable `name`, or `default` without it.
+fn read(name: &str, default: u16) -> u16 {
+    let Ok(value) = std::env::var(name) else {
+        return default;
     };
+    match value.parse() {
+        Ok(number) => number,
+        Err(_) => panic!("{name} is not a number"),
+    }
+}
+
+fn range() -> (u16, u16) {
     let count = read("RUST_MILTER_TEST_PORT_COUNT", 10);
     assert!(
         (3..=100).contains(&count),

@@ -7,14 +7,17 @@ mod support;
 use std::process::Command;
 
 use rust_milter::protocol::*;
-use support::ContinueAll;
 use support::TestServer;
 use support::mta::Reach;
+use support::{ContinueAll, Until};
 
 /// The crate's normal dependencies, as `cargo tree` lists them, with or
 /// without the `otel` feature.
 fn normal_dependencies(otel: bool) -> Vec<String> {
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
+    let cargo = match std::env::var("CARGO") {
+        Ok(cargo) => cargo,
+        Err(_) => "cargo".to_owned(),
+    };
     let mut command = Command::new(cargo);
     command.args([
         "tree",
@@ -38,31 +41,29 @@ fn normal_dependencies(otel: bool) -> Vec<String> {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| line.split_whitespace().next())
-        .map(str::to_owned)
-        .collect()
+    let mut crates = Vec::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        if let Some(name) = line.split_whitespace().next() {
+            crates.push(name.to_owned());
+        }
+    }
+    crates
 }
 
 #[test]
 fn tel_001_without_the_feature_no_opentelemetry_crate_is_linked() {
     let crates = normal_dependencies(false);
 
-    assert!(
-        crates.iter().all(|name| !name.starts_with("opentelemetry")),
-        "{crates:?}"
-    );
+    for name in &crates {
+        assert!(!name.starts_with("opentelemetry"), "{crates:?}");
+    }
 }
 
 #[test]
 fn tel_002_with_the_feature_only_the_api_crate_is_linked() {
     let crates = normal_dependencies(true);
 
-    assert!(
-        crates.iter().any(|name| name == "opentelemetry"),
-        "{crates:?}"
-    );
+    assert!(crates.contains(&"opentelemetry".to_owned()), "{crates:?}");
     for name in &crates {
         assert!(
             name == "opentelemetry" || !name.starts_with("opentelemetry"),
@@ -73,14 +74,14 @@ fn tel_002_with_the_feature_only_the_api_crate_is_linked() {
 
 #[tokio::test]
 async fn tel_005_status_counts_a_session() {
-    let server = TestServer::start(ContinueAll::new).await;
+    let server = TestServer::start(ContinueAll).await;
     let mut mta = server.mta().await;
     mta.reach(Reach::Rcpt).await;
     mta.ask_continue(SMFIC_BODYEOB, rust_milter::Bytes::new())
         .await;
     mta.send(SMFIC_QUIT, rust_milter::Bytes::new()).await;
     assert!(mta.closes().await);
-    support::wait_until(|| server.handle.status().connections == 0).await;
+    support::wait_until(&server.handle, Until::Idle).await;
 
     let status = server.handle.status();
 
@@ -138,11 +139,11 @@ async fn tel_006_a_kept_listener_keeps_its_counts() {
         .unwrap();
     let handle = server.handle();
     let task = tokio::spawn(server.run());
-    support::wait_until(|| handle.status().accepting).await;
+    support::wait_until(&handle, Until::Accepting).await;
     let mut mta = support::mta::Mta::connect(a.v4()).await;
     mta.negotiate().await;
     mta.close().await;
-    support::wait_until(|| handle.status().connections == 0).await;
+    support::wait_until(&handle, Until::Idle).await;
 
     let moved = rust_milter::ServerConfig {
         bind_addresses: vec![a.v4(), b.v4()],
@@ -156,12 +157,10 @@ async fn tel_006_a_kept_listener_keeps_its_counts() {
         .await
         .unwrap();
 
-    let accepted: Vec<(std::net::SocketAddr, u64)> = handle
-        .status()
-        .listeners
-        .iter()
-        .map(|listener| (listener.address, listener.connections_accepted))
-        .collect();
+    let mut accepted = Vec::new();
+    for listener in handle.status().listeners {
+        accepted.push((listener.address, listener.connections_accepted));
+    }
     assert_eq!(accepted, [(a.v4(), 1), (b.v4(), 0)]);
     handle.shutdown();
     task.await.unwrap().unwrap();
@@ -238,21 +237,33 @@ mod otel {
     fn attributes<'a>(
         values: impl Iterator<Item = &'a opentelemetry::KeyValue>,
     ) -> BTreeMap<String, String> {
-        values
-            .map(|kv| (kv.key.to_string(), kv.value.to_string()))
-            .collect()
+        let mut attributes = BTreeMap::new();
+        for kv in values {
+            attributes.insert(kv.key.to_string(), kv.value.to_string());
+        }
+        attributes
     }
 
-    fn points_of(metric: &opentelemetry_sdk::metrics::data::Metric) -> Vec<Point> {
-        let point = |kind, attributes, value, count, bounds| Point {
+    /// A point of `metric` without a count or bounds.
+    fn point(
+        metric: &opentelemetry_sdk::metrics::data::Metric,
+        kind: &'static str,
+        attributes: BTreeMap<String, String>,
+        value: f64,
+    ) -> Point {
+        Point {
             name: metric.name().to_owned(),
             kind,
             unit: metric.unit().to_owned(),
             attributes,
             value,
-            count,
-            bounds,
-        };
+            count: 0,
+            bounds: Vec::new(),
+        }
+    }
+
+    fn points_of(metric: &opentelemetry_sdk::metrics::data::Metric) -> Vec<Point> {
+        let mut points = Vec::new();
         macro_rules! data {
             ($data:expr) => {
                 match $data {
@@ -262,42 +273,26 @@ mod otel {
                         } else {
                             "updowncounter"
                         };
-                        sum.data_points()
-                            .map(|p| {
-                                point(
-                                    kind,
-                                    attributes(p.attributes()),
-                                    p.value() as f64,
-                                    0,
-                                    Vec::new(),
-                                )
-                            })
-                            .collect::<Vec<_>>()
+                        for p in sum.data_points() {
+                            let attributes = attributes(p.attributes());
+                            points.push(point(metric, kind, attributes, p.value() as f64));
+                        }
                     }
-                    MetricData::Gauge(gauge) => gauge
-                        .data_points()
-                        .map(|p| {
-                            point(
-                                "gauge",
-                                attributes(p.attributes()),
-                                p.value() as f64,
-                                0,
-                                Vec::new(),
-                            )
-                        })
-                        .collect(),
-                    MetricData::Histogram(histogram) => histogram
-                        .data_points()
-                        .map(|p| {
-                            point(
-                                "histogram",
-                                attributes(p.attributes()),
-                                p.sum() as f64,
-                                p.count(),
-                                p.bounds().collect(),
-                            )
-                        })
-                        .collect(),
+                    MetricData::Gauge(gauge) => {
+                        for p in gauge.data_points() {
+                            let attributes = attributes(p.attributes());
+                            points.push(point(metric, "gauge", attributes, p.value() as f64));
+                        }
+                    }
+                    MetricData::Histogram(histogram) => {
+                        for p in histogram.data_points() {
+                            let attributes = attributes(p.attributes());
+                            let mut point = point(metric, "histogram", attributes, p.sum() as f64);
+                            point.count = p.count();
+                            point.bounds = p.bounds().collect();
+                            points.push(point);
+                        }
+                    }
                     MetricData::ExponentialHistogram(_) => panic!("no exponential histogram"),
                 }
             };
@@ -307,21 +302,30 @@ mod otel {
             AggregatedMetrics::U64(data) => data!(data),
             AggregatedMetrics::I64(data) => data!(data),
         }
+        points
     }
 
     fn named<'a>(points: &'a [Point], name: &str) -> Vec<&'a Point> {
-        points.iter().filter(|p| p.name == name).collect()
+        let mut named = Vec::new();
+        for point in points {
+            if point.name == name {
+                named.push(point);
+            }
+        }
+        named
     }
 
     fn value(points: &[Point], name: &str, attributes: &[(&str, &str)]) -> Option<f64> {
-        let wanted: BTreeMap<String, String> = attributes
-            .iter()
-            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
-            .collect();
-        named(points, name)
-            .into_iter()
-            .find(|p| p.attributes == wanted)
-            .map(|p| p.value)
+        let mut wanted = BTreeMap::new();
+        for (key, value) in attributes {
+            wanted.insert((*key).to_owned(), (*value).to_owned());
+        }
+        for point in named(points, name) {
+            if point.attributes == wanted {
+                return Some(point.value);
+            }
+        }
+        None
     }
 
     /// A server on a leased port that reports to `metrics`.
@@ -331,31 +335,20 @@ mod otel {
         lease: PortLease,
     }
 
-    async fn start<H, F>(
-        metrics: &Metrics,
-        configure: impl FnOnce(&mut ServerConfig),
-        factory: F,
-    ) -> Running
-    where
-        H: Handler,
-        F: FnOnce(&rust_milter::HandlerContext<()>) -> H + 'static,
-    {
+    /// Starts a server with `handler` and `config` on a leased port, which
+    /// replaces the bind addresses of `config`.
+    async fn start<H: Handler>(metrics: &Metrics, mut config: ServerConfig, handler: H) -> Running {
         let lease = PortLease::acquire().await;
-        let mut config = ServerConfig {
-            bind_addresses: vec![lease.v4()],
-            shutdown: support::quick_shutdown(),
-            ..ServerConfig::default()
-        };
-        configure(&mut config);
+        config.bind_addresses = vec![lease.v4()];
         let server = Server::builder()
             .config(config)
             .meter_provider(metrics.provider.clone())
-            .handler(factory)
+            .handler(move |_| handler)
             .build()
             .expect("a valid configuration");
         let handle = server.handle();
         let task = tokio::spawn(server.run());
-        support::wait_until(|| handle.status().accepting).await;
+        support::wait_until(&handle, Until::Accepting).await;
         Running {
             handle,
             task,
@@ -369,7 +362,7 @@ mod otel {
         }
 
         async fn idle(&self) {
-            support::wait_until(|| self.handle.status().connections == 0).await;
+            support::wait_until(&self.handle, Until::Idle).await;
         }
 
         async fn stop(self) {
@@ -457,15 +450,17 @@ mod otel {
         ("milter.config.last_reload.time", "gauge", "s", &[]),
     ];
 
+    /// The configuration of a test with `max_connections` = 1.
+    fn one_connection() -> ServerConfig {
+        let mut config = support::config();
+        config.max_connections = 1;
+        config
+    }
+
     /// The run of TEL-010 to TEL-012: a whole session, a rejected
     /// connection, a protocol error, and a reload.
     async fn busy_run(metrics: &Metrics) -> Running {
-        let server = start(
-            metrics,
-            |config| config.max_connections = 1,
-            ContinueAll::new,
-        )
-        .await;
+        let server = start(metrics, one_connection(), ContinueAll).await;
         let mut mta = server.mta().await;
         mta.reach(Reach::Body).await;
         let mut rejected = server.mta().await;
@@ -501,24 +496,31 @@ mod otel {
 
         let points = metrics.collect();
 
-        let names: BTreeSet<&str> = points.iter().map(|p| p.name.as_str()).collect();
-        let expected: BTreeSet<&str> = METRICS.iter().map(|m| m.0).collect();
+        let mut names = BTreeSet::new();
+        for point in &points {
+            names.insert(point.name.as_str());
+        }
+        let mut expected = BTreeSet::new();
+        for (name, _, _, _) in METRICS {
+            expected.insert(name);
+        }
         assert_eq!(names, expected);
         for (name, kind, unit, keys) in METRICS {
             for point in named(&points, name) {
                 assert_eq!(point.kind, kind, "{name}");
                 assert_eq!(point.unit, unit, "{name}");
                 let mut wanted: BTreeSet<&str> = keys.iter().copied().collect();
-                if name == "milter.server.connection.closed"
-                    && point
-                        .attributes
-                        .get("milter.close_reason")
-                        .map(String::as_str)
-                        == Some("error")
-                {
-                    wanted.insert("error.type");
+                if name == "milter.server.connection.closed" {
+                    if let Some(reason) = point.attributes.get("milter.close_reason") {
+                        if reason == "error" {
+                            wanted.insert("error.type");
+                        }
+                    }
                 }
-                let got: BTreeSet<&str> = point.attributes.keys().map(String::as_str).collect();
+                let mut got = BTreeSet::new();
+                for key in point.attributes.keys() {
+                    got.insert(key.as_str());
+                }
                 assert_eq!(got, wanted, "{name}: {point:?}");
             }
         }
@@ -554,7 +556,9 @@ mod otel {
         );
         for (reason, error, count) in &status.connections_closed {
             let mut attributes = vec![("milter.close_reason", *reason)];
-            attributes.extend(error.map(|error| ("error.type", error)));
+            if let Some(error) = error {
+                attributes.push(("error.type", error));
+            }
             assert_eq!(
                 value(&points, "milter.server.connection.closed", &attributes),
                 Some(*count as f64),
@@ -656,18 +660,21 @@ mod otel {
         let buckets = [
             0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 300.0,
         ];
-        let histograms: Vec<&Point> = points.iter().filter(|p| p.kind == "histogram").collect();
-        assert!(!histograms.is_empty());
-        for point in histograms {
-            assert_eq!(point.bounds, buckets, "{}", point.name);
+        let mut histograms = 0;
+        for point in &points {
+            if point.kind == "histogram" {
+                assert_eq!(point.bounds, buckets, "{}", point.name);
+                histograms += 1;
+            }
         }
+        assert!(histograms > 0);
         server.stop().await;
     }
 
     #[tokio::test]
     async fn tel_013_a_protocol_error_is_a_close_with_its_error_type() {
         let metrics = Metrics::new();
-        let server = start(&metrics, |_| {}, ContinueAll::new).await;
+        let server = start(&metrics, support::config(), ContinueAll).await;
         let mut closed = server.mta().await;
         closed.negotiate().await;
         closed.close().await;
@@ -679,11 +686,11 @@ mod otel {
 
         let points = metrics.collect();
 
-        let closed = named(&points, "milter.server.connection.closed");
-        let sets: BTreeSet<Vec<(String, String)>> = closed
-            .iter()
-            .map(|p| p.attributes.clone().into_iter().collect())
-            .collect();
+        let mut sets = BTreeSet::new();
+        for point in named(&points, "milter.server.connection.closed") {
+            let set: Vec<(String, String)> = point.attributes.clone().into_iter().collect();
+            sets.insert(set);
+        }
         let expected: BTreeSet<Vec<(String, String)>> = [
             vec![("milter.close_reason".to_owned(), "client_closed".to_owned())],
             vec![
@@ -699,24 +706,19 @@ mod otel {
     #[tokio::test]
     async fn tel_014_a_rejected_connection_is_counted_twice() {
         let metrics = Metrics::new();
-        let server = start(
-            &metrics,
-            |config| config.max_connections = 1,
-            ContinueAll::new,
-        )
-        .await;
+        let server = start(&metrics, one_connection(), ContinueAll).await;
         let mut open = server.mta().await;
         open.negotiate().await;
         let mut second = server.mta().await;
         assert!(second.closes().await);
-        support::wait_until(|| server.handle.status().connections_rejected == 1).await;
+        support::wait_until(&server.handle, Until::Rejected(1)).await;
 
         let points = metrics.collect();
 
-        let rejected: f64 = named(&points, "milter.server.connection.rejected")
-            .iter()
-            .map(|p| p.value)
-            .sum();
+        let mut rejected = 0.0;
+        for point in named(&points, "milter.server.connection.rejected") {
+            rejected += point.value;
+        }
         assert_eq!(rejected, 1.0);
         assert_eq!(
             value(
@@ -733,7 +735,7 @@ mod otel {
     #[tokio::test]
     async fn tel_015_message_histograms_count_messages_not_chunks() {
         let metrics = Metrics::new();
-        let server = start(&metrics, |_| {}, ContinueAll::new).await;
+        let server = start(&metrics, support::config(), ContinueAll).await;
         let mut mta = server.mta().await;
         mta.reach(Reach::Eohs).await;
         for _ in 0..50 {
@@ -753,7 +755,10 @@ mod otel {
             "milter.server.message.duration",
             "milter.server.eom.duration",
         ] {
-            let count: u64 = named(&points, name).iter().map(|p| p.count).sum();
+            let mut count = 0;
+            for point in named(&points, name) {
+                count += point.count;
+            }
             assert_eq!(count, 2, "{name}");
         }
         drop(mta);
@@ -772,6 +777,18 @@ mod otel {
             let server = self.results.lock().unwrap().remove(0);
             Ok(Reloaded { server, app: () })
         }
+    }
+
+    /// The value of `milter.config.reload` for `result` and `source`.
+    fn reloads(points: &[Point], result: &str, source: &str) -> Option<f64> {
+        value(
+            points,
+            "milter.config.reload",
+            &[
+                ("milter.reload_result", result),
+                ("milter.reload_source", source),
+            ],
+        )
     }
 
     #[cfg(unix)]
@@ -802,7 +819,7 @@ mod otel {
             .unwrap();
         let handle = server.handle();
         let task = tokio::spawn(server.run());
-        support::wait_until(|| handle.status().accepting).await;
+        support::wait_until(&handle, Until::Accepting).await;
 
         let before = SystemTime::now();
         let status = Command::new("kill")
@@ -810,23 +827,13 @@ mod otel {
             .status()
             .unwrap();
         assert!(status.success());
-        support::wait_until(|| handle.config_generation() == 2).await;
+        support::wait_until(&handle, Until::Generation(2)).await;
         handle.reload().await.unwrap_err();
 
         let points = metrics.collect();
 
-        let count = |result: &str, source: &str| {
-            value(
-                &points,
-                "milter.config.reload",
-                &[
-                    ("milter.reload_result", result),
-                    ("milter.reload_source", source),
-                ],
-            )
-        };
-        assert_eq!(count("applied", "sighup"), Some(1.0));
-        assert_eq!(count("failed", "api"), Some(1.0));
+        assert_eq!(reloads(&points, "applied", "sighup"), Some(1.0));
+        assert_eq!(reloads(&points, "failed", "api"), Some(1.0));
         assert_eq!(value(&points, "milter.config.generation", &[]), Some(2.0));
         let last = value(&points, "milter.config.last_reload.time", &[]).unwrap();
         let since = before.duration_since(UNIX_EPOCH).unwrap().as_secs_f64();
@@ -838,23 +845,27 @@ mod otel {
         task.await.unwrap().unwrap();
     }
 
+    /// The number of points of each metric.
+    fn series(points: &[Point]) -> BTreeMap<String, usize> {
+        let mut counts = BTreeMap::new();
+        for point in points {
+            *counts.entry(point.name.clone()).or_default() += 1;
+        }
+        counts
+    }
+
+    /// Connects to `server`, negotiates, and closes.
+    async fn negotiate_and_close(server: &Running) {
+        let mut mta = server.mta().await;
+        mta.negotiate().await;
+        mta.close().await;
+    }
+
     #[tokio::test]
     async fn tel_017_many_peers_add_no_time_series() {
         let metrics = Metrics::new();
-        let server = start(&metrics, |_| {}, ContinueAll::new).await;
-        let series = |points: &[Point]| -> BTreeMap<String, usize> {
-            let mut counts = BTreeMap::new();
-            for point in points {
-                *counts.entry(point.name.clone()).or_default() += 1;
-            }
-            counts
-        };
-        let connect = || async {
-            let mut mta = server.mta().await;
-            mta.negotiate().await;
-            mta.close().await;
-        };
-        connect().await;
+        let server = start(&metrics, support::config(), ContinueAll).await;
+        negotiate_and_close(&server).await;
         server.idle().await;
         let after_one = series(&metrics.collect());
 
@@ -864,7 +875,7 @@ mod otel {
                 .unwrap();
             drop(stream);
         }
-        connect().await;
+        negotiate_and_close(&server).await;
         server.idle().await;
         let after_many = series(&metrics.collect());
 
@@ -912,7 +923,7 @@ mod otel {
     #[tokio::test]
     async fn tel_032_no_smtp_data_reaches_metrics() {
         let metrics = Metrics::new();
-        let server = start(&metrics, |_| {}, |_| Replying).await;
+        let server = start(&metrics, support::config(), Replying).await;
         let mut mta = server.mta().await;
         mta.negotiate().await;
         mta.ask_continue(
@@ -945,22 +956,29 @@ mod otel {
 
     #[tokio::test]
     async fn tel_003_without_an_sdk_a_session_still_works() {
-        let server = TestServer::start(ContinueAll::new).await;
+        let server = TestServer::start(ContinueAll).await;
         let mut mta = server.mta().await;
         mta.reach(Reach::Endm).await;
         mta.close().await;
-        support::wait_until(|| server.handle.status().connections == 0).await;
+        support::wait_until(&server.handle, Until::Idle).await;
 
         let status = server.handle.status();
 
         assert_eq!(status.connections_accepted, 1);
-        assert!(status.commands.iter().any(|(command, _)| *command == "eom"));
-        assert!(
-            status
-                .replies
-                .iter()
-                .any(|(command, _, _)| *command == "eom")
-        );
+        let mut eom_commands = 0;
+        for (command, _) in &status.commands {
+            if *command == "eom" {
+                eom_commands += 1;
+            }
+        }
+        assert!(eom_commands > 0);
+        let mut eom_replies = 0;
+        for (command, _, _) in &status.replies {
+            if *command == "eom" {
+                eom_replies += 1;
+            }
+        }
+        assert!(eom_replies > 0);
         server.stop().await;
     }
 }

@@ -16,13 +16,17 @@ use support::logs::Logs;
 use support::mta::{Mta, Reach, strings};
 use support::{ContinueAll, Recorder, TestServer};
 
-fn max_connections(max: usize) -> impl FnOnce(&mut ServerConfig) {
-    move |config| config.max_connections = max
+fn max_connections(max: usize) -> ServerConfig {
+    let mut config = support::config();
+    config.max_connections = max;
+    config
 }
 
-fn tight_memory(config: &mut ServerConfig) {
+fn tight_memory() -> ServerConfig {
+    let mut config = support::config();
     config.resource_limits.per_connection_buffer = 65_540;
     config.resource_limits.max_memory = Some(65_540);
+    config
 }
 
 /// The first part of a header frame of `length` bytes: the length field,
@@ -37,7 +41,7 @@ fn frame_start(length: u32) -> Vec<u8> {
 #[tokio::test]
 async fn srv_050_closes_a_connection_over_max_connections_at_once() {
     let (logs, _guard) = Logs::capture();
-    let server = TestServer::start_with(max_connections(2), ContinueAll::new).await;
+    let server = TestServer::start_with(max_connections(2), ContinueAll).await;
     let mut first = server.mta().await;
     let mut second = server.mta().await;
     first.reach(Reach::Helo).await;
@@ -61,7 +65,7 @@ async fn srv_050_closes_a_connection_over_max_connections_at_once() {
 
 #[tokio::test]
 async fn srv_051_a_closed_connection_frees_its_place() {
-    let server = TestServer::start_with(max_connections(2), ContinueAll::new).await;
+    let server = TestServer::start_with(max_connections(2), ContinueAll).await;
     let mut first = server.mta().await;
     let second = server.mta().await;
     first.reach(Reach::Helo).await;
@@ -82,7 +86,7 @@ async fn srv_051_a_closed_connection_frees_its_place() {
 #[tokio::test]
 async fn srv_052_closes_a_connection_whose_frame_would_pass_max_memory() {
     let (logs, _guard) = Logs::capture();
-    let server = TestServer::start_with(tight_memory, ContinueAll::new).await;
+    let server = TestServer::start_with(tight_memory(), ContinueAll).await;
     let mut a = server.mta().await;
     a.reach(Reach::Data).await;
     a.write_raw(&frame_start(60_000)).await;
@@ -100,11 +104,14 @@ async fn srv_052_closes_a_connection_whose_frame_would_pass_max_memory() {
     a.write_raw(&rest).await;
     assert_eq!(a.recv().await.unwrap().command, SMFIR_CONTINUE);
     a.ask_continue(SMFIC_EOH, Bytes::new()).await;
-    let closed = logs
-        .named("Connection closed")
-        .into_iter()
-        .find(|e| e.field("reason") == Some("limit_reached"))
-        .expect("B's close log");
+    let mut found = None;
+    for event in logs.named("Connection closed") {
+        if event.field("reason") == Some("limit_reached") {
+            found = Some(event);
+            break;
+        }
+    }
+    let closed = found.expect("B's close log");
     assert!(closed.field("error").is_some());
     server.stop().await;
 }
@@ -112,7 +119,7 @@ async fn srv_052_closes_a_connection_whose_frame_would_pass_max_memory() {
 #[tokio::test]
 async fn srv_056_closes_a_new_connection_when_max_memory_is_full() {
     let (logs, _guard) = Logs::capture();
-    let server = TestServer::start_with(tight_memory, ContinueAll::new).await;
+    let server = TestServer::start_with(tight_memory(), ContinueAll).await;
     let mut a = server.mta().await;
     a.reach(Reach::Data).await;
     a.write_raw(&frame_start(62_000)).await;
@@ -135,7 +142,7 @@ async fn srv_056_closes_a_new_connection_when_max_memory_is_full() {
 #[tokio::test]
 async fn srv_060_serves_100_sessions_at_once() {
     let recorder = Recorder::default();
-    let server = TestServer::start(move |_| recorder).await;
+    let server = TestServer::start(recorder).await;
     let mut sessions = tokio::task::JoinSet::new();
     for _ in 0..100 {
         let mut mta = server.mta().await;
@@ -184,7 +191,7 @@ impl Handler for SlowForOne {
 
 #[tokio::test]
 async fn srv_061_a_slow_callback_does_not_hold_up_other_connections() {
-    let server = TestServer::start(|_| SlowForOne).await;
+    let server = TestServer::start(SlowForOne).await;
     let mut slow = server.mta().await;
     slow.negotiate().await;
     slow.ask_continue(
@@ -220,7 +227,7 @@ async fn srv_061_a_slow_callback_does_not_hold_up_other_connections() {
 
 #[tokio::test]
 async fn srv_073_status_counts_accepted_and_rejected_connections() {
-    let server = TestServer::start_with(max_connections(1), ContinueAll::new).await;
+    let server = TestServer::start_with(max_connections(1), ContinueAll).await;
     let mut first = server.mta().await;
     first.reach(Reach::Helo).await;
 

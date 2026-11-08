@@ -15,15 +15,17 @@ use support::logs::Logs;
 use support::mta::{Reach, strings};
 use support::{ContinueAll, Log, Recorder, TestServer};
 
-fn timings(grace: u64, drain: u64) -> impl FnOnce(&mut ServerConfig) {
-    move |config| {
-        config.shutdown.grace_period = Duration::from_millis(grace);
-        config.shutdown.drain_timeout = Duration::from_millis(drain);
-    }
+fn timings(grace: u64, drain: u64) -> ServerConfig {
+    let mut config = support::config();
+    config.shutdown.grace_period = Duration::from_millis(grace);
+    config.shutdown.drain_timeout = Duration::from_millis(drain);
+    config
 }
 
-fn default_timings(config: &mut ServerConfig) {
+fn default_timings() -> ServerConfig {
+    let mut config = support::config();
     config.shutdown = ShutdownConfig::default();
+    config
 }
 
 /// What `end_of_message` does.
@@ -88,19 +90,25 @@ async fn no_connections(server: &TestServer) {
     }
 }
 
-async fn recording(configure: impl FnOnce(&mut ServerConfig)) -> (TestServer, Log) {
+/// The sum of `field` over the "Connection closed" logs.
+fn sum(logs: &Logs, field: &str) -> u64 {
+    let mut total = 0;
+    for event in logs.named("Connection closed") {
+        total += event.field(field).unwrap().parse::<u64>().unwrap();
+    }
+    total
+}
+
+async fn recording(config: ServerConfig) -> (TestServer, Log) {
     let recorder = Recorder::default();
     let log = recorder.log.clone();
-    (
-        TestServer::start_with(configure, move |_| recorder).await,
-        log,
-    )
+    (TestServer::start_with(config, recorder).await, log)
 }
 
 #[tokio::test]
 async fn sht_001_a_server_without_connections_stops_at_once() {
     let (logs, _guard) = Logs::capture();
-    let server = TestServer::start_with(default_timings, ContinueAll::new).await;
+    let server = TestServer::start_with(default_timings(), ContinueAll).await;
     while !server.handle.status().accepting {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
@@ -173,7 +181,7 @@ async fn sht_003_commands_in_the_grace_period_are_served() {
 async fn sht_004_a_callback_in_progress_completes_and_is_answered() {
     let handler = Slow::new(Eom::Sleep(Duration::from_secs(1)));
     let log = handler.log.clone();
-    let server = TestServer::start_with(timings(100, 5_000), move |_| handler).await;
+    let server = TestServer::start_with(timings(100, 5_000), handler).await;
     let mut mta = server.mta().await;
     mta.reach(Reach::Body).await;
     mta.send(SMFIC_BODYEOB, Bytes::new()).await;
@@ -198,7 +206,7 @@ async fn sht_004_a_callback_in_progress_completes_and_is_answered() {
 async fn sht_005_the_drain_timeout_force_closes_a_connection() {
     let handler = Slow::new(Eom::Sleep(Duration::from_secs(10)));
     let log = handler.log.clone();
-    let server = TestServer::start_with(timings(100, 1_000), move |_| handler).await;
+    let server = TestServer::start_with(timings(100, 1_000), handler).await;
     let mut mta = server.mta().await;
     mta.reach(Reach::Body).await;
     mta.send(SMFIC_BODYEOB, Bytes::new()).await;
@@ -236,7 +244,7 @@ impl Handler for WatchesToken {
 async fn sht_006_the_token_is_cancelled_when_the_grace_period_ends() {
     let handler = WatchesToken::default();
     let cancelled = Arc::clone(&handler.0);
-    let server = TestServer::start_with(timings(300, 5_000), move |_| handler).await;
+    let server = TestServer::start_with(timings(300, 5_000), handler).await;
     let mut mta = server.mta().await;
     mta.reach(Reach::Body).await;
     mta.send(SMFIC_BODYEOB, Bytes::new()).await;
@@ -257,7 +265,7 @@ async fn sht_006_the_token_is_cancelled_when_the_grace_period_ends() {
 #[tokio::test]
 async fn sht_007_force_shutdown_closes_every_connection_at_once() {
     let (logs, _guard) = Logs::capture();
-    let (server, log) = recording(default_timings).await;
+    let (server, log) = recording(default_timings()).await;
     let mut first = server.mta().await;
     let mut second = server.mta().await;
     first.reach(Reach::Helo).await;
@@ -282,7 +290,7 @@ async fn sht_007_force_shutdown_closes_every_connection_at_once() {
 
 #[tokio::test]
 async fn sht_008_a_handle_answers_after_the_server_stops() {
-    let server = TestServer::start(ContinueAll::new).await;
+    let server = TestServer::start(ContinueAll).await;
     let handle = server.handle.clone();
     server.stop().await;
 
@@ -297,7 +305,7 @@ async fn sht_008_a_handle_answers_after_the_server_stops() {
 #[tokio::test]
 async fn sht_009_logs_the_shutdown_phases() {
     let (logs, _guard) = Logs::capture();
-    let server = TestServer::start_with(timings(100, 2_000), ContinueAll::new).await;
+    let server = TestServer::start_with(timings(100, 2_000), ContinueAll).await;
     for _ in 0..3 {
         let mut mta = server.mta().await;
         mta.reach(Reach::Endm).await;
@@ -319,19 +327,13 @@ async fn sht_009_logs_the_shutdown_phases() {
     assert_eq!(complete.level, tracing::Level::INFO);
     assert!(complete.field("uptime_s").is_some());
     assert_eq!(complete.field("total_connections"), Some("3"));
-    let sum = |field: &str| -> u64 {
-        logs.named("Connection closed")
-            .iter()
-            .map(|e| e.field(field).unwrap().parse::<u64>().unwrap())
-            .sum()
-    };
     assert_eq!(
         complete.field("total_bytes_read"),
-        Some(sum("bytes_read").to_string().as_str())
+        Some(sum(&logs, "bytes_read").to_string().as_str())
     );
     assert_eq!(
         complete.field("total_bytes_written"),
-        Some(sum("bytes_written").to_string().as_str())
+        Some(sum(&logs, "bytes_written").to_string().as_str())
     );
     assert_ne!(complete.field("total_bytes_read"), Some("0"));
 }
@@ -480,7 +482,7 @@ mod sockets {
     async fn sht_012_socket_options_hold_in_the_grace_period_and_the_drain() {
         let handler = ReadsOptions::default();
         let reads = Arc::clone(&handler.0);
-        let server = TestServer::start_with(timings(200, 5_000), move |_| handler).await;
+        let server = TestServer::start_with(timings(200, 5_000), handler).await;
         let mut mta = server.mta().await;
         mta.reach(Reach::Helo).await;
 
@@ -494,7 +496,10 @@ mod sockets {
         assert!(mta.closes().await);
         server.join().await.unwrap();
         let reads = reads.lock().unwrap().clone();
-        let callbacks: Vec<&str> = reads.iter().map(|(name, _)| name.as_str()).collect();
+        let mut callbacks = Vec::new();
+        for (name, _) in &reads {
+            callbacks.push(name.as_str());
+        }
         assert_eq!(
             callbacks,
             ["mail", "end_of_message", "session_end:ServerShutdown"]
@@ -533,7 +538,7 @@ async fn sht_013_a_reset_connection_leaves_the_shutdown_at_once() {
     // During the drain, while `end_of_message` runs.
     let handler = Slow::new(Eom::AfterCancel(Duration::from_millis(300)));
     let log = handler.log.clone();
-    let server = TestServer::start_with(timings(100, 5_000), move |_| handler).await;
+    let server = TestServer::start_with(timings(100, 5_000), handler).await;
     let mut mta = server.mta().await;
     mta.reach(Reach::Body).await;
     mta.send(SMFIC_BODYEOB, Bytes::new()).await;

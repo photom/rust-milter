@@ -40,7 +40,7 @@ impl Default for Scripted {
 impl Scripted {
     async fn start(self) -> (TestServer, Log) {
         let log = self.log.clone();
-        (TestServer::start(move |_| self).await, log)
+        (TestServer::start(self).await, log)
     }
 
     fn session_seen(&self, ctx: &mut SessionContext<Self>) {
@@ -241,7 +241,7 @@ async fn eng_054_quit_new_connection_in_any_other_state_closes() {
         Reach::Eohs,
         Reach::Body,
     ];
-    let server = TestServer::start(support::ContinueAll::new).await;
+    let server = TestServer::start(support::ContinueAll).await;
     for state in states {
         let mut mta = server.mta().await;
         mta.reach(state).await;
@@ -307,7 +307,7 @@ async fn eng_055_a_reply_that_resets_the_state_makes_quit_new_connection_close()
 
 #[tokio::test]
 async fn eng_056_an_unknown_command_code_closes_the_connection() {
-    let server = TestServer::start(support::ContinueAll::new).await;
+    let server = TestServer::start(support::ContinueAll).await;
     let mut mta = server.mta().await;
     mta.reach(Reach::Helo).await;
 

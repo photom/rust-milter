@@ -26,13 +26,48 @@ pub fn quick_shutdown() -> ShutdownConfig {
     }
 }
 
-/// Waits until `condition` holds, for up to [`WAIT`].
-pub async fn wait_until(condition: impl Fn() -> bool) {
+/// The default server configuration of a test, with a grace period of
+/// zero and no bind address. [`TestServer::start_with`] adds the leased
+/// address.
+pub fn config() -> ServerConfig {
+    ServerConfig {
+        shutdown: quick_shutdown(),
+        ..ServerConfig::default()
+    }
+}
+
+/// A state of a server that [`wait_until`] waits for.
+#[derive(Debug, Clone, Copy)]
+pub enum Until {
+    /// The server accepts connections.
+    Accepting,
+    /// No connection is open.
+    Idle,
+    /// The server has rejected this many connections at a limit.
+    Rejected(u64),
+    /// The configuration generation is this one.
+    Generation(u64),
+}
+
+impl Until {
+    fn holds<A>(self, handle: &ServerHandle<A>) -> bool {
+        match self {
+            Until::Accepting => handle.status().accepting,
+            Until::Idle => handle.status().connections == 0,
+            Until::Rejected(count) => handle.status().connections_rejected == count,
+            Until::Generation(generation) => handle.config_generation() == generation,
+        }
+    }
+}
+
+/// Waits until the server of `handle` is in the state `until`, for up to
+/// [`WAIT`].
+pub async fn wait_until<A>(handle: &ServerHandle<A>, until: Until) {
     let deadline = std::time::Instant::now() + WAIT;
-    while !condition() {
+    while !until.holds(handle) {
         assert!(
             std::time::Instant::now() < deadline,
-            "the condition in time"
+            "the server did not reach {until:?} in time"
         );
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
@@ -60,36 +95,20 @@ pub struct TestServer {
 }
 
 impl TestServer {
-    /// Starts a server with the default configuration on a leased port,
-    /// except for a grace period of zero.
-    pub async fn start<H, F>(factory: F) -> TestServer
-    where
-        H: Handler,
-        F: FnOnce(&HandlerContext<()>) -> H + 'static,
-    {
-        TestServer::start_with(|_| {}, factory).await
+    /// Starts a server with `handler` and the configuration of [`config`]
+    /// on a leased port.
+    pub async fn start<H: Handler>(handler: H) -> TestServer {
+        TestServer::start_with(config(), handler).await
     }
 
-    /// Starts a server on a leased port, with the configuration changed by
-    /// `configure` first.
-    pub async fn start_with<H, F>(
-        configure: impl FnOnce(&mut ServerConfig),
-        factory: F,
-    ) -> TestServer
-    where
-        H: Handler,
-        F: FnOnce(&HandlerContext<()>) -> H + 'static,
-    {
+    /// Starts a server with `handler` and `config` on a leased port, which
+    /// replaces the bind addresses of `config`.
+    pub async fn start_with<H: Handler>(mut config: ServerConfig, handler: H) -> TestServer {
         let lease = PortLease::acquire().await;
-        let mut config = ServerConfig {
-            bind_addresses: vec![lease.v4()],
-            ..ServerConfig::default()
-        };
-        config.shutdown = quick_shutdown();
-        configure(&mut config);
+        config.bind_addresses = vec![lease.v4()];
         let server = Server::builder()
             .config(config)
-            .handler(factory)
+            .handler(move |_| handler)
             .build()
             .expect("the test configuration is valid");
         let handle = server.handle();
@@ -151,8 +170,10 @@ impl Log {
         let deadline = tokio::time::Instant::now() + WAIT;
         loop {
             let events = self.events();
-            if events.iter().any(|e| e == event) {
-                return events;
+            for seen in &events {
+                if seen == event {
+                    return events;
+                }
             }
             assert!(
                 tokio::time::Instant::now() < deadline,
