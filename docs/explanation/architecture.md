@@ -96,7 +96,7 @@ Concurrency: one connection per task, with exclusive ownership of the socket.
 
 Responsibilities:
 - parse Milter protocol frames: a 4-byte length, a 1-byte command, then the data
-- reject a packet longer than `per_connection_buffer` before allocating memory for it
+- reject a packet longer than its limit, `per_connection_buffer` or 1,024 bytes for the first packet, before allocating memory for it
 - handle incomplete frames by waiting for more data
 - serialize frames
 
@@ -253,7 +253,7 @@ sequenceDiagram
 ```
 
 1. Connection reads bytes from the socket.
-2. The frame parser checks the length against `per_connection_buffer` and extracts a frame.
+2. The frame parser checks the length against `per_connection_buffer`, or 1,024 bytes for the first packet, and extracts a frame.
 3. The message decoder converts it into a `Command`.
 4. The protocol engine checks the command against the protocol state and stores any macros.
 5. For an event the handler subscribed to, the engine calls the matching callback, which returns a decision.
@@ -390,7 +390,7 @@ Practices the implementation follows inside the data plane:
 
 Fatal for the connection, which is closed:
 - protocol violations and malformed frames
-- frames longer than `per_connection_buffer`
+- frames longer than `per_connection_buffer`, and first packets longer than 1,024 bytes
 - expired timeouts
 - I/O errors
 
