@@ -31,7 +31,7 @@ use crate::handler::{
 use crate::protocol::*;
 use crate::server::{ConnectionInfo, Reservation};
 use crate::{
-    AddressFamily, Command, Frame, MilterText, ProtocolError, Reply, Result, TimeoutConfig,
+    AddressFamily, Command, Error, Frame, MilterText, ProtocolError, Reply, Result, TimeoutConfig,
 };
 
 /// How a connection ended, when no error ended it.
@@ -91,11 +91,13 @@ where
     W: AsyncWrite + Send + Unpin + 'static,
 {
     let accepted_at = tokio::time::Instant::from_std(connection.accepted_at);
+    let conn_id = connection.id;
     let timeouts = limits.timeouts;
     let mut engine = Engine {
         handler,
         inbound: Inbound::new(
             reader,
+            conn_id,
             limits.max_packet,
             timeouts.clone(),
             accepted_at,
@@ -107,7 +109,7 @@ where
                 session: SessionContext::new(connection, stop.shutdown.clone()),
                 message: None,
             },
-            outbound: Outbound::new(writer, timeouts.write, Arc::clone(&trace.traffic)),
+            outbound: Outbound::new(writer, conn_id, timeouts.write, Arc::clone(&trace.traffic)),
         },
         state: State::Init,
         rules: Transitions::new(),
@@ -189,6 +191,11 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
                         if self.inbound.in_frame() {
                             continue;
                         }
+                        tracing::debug!(
+                            conn_id = self.conn_id(),
+                            reason = "server_shutdown",
+                            "Connection draining"
+                        );
                         self.end(SessionEnd::ServerShutdown).await;
                         return Ok(Closed::ByShutdown);
                     }
@@ -204,9 +211,25 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
                 Err(error) => Err(error),
             };
             match outcome {
-                Ok(Flow::Open) => {}
+                Ok(Flow::Open) => {
+                    if !self.inbound.in_frame() {
+                        tracing::trace!(
+                            conn_id = self.conn_id(),
+                            state = self.state.name(),
+                            "Connection idle"
+                        );
+                    }
+                }
                 Ok(Flow::Close) => return Ok(Closed::ByClient),
                 Err(error) => {
+                    if let Error::Protocol(_) = &error {
+                        tracing::warn!(
+                            conn_id = self.conn_id(),
+                            error = %crate::server::error_chain(&error),
+                            details = self.state.name(),
+                            "Protocol error"
+                        );
+                    }
                     self.end(SessionEnd::Error).await;
                     return Err(error);
                 }
@@ -214,8 +237,35 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
         }
     }
 
+    /// The connection's ID, for its logs.
+    fn conn_id(&self) -> u64 {
+        self.ctx.message.session.connection().id
+    }
+
+    /// Logs the arrival of a command: "First command received" for the
+    /// first, and "Connection active" for each.
+    fn log_arrival(&self) {
+        let info = self.ctx.message.session.connection();
+        if self.inbound.frames == 1 {
+            let waited = info.accepted_at.elapsed().as_millis();
+            tracing::debug!(
+                conn_id = info.id,
+                remote_addr = %info.peer_addr,
+                local_addr = %info.local_addr,
+                duration_ms = u64::try_from(waited).unwrap_or(u64::MAX),
+                "First command received"
+            );
+        }
+        tracing::trace!(
+            conn_id = info.id,
+            state = self.state.name(),
+            "Connection active"
+        );
+    }
+
     /// Processes one command, then records its `milter.command` event.
     async fn process(&mut self, frame: Frame) -> Result<Flow> {
+        self.log_arrival();
         let code = frame.command;
         let started = std::time::Instant::now();
         self.ctx.outbound.last_reply = None;

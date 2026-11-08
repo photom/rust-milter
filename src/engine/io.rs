@@ -18,6 +18,8 @@ const LENGTH_FIELD: usize = 4;
 /// The receiving side of a connection.
 pub(crate) struct Inbound<R> {
     reader: R,
+    /// The connection's ID, for the "I/O error" log.
+    conn_id: u64,
     buf: BytesMut,
     /// The longest packet accepted, `per_connection_buffer`.
     max: usize,
@@ -43,6 +45,7 @@ pub(crate) struct Inbound<R> {
 impl<R: AsyncRead + Unpin> Inbound<R> {
     pub(crate) fn new(
         reader: R,
+        conn_id: u64,
         max: usize,
         timeouts: TimeoutConfig,
         accepted_at: Instant,
@@ -51,6 +54,7 @@ impl<R: AsyncRead + Unpin> Inbound<R> {
     ) -> Self {
         Inbound {
             reader,
+            conn_id,
             buf: BytesMut::with_capacity(8 * 1024),
             max,
             timeouts,
@@ -94,7 +98,7 @@ impl<R: AsyncRead + Unpin> Inbound<R> {
             let reading = self.reader.read_buf(&mut self.buf);
             let read = match tokio::time::timeout_at(deadline, reading).await {
                 Err(_) => return Err(Error::Timeout(kind)),
-                Ok(Err(error)) => return Err(io_error(error)),
+                Ok(Err(error)) => return Err(io_error(error, self.conn_id, "read")),
                 Ok(Ok(read)) => read,
             };
             self.bytes_read += read as u64;
@@ -160,6 +164,8 @@ impl<R: AsyncRead + Unpin> Inbound<R> {
 /// The sending side of a connection.
 pub(crate) struct Outbound {
     writer: Box<dyn AsyncWrite + Send + Unpin>,
+    /// The connection's ID, for the "I/O error" log.
+    conn_id: u64,
     buf: BytesMut,
     /// `timeouts.write`, for each reply.
     timeout: Duration,
@@ -176,11 +182,13 @@ pub(crate) struct Outbound {
 impl Outbound {
     pub(crate) fn new(
         writer: impl AsyncWrite + Send + Unpin + 'static,
+        conn_id: u64,
         timeout: Duration,
         traffic: Arc<Traffic>,
     ) -> Self {
         Outbound {
             writer: Box::new(writer),
+            conn_id,
             buf: BytesMut::new(),
             timeout,
             bytes_written: 0,
@@ -201,7 +209,7 @@ impl Outbound {
         };
         match tokio::time::timeout(self.timeout, write).await {
             Err(_) => return Err(Error::Timeout(TimeoutKind::Write)),
-            Ok(Err(error)) => return Err(io_error(error)),
+            Ok(Err(error)) => return Err(io_error(error, self.conn_id, "write")),
             Ok(Ok(())) => {}
         }
         self.bytes_written += self.buf.len() as u64;
@@ -214,9 +222,11 @@ impl Outbound {
     }
 }
 
-/// Tells a reset apart from other socket errors.
-fn io_error(error: std::io::Error) -> Error {
+/// Logs a failed socket `operation`, `read` or `write`, and tells a reset
+/// apart from other socket errors.
+fn io_error(error: std::io::Error, conn_id: u64, operation: &'static str) -> Error {
     use std::io::ErrorKind;
+    tracing::debug!(conn_id, operation, error = %error, "I/O error");
     match error.kind() {
         ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted | ErrorKind::BrokenPipe => {
             Error::ConnectionReset
