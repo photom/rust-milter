@@ -1,6 +1,6 @@
 # Write Rust in the procedural style
 
-This guide follows [ADR 0008](../adr/0008-rust-code-is-written-in-a-procedural-style.md), [ADR 0009](../adr/0009-no-stored-closures-or-function-pointers.md), and the [style check](../reference/test-environment.md#style-check).
+This guide follows [ADR 0008](../adr/0008-rust-code-is-written-in-a-procedural-style.md), [ADR 0009](../adr/0009-no-stored-closures-or-function-pointers.md), [ADR 0010](../adr/0010-builder-factory-type-parameter-and-loader-trait.md), and the [style check](../reference/test-environment.md#style-check).
 
 rust-milter's code branches with `match`, `if let`, and `let ... else`, returns errors with `?`, and repeats with loops. It calls no method that takes a function, writes no closures outside the builder, and has no `Fn` bounds or function pointer types. This guide shows the rewrite for each pattern the checks reject.
 
@@ -260,9 +260,9 @@ fn passes_all(text: &str) -> bool {
 
 When the behavior comes from the caller, define a trait of your own and take a value that implements it.
 
-## Pass a closure to the builder
+## Pass a closure where one is allowed
 
-The closures given to `ServerBuilder::handler`, `ServerBuilder::reload_with`, `std::thread::spawn`, and `Once::call_once` are allowed. Pass a function by name when you have one, and a `move` closure when you already hold the value:
+The closures given to `ServerBuilder::handler`, OpenTelemetry's `with_callback`, `std::thread::spawn`, and `Once::call_once` are allowed. For the handler factory, pass a function by name when you have one, and a `move` closure when you already hold the value:
 
 <!-- doctest-setup
 use rust_milter::{Handler, HandlerContext, Server, ServerConfig};
@@ -304,7 +304,7 @@ let by_value = Server::builder()
     .build()?;
 ```
 
-A closure inside one of these closures is not allowed.
+A closure inside one of these closures is not allowed. The reload loader takes no closure: implement `ReloadLoader` on a type of your own, as in [Reload the configuration without a restart](reload-the-configuration.md#write-a-loader).
 
 ## Keep the methods that take no function
 
