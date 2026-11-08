@@ -29,7 +29,8 @@ impl Budget {
     }
 
     pub(crate) fn max(&self) -> Option<usize> {
-        Some(self.max.load(Ordering::Relaxed)).filter(|&max| max != UNLIMITED)
+        let max = self.max.load(Ordering::Relaxed);
+        if max == UNLIMITED { None } else { Some(max) }
     }
 
     pub(crate) fn set_max(&self, max: Option<usize>) {
@@ -43,14 +44,21 @@ impl Budget {
     /// Takes `bytes` if they fit under `max_memory`.
     fn take(&self, bytes: usize) -> bool {
         let max = self.max.load(Ordering::Relaxed);
-        // A sum that saturates fits only without a limit.
-        let fits = |used: usize| {
+        let mut used = self.used.load(Ordering::Acquire);
+        loop {
+            // A sum that saturates fits only without a limit.
             let total = used.saturating_add(bytes);
-            (total <= max).then_some(total)
-        };
-        self.used
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, fits)
-            .is_ok()
+            if total > max {
+                return false;
+            }
+            match self
+                .used
+                .compare_exchange_weak(used, total, Ordering::AcqRel, Ordering::Acquire)
+            {
+                Ok(_) => return true,
+                Err(current) => used = current,
+            }
+        }
     }
 
     fn give(&self, bytes: usize) {
@@ -68,7 +76,10 @@ pub(crate) struct Reservation {
 impl Reservation {
     /// Reserves [`BASE`] bytes for a new connection, if they fit.
     pub(crate) fn new(budget: &Arc<Budget>) -> Option<Reservation> {
-        budget.take(BASE).then(|| Reservation {
+        if !budget.take(BASE) {
+            return None;
+        }
+        Some(Reservation {
             budget: Arc::clone(budget),
             size: BASE,
         })

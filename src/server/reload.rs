@@ -166,8 +166,10 @@ impl<A: Send + 'static, T: Target<A>> Coordinator<A, T> {
             }
             let outcome = self.load().await;
             // `reload()` counts its own requests; `SIGHUP` waits for none.
-            for _ in loads.iter().filter(|reply| reply.is_none()) {
-                self.counters.reloaded(outcome.is_ok(), Source::Sighup);
+            for reply in &loads {
+                if reply.is_none() {
+                    self.counters.reloaded(outcome.is_ok(), Source::Sighup);
+                }
             }
             answer(loads, outcome);
         }
@@ -268,10 +270,14 @@ struct Copied {
 
 impl Copied {
     fn of(error: &(dyn std::error::Error + 'static)) -> Copied {
-        Copied {
+        let mut copied = Copied {
             message: error.to_string(),
-            source: error.source().map(|source| Box::new(Copied::of(source))),
+            source: None,
+        };
+        if let Some(source) = error.source() {
+            copied.source = Some(Box::new(Copied::of(source)));
         }
+        copied
     }
 }
 
@@ -283,9 +289,10 @@ impl std::fmt::Display for Copied {
 
 impl std::error::Error for Copied {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        self.source
-            .as_deref()
-            .map(|source| source as &(dyn std::error::Error + 'static))
+        match &self.source {
+            Some(source) => Some(source.as_ref()),
+            None => None,
+        }
     }
 }
 
@@ -406,7 +413,10 @@ mod tests {
 
         let first = running.load();
         settle().await;
-        let others: Vec<_> = (0..5).map(|_| running.load()).collect();
+        let mut others = Vec::new();
+        for _ in 0..5 {
+            others.push(running.load());
+        }
         settle().await;
         gated.gate.add_permits(6);
 

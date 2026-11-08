@@ -158,17 +158,17 @@ pub(crate) struct Counters {
 
 impl Counters {
     pub(crate) fn new(addresses: &[SocketAddr]) -> Counters {
-        let listeners = addresses
-            .iter()
-            .map(|&address| ListenerStatus {
+        let mut listeners = Vec::new();
+        for &address in addresses {
+            listeners.push(ListenerStatus {
                 address,
                 bound: false,
                 accepting: false,
                 connections_accepted: 0,
                 connections_active: 0,
                 connections_rejected: 0,
-            })
-            .collect();
+            });
+        }
         Counters {
             started: Mutex::new(None),
             shutting_down: AtomicBool::new(false),
@@ -189,8 +189,10 @@ impl Counters {
     /// The counts of the listener on `address`.
     pub(crate) fn listener(&self, address: SocketAddr) -> Arc<ListenerCounts> {
         let mut counts = lock(&self.listener_counts);
-        if let Some((_, existing)) = counts.iter().find(|(a, _)| *a == address) {
-            return Arc::clone(existing);
+        for (known, existing) in counts.iter() {
+            if *known == address {
+                return Arc::clone(existing);
+            }
         }
         let created = Arc::new(ListenerCounts::default());
         counts.push((address, Arc::clone(&created)));
@@ -200,12 +202,16 @@ impl Counters {
     /// Counts a closed connection with its `milter.close_reason`, and its
     /// error when the reason is `error`.
     pub(crate) fn closed(&self, reason: &str, error: Option<&Error>) {
-        if let Some(index) = CLOSE_REASONS.iter().position(|r| *r == reason) {
-            self.closed[index].fetch_add(1, Ordering::Relaxed);
+        for (index, known) in CLOSE_REASONS.iter().enumerate() {
+            if *known == reason {
+                self.closed[index].fetch_add(1, Ordering::Relaxed);
+            }
         }
         if let (Some(error), "error") = (error, reason) {
-            if let Some(index) = ERROR_TYPES.iter().position(|t| *t == error.variant()) {
-                self.closed_errors[index].fetch_add(1, Ordering::Relaxed);
+            for (index, known) in ERROR_TYPES.iter().enumerate() {
+                if *known == error.variant() {
+                    self.closed_errors[index].fetch_add(1, Ordering::Relaxed);
+                }
             }
         }
     }
@@ -243,25 +249,22 @@ impl Counters {
 
     /// Replaces the listener entries after a reload: one per address in the
     /// new `bind_addresses`, with whether it is bound.
-    pub(crate) fn replace_listeners(
-        &self,
-        listeners: impl IntoIterator<Item = (SocketAddr, bool)>,
-    ) {
+    pub(crate) fn replace_listeners(&self, listeners: Vec<(SocketAddr, bool)>) {
         let mut entries = lock(&self.listeners);
         // Read under the lock, so that a shutdown starting now is seen
         // either here or by `begin_shutdown` after the replacement.
         let accepting = !self.shutting_down.load(Ordering::SeqCst);
-        *entries = listeners
-            .into_iter()
-            .map(|(address, bound)| ListenerStatus {
+        entries.clear();
+        for (address, bound) in listeners {
+            entries.push(ListenerStatus {
                 address,
                 bound,
                 accepting: accepting && bound,
                 connections_accepted: 0,
                 connections_active: 0,
                 connections_rejected: 0,
-            })
-            .collect();
+            });
+        }
     }
 
     /// The bound listeners start or stop accepting.
@@ -284,7 +287,10 @@ impl Counters {
 
     /// Time since `run()` bound the listeners; zero before.
     pub(crate) fn uptime(&self) -> Duration {
-        lock(&self.started).map_or(Duration::ZERO, |started| started.elapsed())
+        match *lock(&self.started) {
+            Some(started) => started.elapsed(),
+            None => Duration::ZERO,
+        }
     }
 
     pub(crate) fn snapshot(&self, config_generation: u64) -> Status {
@@ -292,16 +298,24 @@ impl Counters {
         {
             let counts = lock(&self.listener_counts);
             for listener in &mut listeners {
-                if let Some((_, count)) = counts.iter().find(|(a, _)| *a == listener.address) {
-                    listener.connections_accepted = count.accepted.load(Ordering::Relaxed);
-                    listener.connections_active = count.active.load(Ordering::SeqCst);
-                    listener.connections_rejected = count.rejected.load(Ordering::Relaxed);
+                for (address, count) in counts.iter() {
+                    if *address == listener.address {
+                        listener.connections_accepted = count.accepted.load(Ordering::Relaxed);
+                        listener.connections_active = count.active.load(Ordering::SeqCst);
+                        listener.connections_rejected = count.rejected.load(Ordering::Relaxed);
+                    }
                 }
             }
         }
         let shutting_down = self.shutting_down.load(Ordering::SeqCst);
+        let mut any_accepting = false;
+        for listener in &listeners {
+            if listener.accepting {
+                any_accepting = true;
+            }
+        }
         Status {
-            accepting: listeners.iter().any(|l| l.accepting) && !shutting_down,
+            accepting: any_accepting && !shutting_down,
             connections: self.connections.load(Ordering::SeqCst),
             uptime: self.uptime(),
             last_error: lock(&self.last_error).clone(),
@@ -359,7 +373,8 @@ impl Counters {
 /// half written, because every update replaces whole values, so a poisoned
 /// lock is still usable.
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+    match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
 }
