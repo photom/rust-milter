@@ -481,9 +481,9 @@ impl<'ast> Visit<'ast> for Checker<'_> {
         visit::visit_trait_bound(self, bound);
     }
 
-    fn visit_type_bare_fn(&mut self, pointer: &'ast syn::TypeBareFn) {
+    fn visit_type_fn_ptr(&mut self, pointer: &'ast syn::TypeFnPtr) {
         self.report(pointer.span(), Kind::FnPointer);
-        visit::visit_type_bare_fn(self, pointer);
+        visit::visit_type_fn_ptr(self, pointer);
     }
 
     fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
