@@ -99,11 +99,10 @@ impl Command {
     /// longer than its 12 bytes, as libmilter accepts.
     pub fn from_frame(frame: Frame) -> Result<Command> {
         let Frame { command, mut data } = frame;
-        let malformed = || ProtocolError::Malformed { command };
         match command {
             SMFIC_OPTNEG => {
                 if data.len() < OPTNEG_LENGTH {
-                    return Err(malformed().into());
+                    return Err(ProtocolError::Malformed { command }.into());
                 }
                 Ok(Command::OptNeg {
                     version: data.get_u32(),
@@ -111,26 +110,35 @@ impl Command {
                     protocol: data.get_u32(),
                 })
             }
-            SMFIC_MACRO => decode_macro(data).ok_or_else(|| malformed().into()),
-            SMFIC_CONNECT => decode_connect(data).ok_or_else(|| malformed().into()),
-            SMFIC_HELO => Ok(Command::Helo(only_one(data).ok_or_else(malformed)?)),
-            SMFIC_MAIL => Ok(Command::Mail(strings(data).ok_or_else(malformed)?)),
-            SMFIC_RCPT => Ok(Command::Rcpt(strings(data).ok_or_else(malformed)?)),
+            SMFIC_MACRO => required(decode_macro(data), command),
+            SMFIC_CONNECT => required(decode_connect(data), command),
+            SMFIC_HELO => Ok(Command::Helo(required(only_one(data), command)?)),
+            SMFIC_MAIL => Ok(Command::Mail(required(strings(data), command)?)),
+            SMFIC_RCPT => Ok(Command::Rcpt(required(strings(data), command)?)),
             SMFIC_DATA => Ok(Command::Data),
             SMFIC_HEADER => {
-                let name = MilterText::take(&mut data).ok_or_else(malformed)?;
-                let value = only_one(data).ok_or_else(malformed)?;
+                let name = required(MilterText::take(&mut data), command)?;
+                let value = required(only_one(data), command)?;
                 Ok(Command::Header { name, value })
             }
             SMFIC_EOH => Ok(Command::Eoh),
             SMFIC_BODY => Ok(Command::Body(data)),
             SMFIC_BODYEOB => Ok(Command::BodyEob(data)),
             SMFIC_ABORT => Ok(Command::Abort),
-            SMFIC_UNKNOWN => Ok(Command::Unknown(only_one(data).ok_or_else(malformed)?)),
+            SMFIC_UNKNOWN => Ok(Command::Unknown(required(only_one(data), command)?)),
             SMFIC_QUIT => Ok(Command::Quit),
             SMFIC_QUIT_NC => Ok(Command::QuitNewConnection),
             other => Err(ProtocolError::UnknownCommand(other).into()),
         }
+    }
+}
+
+/// The value decoded from the data of `command`, or a
+/// [`ProtocolError::Malformed`] error when the data did not decode.
+fn required<T>(decoded: Option<T>, command: u8) -> Result<T> {
+    match decoded {
+        Some(value) => Ok(value),
+        None => Err(ProtocolError::Malformed { command }.into()),
     }
 }
 

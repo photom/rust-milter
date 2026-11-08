@@ -21,10 +21,6 @@ src/engine/state.rs
 src/engine/trace.rs
 src/handler/context.rs
 src/handler/flags.rs
-src/message/command.rs
-src/message/reply.rs
-src/message/reply_code.rs
-src/message/text.rs
 src/server/accept.rs
 src/server/listeners.rs
 src/server/memory.rs
