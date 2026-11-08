@@ -18,7 +18,6 @@ mod socket;
 mod status;
 mod watch;
 
-use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -36,7 +35,7 @@ pub(crate) use memory::Reservation;
 pub(crate) use otel::Histograms;
 #[cfg(feature = "test-support")]
 pub use readback::SocketReadback;
-pub use reload::{ReloadReport, Reloaded};
+pub use reload::{ReloadLoader, ReloadReport, Reloaded};
 pub use status::{ListenerStatus, Status};
 pub use watch::ConfigWatch;
 
@@ -106,16 +105,11 @@ impl<H, A> ServerBuilder<H, A> {
     /// The reload loader, which `SIGHUP` and [`ServerHandle::reload`] run.
     /// It returns the new server and application configurations, or an
     /// error that fails the reload.
-    pub fn reload_with<F, Fut, E>(mut self, loader: F) -> Self
+    pub fn reload_with<L: ReloadLoader<A>>(mut self, loader: L) -> Self
     where
-        F: Fn() -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = std::result::Result<Reloaded<A>, E>> + Send + 'static,
-        E: std::error::Error + Send + Sync + 'static,
+        A: Send + 'static,
     {
-        self.loader = Some(Box::new(move || {
-            let loading = loader();
-            Box::pin(async move { loading.await.map_err(|error| Box::new(error) as _) })
-        }));
+        self.loader = Some(Box::new(loader));
         self
     }
 

@@ -28,7 +28,7 @@ fn sty_001_a_closure_is_reported_with_its_line() {
 fn sty_002_a_closure_passed_to_an_allowed_call_is_not_reported() {
     let source = "fn f() {\n\
                   \x20   let builder = Server::builder().handler(|_| Handler);\n\
-                  \x20   let builder = builder.reload_with(|| async move { load().await });\n\
+                  \x20   let gauge = meter.u64_observable_gauge(\"g\").with_callback(move |o| o.observe(1, &[]));\n\
                   \x20   ONCE.call_once(|| init());\n\
                   \x20   std::thread::spawn(|| work());\n\
                   \x20   thread::spawn(move || work());\n\
@@ -49,15 +49,16 @@ fn sty_002_a_closure_inside_an_allowed_closure_is_reported() {
 }
 
 #[test]
-fn sty_002_a_closure_passed_to_another_spawn_is_reported() {
+fn sty_002_a_closure_passed_to_another_call_is_reported() {
     let source = "fn f() {\n\
                   \x20   tokio::task::spawn_blocking(|| work());\n\
                   \x20   other::spawn(|| work());\n\
+                  \x20   builder.reload_with(|| async move { load().await });\n\
                   }\n";
 
     assert_eq!(
         findings("src/a.rs", source),
-        [(2, Kind::Closure), (3, Kind::Closure)]
+        [(2, Kind::Closure), (3, Kind::Closure), (4, Kind::Closure)]
     );
 }
 
@@ -110,13 +111,16 @@ fn sty_006_only_the_builder_methods_may_have_a_fn_bound() {
                   \x20       F: FnOnce(&HandlerContext<A>) -> H + 'static,\n\
                   \x20   { todo!() }\n\
                   \x20   pub fn other<F: Fn()>(self, f: F) {}\n\
+                  \x20   pub fn build(self) -> Server where F: FnOnce(&HandlerContext<A>) -> H { todo!() }\n\
+                  \x20   pub fn reload_with<F: Fn()>(self, loader: F) -> Self { todo!() }\n\
                   }\n";
 
     assert_eq!(
         findings("src/server/mod.rs", source),
         [
             (1, Kind::FnBound("FnOnce".to_owned())),
-            (7, Kind::FnBound("Fn".to_owned()))
+            (7, Kind::FnBound("Fn".to_owned())),
+            (9, Kind::FnBound("Fn".to_owned()))
         ]
     );
 }

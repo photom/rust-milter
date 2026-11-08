@@ -37,6 +37,7 @@ The public API of the rust-milter server library: its types, traits, errors, and
 | `ConfigWatch<A>` | Configuration | Read access to the current application configuration |
 | `HandlerContext<A>` | Configuration | Passed to the handler factory at build time |
 | `Reloaded<A>` | Configuration | A new `ServerConfig` and application configuration returned by a reload loader |
+| `ReloadLoader<A>` | Trait | The reload loader the application implements on its own type |
 | `ReloadReport` | Configuration | Result of a reload |
 | `Status` | Observability | In-process snapshot of the status counters |
 | `Handler` | Trait | The callbacks the user implements |
@@ -83,7 +84,7 @@ The public API of the rust-milter server library: its types, traits, errors, and
 | `config(ServerConfig)` | Initial server configuration (required). Without it, `build()` validates the defaults, which have no bind address, and fails |
 | `app_config(A)` | Initial application configuration; without it, `A` is `()`. Call it before `handler` and `reload_with`: the factory receives the configuration's type, and the loader returns it |
 | `handler(f)` | Handler factory: a function that takes `&HandlerContext<A>` and returns the handler. It is called once at build time; all connections share the one handler. `build()` exists only after `handler`, so a builder without a handler does not compile |
-| `reload_with(loader)` | Reload loader: an async function that returns `Reloaded<A>` or an error. The error type must implement `std::error::Error` and be `Send + Sync + 'static` |
+| `reload_with(loader)` | Reload loader: a value of a type that implements `ReloadLoader<A>`. `SIGHUP` and `ServerHandle::reload()` run its `load` method |
 | `meter_provider(provider)` | OpenTelemetry meter provider (feature `otel`) |
 | `build()` | Validate the configuration and build the server. Returns `Result<Server<H, A>>` |
 
@@ -459,6 +460,15 @@ Environment variable helpers on `ServerConfig` ([configuration.md](configuration
 |-------|------|
 | `server` | `ServerConfig` |
 | `app` | `A` |
+
+`ReloadLoader<A>`, a trait that requires `Send + Sync + 'static`:
+
+| Item | Description |
+|------|-------------|
+| `type Error` | Why a load failed. It implements `std::error::Error` and is `Send + Sync + 'static`. The reload then fails with `ReloadError::Load`, which keeps the error as its source |
+| `load(&self)` | Reads the new configurations: an `async fn` that returns `Result<Reloaded<A>, Self::Error>`, whose future is `Send` |
+
+An example loader is in [Reload the configuration without a restart](../how-to/reload-the-configuration.md#write-a-loader).
 
 `ReloadReport`:
 

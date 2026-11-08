@@ -1,18 +1,18 @@
 ---
 name: procedural-rust
-description: Write and convert rust-milter's Rust code in the procedural style of ADR 0008 and ADR 0009 (match, if let, let-else, ?, loops; no closures, Fn bounds, function pointers, or methods that take a function). Use when writing any Rust in this repository, when a style check or the disallowed-methods step fails, or when converting a file or area off tests/style/exemptions.txt.
+description: Write and convert rust-milter's Rust code in the procedural style of ADRs 0008 to 0010 (match, if let, let-else, ?, loops; no closures, Fn bounds, function pointers, or methods that take a function). Use when writing any Rust in this repository, when a style check or the disallowed-methods step fails, or when converting a file or area off tests/style/exemptions.txt.
 ---
 
 # Procedural Rust in rust-milter
 
-The rule is in ADR 0008 and ADR 0009. The rewrite for each pattern, with compiled examples, is in `docs/how-to/write-procedural-rust.md`. Read that guide before you convert code; this skill adds the workflow around it.
+The rule is in ADRs 0008, 0009, and 0010. The rewrite for each pattern, with compiled examples, is in `docs/how-to/write-procedural-rust.md`. Read that guide before you convert code; this skill adds the workflow around it.
 
 ## The rule in one screen
 
 - Branch with `match`, `if let`, `let ... else`; return errors with `?`; repeat with `for`, `while`, `loop`.
 - No method that takes a function. `clippy.toml` lists them under `disallowed-methods`. Methods that take no function (`unwrap_or`, `ok`, `then_some`, `enumerate`, `skip`, `zip`, `collect`) stay allowed.
-- No closures, except the argument of `.handler(...)`, `.reload_with(...)`, `.call_once(...)`, `thread::spawn(...)`, and `std::thread::spawn(...)`. A closure inside one of those is not allowed. `async move { }` blocks are fine; `async |x|` closures are not.
-- No `Fn`, `FnMut`, `FnOnce` (or `AsyncFn*`) bounds, except on the builder methods `handler` and `reload_with` in `src/server/mod.rs`. No `Box<dyn Fn...>`.
+- No closures, except the argument of `.handler(...)`, `.call_once(...)`, `.with_callback(...)`, `thread::spawn(...)`, and `std::thread::spawn(...)`. A closure inside one of those is not allowed. `async move { }` blocks are fine; `async |x|` closures are not. A reload loader is a type that implements `ReloadLoader`, not a closure.
+- No `Fn`, `FnMut`, `FnOnce` (or `AsyncFn*`) bounds, except on the builder methods `handler` and `build` in `src/server/mod.rs`. No `Box<dyn Fn...>`.
 - No function pointer types (`fn(u8) -> bool`) anywhere. Use an enum and a `match`.
 - New code follows the rule at once. Only files on `tests/style/exemptions.txt` may still break it.
 
@@ -22,7 +22,7 @@ The rule is in ADR 0008 and ADR 0009. The rewrite for each pattern, with compile
 - Clippy's `question_mark` rejects `let Some(x) = x else { return None; };`. Write `let x = x?;`.
 - A plain `cargo clippy` does not report the disallowed methods: the workspace allows the lint while the exemption list exists. Run the filtered Clippy command below.
 - The style check reads only `.rs` files. Review the Rust blocks of `docs/tutorials/` and `docs/how-to/` yourself.
-- The decision to replace a stored closure (`Factory`, `Loader` in `src/server`) or an OpenTelemetry `with_callback` closure changes the public API or the metrics. Stop and ask the user, with the options and a recommendation, before you convert them.
+- A change that needs a public API or behavior decision, as the builder's factory and loader did (ADR 0010), is the user's to make. Stop and ask, with the options and a recommendation.
 
 ## Convert an area
 

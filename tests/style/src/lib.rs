@@ -1,5 +1,5 @@
 //! Checks that the Rust code of the repository keeps the procedural style
-//! of ADR 0008 and ADR 0009: no closures, no `Fn`, `FnMut`, or `FnOnce`
+//! of ADRs 0008 to 0010: no closures, no `Fn`, `FnMut`, or `FnOnce`
 //! bounds, and no function pointer types, apart from the exceptions the
 //! ADRs name. It also reads the disallowed method calls of `clippy.toml`
 //! from Clippy's output. The rules are in "Style check" in
@@ -15,15 +15,15 @@ use syn::spanned::Spanned;
 use syn::visit::{self, Visit};
 use syn::{Expr, Token};
 
-/// The methods whose closure argument is allowed: the library's builder
-/// calls and `Once::call_once`.
-const CLOSURE_METHODS: [&str; 3] = ["handler", "reload_with", "call_once"];
+/// The methods whose closure argument is allowed: the handler factory of
+/// the builder, `Once::call_once`, and OpenTelemetry's `with_callback`.
+const CLOSURE_METHODS: [&str; 3] = ["handler", "call_once", "with_callback"];
 
 /// The builder methods, by file and name, whose `Fn` bounds are allowed:
-/// they take the closures that applications pass to the builder.
+/// `handler` takes the handler factory, and `build` calls it.
 const BUILDER_METHODS: [(&str, &str); 2] = [
     ("src/server/mod.rs", "handler"),
-    ("src/server/mod.rs", "reload_with"),
+    ("src/server/mod.rs", "build"),
 ];
 
 /// The traits whose bounds are reported.
