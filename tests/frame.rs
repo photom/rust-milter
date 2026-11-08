@@ -222,10 +222,11 @@ proptest! {
         ),
         chunk_sizes in proptest::collection::vec(1usize..64, 1..32),
     ) {
-        let frames: Vec<Frame> = frames
-            .into_iter()
-            .map(|(command, data)| Frame::new(command, Bytes::from(data)))
-            .collect();
+        let mut built = Vec::new();
+        for (command, data) in frames {
+            built.push(Frame::new(command, Bytes::from(data)));
+        }
+        let frames = built;
         let mut wire = BytesMut::new();
         for frame in &frames {
             frame.write_to(&mut wire);
@@ -253,19 +254,28 @@ proptest! {
 
 /// Input for FRM-060: random bytes, mixed with length fields small enough
 /// that the parser reads past them instead of rejecting the first frame.
-fn frm_060_input() -> impl Strategy<Value = Vec<u8>> {
-    let random = proptest::collection::vec(any::<u8>(), 0..64);
-    let plausible_length = (0u32..1_100).prop_map(|length| length.to_be_bytes().to_vec());
-    proptest::collection::vec(prop_oneof![random, plausible_length], 0..32)
-        .prop_map(|pieces| pieces.concat())
+/// Each piece is its random bytes, or the length field when it has one.
+fn frm_060_input(pieces: &[(Vec<u8>, Option<u32>)]) -> Vec<u8> {
+    let mut input = Vec::new();
+    for (random, plausible_length) in pieces {
+        match plausible_length {
+            Some(length) => input.extend_from_slice(&length.to_be_bytes()),
+            None => input.extend_from_slice(random),
+        }
+    }
+    input
 }
 
 proptest! {
     #[test]
     fn frm_060_arbitrary_input_never_panics_or_exceeds_the_maximum(
-        input in frm_060_input(),
+        pieces in proptest::collection::vec(
+            (proptest::collection::vec(any::<u8>(), 0..64), proptest::option::of(0u32..1_100)),
+            0..32,
+        ),
         max in 5usize..=1_024,
     ) {
+        let input = frm_060_input(&pieces);
         let mut buf = BytesMut::from(&input[..]);
 
         loop {
