@@ -18,6 +18,7 @@ mod socket;
 mod status;
 mod watch;
 
+use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -65,7 +66,8 @@ impl Server<(), ()> {
         ServerBuilder {
             config: ServerConfig::default(),
             app: (),
-            factory: Box::new(|_| ()),
+            factory: (),
+            handler: PhantomData,
             loader: None,
             #[cfg(feature = "otel")]
             meter_provider: None,
@@ -78,10 +80,15 @@ impl Server<(), ()> {
 /// Set the application configuration with `app_config` before `handler`
 /// and `reload_with`: the handler factory receives it, and the loader
 /// returns it. Without `app_config` it is `()`.
-pub struct ServerBuilder<H, A = ()> {
+///
+/// `F` is the handler factory that `handler` stores and `build` calls. It
+/// is `()` until `handler` is called, so `build` does not exist before.
+pub struct ServerBuilder<H, A = (), F = ()> {
     config: ServerConfig,
     app: A,
-    factory: Factory<H, A>,
+    factory: F,
+    /// The handler type the factory returns.
+    handler: PhantomData<H>,
     loader: Option<Loader<A>>,
     #[cfg(feature = "otel")]
     meter_provider: Option<SharedMeterProvider>,
@@ -91,10 +98,7 @@ pub struct ServerBuilder<H, A = ()> {
 #[cfg(feature = "otel")]
 type SharedMeterProvider = Arc<dyn opentelemetry::metrics::MeterProvider + Send + Sync>;
 
-/// The handler factory, called once in `build`.
-type Factory<H, A> = Box<dyn FnOnce(&HandlerContext<A>) -> H>;
-
-impl<H, A> ServerBuilder<H, A> {
+impl<H, A, F> ServerBuilder<H, A, F> {
     /// The initial server configuration. Without it, the defaults are used,
     /// which have no bind address, so `build` fails.
     pub fn config(mut self, config: ServerConfig) -> Self {
@@ -133,7 +137,8 @@ impl<A> ServerBuilder<(), A> {
         ServerBuilder {
             config: self.config,
             app,
-            factory: Box::new(|_| ()),
+            factory: (),
+            handler: PhantomData,
             loader: None,
             #[cfg(feature = "otel")]
             meter_provider: self.meter_provider,
@@ -142,14 +147,15 @@ impl<A> ServerBuilder<(), A> {
 
     /// The handler factory. It is called once, in `build`, and all
     /// connections share the handler it returns.
-    pub fn handler<H, F>(self, factory: F) -> ServerBuilder<H, A>
+    pub fn handler<H, F>(self, factory: F) -> ServerBuilder<H, A, F>
     where
-        F: FnOnce(&HandlerContext<A>) -> H + 'static,
+        F: FnOnce(&HandlerContext<A>) -> H,
     {
         ServerBuilder {
             config: self.config,
             app: self.app,
-            factory: Box::new(factory),
+            factory,
+            handler: PhantomData,
             loader: self.loader,
             #[cfg(feature = "otel")]
             meter_provider: self.meter_provider,
@@ -157,18 +163,22 @@ impl<A> ServerBuilder<(), A> {
     }
 }
 
-impl<H: Handler, A: Send + Sync + 'static> ServerBuilder<H, A> {
+impl<H: Handler, A: Send + Sync + 'static, F> ServerBuilder<H, A, F> {
     /// Validates the configuration and builds the server.
-    pub fn build(self) -> Result<Server<H, A>> {
+    pub fn build(self) -> Result<Server<H, A>>
+    where
+        F: FnOnce(&HandlerContext<A>) -> H,
+    {
         self.config.validate()?;
         let shutdown = CancellationToken::new();
         let counters = Arc::new(Counters::new(&self.config.bind_addresses));
         let (watch, publisher) = ConfigWatch::new(self.config, self.app);
         #[cfg(feature = "otel")]
         let instruments = {
-            let provider = self
-                .meter_provider
-                .unwrap_or_else(opentelemetry::global::meter_provider);
+            let provider = match self.meter_provider {
+                Some(provider) => provider,
+                None => opentelemetry::global::meter_provider(),
+            };
             otel::register(&otel::meter(&*provider), &counters, &watch)
         };
         let context = HandlerContext {
@@ -223,8 +233,14 @@ impl<H: Handler, A: Send + Sync + 'static> Server<H, A> {
         // Registered after the binds, so a failed bind leaves the signals
         // alone, and before any listener accepts.
         #[cfg(unix)]
-        let signals = signals::Signals::register().map_err(Error::Signals)?;
-        let bound: Vec<SocketAddr> = listeners.iter().map(|(addr, _)| *addr).collect();
+        let signals = match signals::Signals::register() {
+            Ok(signals) => signals,
+            Err(error) => return Err(Error::Signals(error)),
+        };
+        let mut bound = Vec::new();
+        for (addr, _) in &listeners {
+            bound.push(*addr);
+        }
         shared.running.store(true, Ordering::SeqCst);
         shared.counters.set_accepting(true);
         tracing::info!(
@@ -426,14 +442,8 @@ impl<H: Handler, A: Send + Sync + 'static> Accepting<H, A> {
         let entered = span.enter();
 
         let max_connections = config.max_connections;
-        let reject = || {
-            counters.rejected.fetch_add(1, Ordering::Relaxed);
-            counts.rejected();
-            counters.closed("limit_reached", None);
-            record_duration(&self.shared, accepted_at, "limit_reached");
-        };
         if counters.connections.load(Ordering::SeqCst) >= max_connections {
-            reject();
+            self.reject(counts, accepted_at);
             tracing::warn!(
                 conn_id = id,
                 remote_addr = %peer_addr,
@@ -443,7 +453,7 @@ impl<H: Handler, A: Send + Sync + 'static> Accepting<H, A> {
             return;
         }
         let Some(memory) = Reservation::new(&self.budget) else {
-            reject();
+            self.reject(counts, accepted_at);
             tracing::warn!(
                 limit_type = "max_memory",
                 current = self.budget.used(),
@@ -452,24 +462,20 @@ impl<H: Handler, A: Send + Sync + 'static> Accepting<H, A> {
             );
             return;
         };
-        let setup_failed = |error: std::io::Error| {
-            counters.closed("error", Some(&Error::Io(error)));
-            record_duration(&self.shared, accepted_at, "error");
-        };
         let local_addr = match stream.local_addr() {
             Ok(local_addr) => local_addr,
-            Err(error) => return setup_failed(error),
+            Err(error) => return self.setup_failed(accepted_at, error),
         };
         // A connection whose options cannot be set is closed before any
         // read, as a setup error.
         if let Err(error) = socket::configure(&stream, &config.socket_options) {
             tracing::debug!(conn_id = id, error = %error, "Socket setup failed");
-            return setup_failed(error);
+            return self.setup_failed(accepted_at, error);
         }
         #[cfg(feature = "test-support")]
         let probe = match readback::Probe::new(&stream) {
             Ok(probe) => probe,
-            Err(error) => return setup_failed(error),
+            Err(error) => return self.setup_failed(accepted_at, error),
         };
         let info = ConnectionInfo {
             id,
@@ -508,6 +514,23 @@ impl<H: Handler, A: Send + Sync + 'static> Accepting<H, A> {
             )
             .instrument(span),
         );
+    }
+
+    /// Counts a connection closed at once at a limit.
+    fn reject(&self, counts: &ListenerCounts, accepted_at: Instant) {
+        let counters = &self.shared.counters;
+        counters.rejected.fetch_add(1, Ordering::Relaxed);
+        counts.rejected();
+        counters.closed("limit_reached", None);
+        record_duration(&self.shared, accepted_at, "limit_reached");
+    }
+
+    /// Counts a connection closed because its socket could not be set up.
+    fn setup_failed(&self, accepted_at: Instant, error: std::io::Error) {
+        self.shared
+            .counters
+            .closed("error", Some(&Error::Io(error)));
+        record_duration(&self.shared, accepted_at, "error");
     }
 }
 
@@ -618,7 +641,10 @@ fn log_close(
         );
     }
     let duration_ms = millis(accepted_at.elapsed());
-    let error = report.outcome.as_ref().err().map(|e| error_chain(e));
+    let error = match &report.outcome {
+        Ok(_) => None,
+        Err(error) => Some(error_chain(error)),
+    };
     macro_rules! closed {
         ($level:ident) => {
             tracing::$level!(
