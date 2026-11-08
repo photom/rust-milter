@@ -7,14 +7,3 @@
 # on a listed file that has nothing left to convert.
 # One path per line, from the repository root, in sorted order.
 
-tests/configuration.rs
-tests/configuration_env.rs
-tests/configuration_file.rs
-tests/configuration_process_env.rs
-tests/docs/build.rs
-tests/docs/src/setup.rs
-tests/frame.rs
-tests/interop/src/sink.rs
-tests/message.rs
-tests/reload.rs
-tests/shutdown_signals.rs

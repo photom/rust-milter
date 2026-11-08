@@ -14,8 +14,8 @@ use std::time::{Duration, Instant};
 use rust_milter::protocol::*;
 use rust_milter::{
     BindMode, Bytes, CancellationToken, ConfigError, ConfigWatch, Decision, EomContext, Handler,
-    HandlerContext, MessageContext, MilterText, ReloadError, ReloadLoader, Reloaded, Result,
-    Server, ServerConfig, ServerHandle,
+    MessageContext, MilterText, ReloadError, ReloadLoader, Reloaded, Result, Server, ServerBuilder,
+    ServerConfig, ServerHandle,
 };
 use support::logs::Logs;
 use support::mta::{Mta, connect_data, strings};
@@ -67,26 +67,36 @@ struct Running<A = ()> {
     task: tokio::task::JoinHandle<Result<()>>,
 }
 
-async fn start<A, H, F>(
+/// A builder with `config`, `app`, and the loader, if there is one; the
+/// caller adds the handler.
+fn builder<A: Send + Sync + 'static>(
     config: ServerConfig,
     app: A,
     loader: Option<Script<A>>,
-    factory: F,
-) -> Running<A>
-where
-    A: Send + Sync + 'static,
-    H: Handler,
-    F: FnOnce(&HandlerContext<A>) -> H + 'static,
-{
+) -> ServerBuilder<(), A> {
     let builder = Server::builder().config(config).app_config(app);
-    let builder = match loader {
+    match loader {
         Some(script) => builder.reload_with(ScriptLoader { script }),
         None => builder,
-    };
-    let server = builder
-        .handler(factory)
+    }
+}
+
+/// Starts a server with `handler`, built as [`builder`] says.
+async fn start<A: Send + Sync + 'static, H: Handler>(
+    config: ServerConfig,
+    app: A,
+    loader: Option<Script<A>>,
+    handler: H,
+) -> Running<A> {
+    let server = builder(config, app, loader)
+        .handler(move |_| handler)
         .build()
         .expect("a valid configuration");
+    run(server).await
+}
+
+/// Runs `server` and waits until it accepts.
+async fn run<A: Send + Sync + 'static, H: Handler>(server: Server<H, A>) -> Running<A> {
     let handle = server.handle();
     let task = tokio::spawn(server.run());
     while !handle.status().accepting {
@@ -135,7 +145,7 @@ async fn rld_010_a_reload_reports_the_changed_settings() {
         max_connections: 500,
         ..config.clone()
     };
-    let server = start(config, (), Some(script(vec![plain(new)])), ContinueAll::new).await;
+    let server = start(config, (), Some(script(vec![plain(new)])), ContinueAll).await;
 
     let report = server.handle.reload().await.unwrap();
 
@@ -160,7 +170,7 @@ async fn rld_011_open_connections_keep_their_timeouts() {
     config.timeouts.idle = Duration::from_secs(1);
     let mut new = config.clone();
     new.timeouts.idle = Duration::from_secs(3);
-    let server = start(config, (), Some(script(vec![plain(new)])), ContinueAll::new).await;
+    let server = start(config, (), Some(script(vec![plain(new)])), ContinueAll).await;
     let mut first = Mta::connect(lease.v4()).await;
     first.negotiate().await;
     let first_idle = Instant::now();
@@ -200,7 +210,7 @@ async fn rld_012_a_lower_limit_closes_no_open_connection() {
         max_connections: 1,
         ..config.clone()
     };
-    let server = start(config, (), Some(script(vec![plain(new)])), ContinueAll::new).await;
+    let server = start(config, (), Some(script(vec![plain(new)])), ContinueAll).await;
     let mut open = Vec::new();
     for _ in 0..3 {
         let mut mta = Mta::connect(lease.v4()).await;
@@ -243,7 +253,7 @@ async fn rld_013_a_backlog_change_fails_and_applies_nothing() {
         max_connections: 1,
         ..config.clone()
     };
-    let server = start(config, (), Some(script(vec![plain(new)])), ContinueAll::new).await;
+    let server = start(config, (), Some(script(vec![plain(new)])), ContinueAll).await;
 
     let error = server.handle.reload().await.unwrap_err();
 
@@ -270,7 +280,7 @@ async fn rld_014_a_reuse_port_change_fails_even_with_an_added_address() {
     let config = on(&[a.v4()]);
     let mut new = on(&[a.v4(), b.v4()]);
     new.socket_options.reuse_port = true;
-    let server = start(config, (), Some(script(vec![plain(new)])), ContinueAll::new).await;
+    let server = start(config, (), Some(script(vec![plain(new)])), ContinueAll).await;
 
     let error = server.handle.reload().await.unwrap_err();
 
@@ -280,13 +290,10 @@ async fn rld_014_a_reuse_port_change_fails_even_with_an_added_address() {
         "{error:?}"
     );
     assert!(!accepts(b.v4()).await, "B was bound");
-    let listeners: Vec<SocketAddr> = server
-        .handle
-        .status()
-        .listeners
-        .iter()
-        .map(|listener| listener.address)
-        .collect();
+    let mut listeners = Vec::new();
+    for listener in server.handle.status().listeners {
+        listeners.push(listener.address);
+    }
     assert_eq!(listeners, [a.v4()]);
     server.stop().await;
 }
@@ -311,7 +318,7 @@ async fn rld_015_restart_settings_are_named_in_document_order() {
         config,
         (),
         Some(script(vec![plain(changed), plain(reverted)])),
-        ContinueAll::new,
+        ContinueAll,
     )
     .await;
 
@@ -344,16 +351,15 @@ async fn rld_016_logs_name_the_settings_without_their_values() {
         max_connections: 888_888,
         ..config.clone()
     };
-    let server = start(config, (), Some(script(vec![plain(new)])), ContinueAll::new).await;
+    let server = start(config, (), Some(script(vec![plain(new)])), ContinueAll).await;
 
     server.handle.reload().await.unwrap();
     server.stop().await;
 
-    let text: String = logs
-        .all()
-        .iter()
-        .map(|event| format!("{} {:?}\n", event.message, event.fields))
-        .collect();
+    let mut text = String::new();
+    for event in logs.all() {
+        text.push_str(&format!("{} {:?}\n", event.message, event.fields));
+    }
     assert!(text.contains("max_connections"), "{text}");
     assert!(!text.contains("777777"), "{text}");
     assert!(!text.contains("888888"), "{text}");
@@ -366,7 +372,7 @@ async fn rld_050_a_new_memory_limit_applies_to_the_next_accept() {
     let mut new = config.clone();
     new.resource_limits.max_memory = Some(65_540);
     new.resource_limits.per_connection_buffer = 65_540;
-    let server = start(config, (), Some(script(vec![plain(new)])), ContinueAll::new).await;
+    let server = start(config, (), Some(script(vec![plain(new)])), ContinueAll).await;
 
     server.handle.reload().await.unwrap();
 
@@ -389,7 +395,7 @@ async fn rld_051_a_shutdown_uses_the_current_timings() {
     let config = on(&[lease.v4()]);
     let mut new = config.clone();
     new.shutdown.grace_period = Duration::from_millis(500);
-    let server = start(config, (), Some(script(vec![plain(new)])), ContinueAll::new).await;
+    let server = start(config, (), Some(script(vec![plain(new)])), ContinueAll).await;
     let mut mta = Mta::connect(lease.v4()).await;
     mta.reach(support::mta::Reach::Helo).await;
 
@@ -417,7 +423,7 @@ async fn rld_020_moving_the_listen_address_leaves_no_gap() {
         on(&[a]),
         (),
         Some(script(vec![plain(on(&[b]))])),
-        ContinueAll::new,
+        ContinueAll,
     )
     .await;
     let mut open = Mta::connect(a).await;
@@ -463,13 +469,13 @@ async fn rld_021_fail_fast_rolls_back_a_failed_bind() {
         PortLease::acquire().await,
         PortLease::acquire().await,
     ];
-    let [a, b, c] = leases.each_ref().map(PortLease::v4);
+    let [a, b, c] = [leases[0].v4(), leases[1].v4(), leases[2].v4()];
     let _held = occupy(c);
     let server = start(
         on(&[a]),
         (),
         Some(script(vec![plain(on(&[a, b, c]))])),
-        ContinueAll::new,
+        ContinueAll,
     )
     .await;
 
@@ -493,31 +499,31 @@ async fn rld_022_best_effort_publishes_the_listeners_that_bound() {
         PortLease::acquire().await,
         PortLease::acquire().await,
     ];
-    let [a, b, c] = leases.each_ref().map(PortLease::v4);
+    let [a, b, c] = [leases[0].v4(), leases[1].v4(), leases[2].v4()];
     let _held = occupy(c);
     let new = ServerConfig {
         bind_mode: BindMode::BestEffort,
         ..on(&[a, b, c])
     };
-    let server = start(
-        on(&[a]),
-        (),
-        Some(script(vec![plain(new)])),
-        ContinueAll::new,
-    )
-    .await;
+    let server = start(on(&[a]), (), Some(script(vec![plain(new)])), ContinueAll).await;
 
     let report = server.handle.reload().await.unwrap();
 
     assert_eq!(report.generation, 2);
     assert_eq!(report.listeners_added, [b]);
-    let failed: Vec<SocketAddr> = report.bind_failures.iter().map(|(addr, _)| *addr).collect();
+    let mut failed = Vec::new();
+    for (addr, _) in &report.bind_failures {
+        failed.push(*addr);
+    }
     assert_eq!(failed, [c]);
     let warning = logs.one("Listener bind failed");
     assert_eq!(warning.level, tracing::Level::WARN);
     assert_eq!(warning.field("address"), Some(c.to_string().as_str()));
     let listeners = server.handle.status().listeners;
-    let bound: Vec<(SocketAddr, bool)> = listeners.iter().map(|l| (l.address, l.bound)).collect();
+    let mut bound = Vec::new();
+    for listener in &listeners {
+        bound.push((listener.address, listener.bound));
+    }
     assert_eq!(bound, [(a, true), (b, true), (c, false)]);
     Mta::connect(b).await.negotiate().await;
     server.stop().await;
@@ -532,13 +538,7 @@ async fn rld_023_a_reload_never_leaves_no_listener() {
         bind_mode: BindMode::BestEffort,
         ..on(&[c])
     };
-    let server = start(
-        on(&[a]),
-        (),
-        Some(script(vec![plain(new)])),
-        ContinueAll::new,
-    )
-    .await;
+    let server = start(on(&[a]), (), Some(script(vec![plain(new)])), ContinueAll).await;
 
     let error = server.handle.reload().await.unwrap_err();
 
@@ -592,11 +592,14 @@ async fn rld_030_a_message_sees_one_application_configuration() {
     let config = on(&[lease.v4()]);
     let seen = Arc::new(Mutex::new(Vec::new()));
     let recorded = Arc::clone(&seen);
-    let server = start(config.clone(), 1_u32, None, move |ctx| Threshold {
-        config: ctx.config_watch(),
-        seen: recorded,
-    })
-    .await;
+    let server = builder(config.clone(), 1_u32, None)
+        .handler(move |ctx| Threshold {
+            config: ctx.config_watch(),
+            seen: recorded,
+        })
+        .build()
+        .expect("a valid configuration");
+    let server = run(server).await;
     let mut mta = Mta::connect(lease.v4()).await;
     mta.reach(support::mta::Reach::Helo).await;
 
@@ -621,7 +624,7 @@ async fn rld_030_a_message_sees_one_application_configuration() {
 async fn rld_031_a_waiting_task_sees_the_new_generation() {
     let lease = PortLease::acquire().await;
     let config = on(&[lease.v4()]);
-    let server = start(config.clone(), 1_u32, None, |_| ContinueAll).await;
+    let server = start(config.clone(), 1_u32, None, ContinueAll).await;
     let mut watch = server.handle.config_watch();
     let waiting = tokio::spawn(async move {
         watch.changed().await;
@@ -648,9 +651,12 @@ async fn rld_032_an_application_check_failure_keeps_both_configurations() {
     let lease = PortLease::acquire().await;
     let config = on(&[lease.v4()]);
     let rejected = io::Error::other("threshold must be below 100");
-    let server = start(config, 1_u32, Some(script(vec![Err(rejected)])), |_| {
-        ContinueAll
-    })
+    let server = start(
+        config,
+        1_u32,
+        Some(script(vec![Err(rejected)])),
+        ContinueAll,
+    )
     .await;
 
     let error = server.handle.reload().await.unwrap_err();
@@ -672,10 +678,7 @@ async fn rld_033_a_rejected_reload_publishes_no_application_configuration() {
         },
         app: 2_u32,
     };
-    let server = start(config, 1_u32, Some(script(vec![Ok(rejected)])), |_| {
-        ContinueAll
-    })
-    .await;
+    let server = start(config, 1_u32, Some(script(vec![Ok(rejected)])), ContinueAll).await;
     let mut watch = server.handle.config_watch();
     let waiting = tokio::spawn(async move { watch.changed().await });
 
@@ -701,7 +704,7 @@ async fn rld_040_an_invalid_configuration_is_rejected() {
         backlog: 0,
         ..config.clone()
     };
-    let server = start(config, (), Some(script(vec![plain(new)])), ContinueAll::new).await;
+    let server = start(config, (), Some(script(vec![plain(new)])), ContinueAll).await;
 
     let error = server.handle.reload().await.unwrap_err();
 
@@ -730,7 +733,7 @@ async fn rld_041_a_loader_error_is_kept_as_the_source() {
         on(&[lease.v4()]),
         (),
         Some(script(vec![Err(missing)])),
-        ContinueAll::new,
+        ContinueAll,
     )
     .await;
 
@@ -752,7 +755,7 @@ async fn rld_042_without_a_loader_only_an_explicit_configuration_reloads() {
         max_connections: 42,
         ..config.clone()
     };
-    let server = start(config, (), None, ContinueAll::new).await;
+    let server = start(config, (), None, ContinueAll).await;
 
     let without = server.handle.reload().await.unwrap_err();
     let explicit = server
@@ -779,7 +782,7 @@ async fn rld_045_no_reload_during_shutdown() {
         config.clone(),
         (),
         Some(script(vec![plain(config.clone())])),
-        ContinueAll::new,
+        ContinueAll,
     )
     .await;
     let mut mta = Mta::connect(lease.v4()).await;
@@ -994,7 +997,7 @@ mod sockets {
         let handler = Keepalive::default();
         let recorded = handler.clone();
         let loader = script(vec![plain(new.clone())]);
-        let server = start(config, (), Some(loader), move |_| recorded).await;
+        let server = start(config, (), Some(loader), recorded).await;
         let mut first = Mta::connect(lease.v4()).await;
         first.reach(Reach::Helo).await;
 
@@ -1031,13 +1034,13 @@ mod sockets {
     /// Sends the command that follows `step`, and returns the callback it
     /// calls.
     async fn next_command(mta: &mut Mta, step: Step) -> &'static str {
-        let connect = || connect_data("[192.0.2.1]", "192.0.2.1", 4711);
+        let connect = connect_data("[192.0.2.1]", "192.0.2.1", 4711);
         let (command, data, callback) = match step {
             Step::Accepted => {
                 mta.negotiate().await;
-                (SMFIC_CONNECT, connect(), "connect")
+                (SMFIC_CONNECT, connect, "connect")
             }
-            Step::Negotiated => (SMFIC_CONNECT, connect(), "connect"),
+            Step::Negotiated => (SMFIC_CONNECT, connect, "connect"),
             Step::At(Reach::Conn) => (SMFIC_HELO, strings(&["client.void.invalid"]), "helo"),
             Step::At(Reach::Helo | Reach::Endm | Reach::Unkn) => {
                 (SMFIC_MAIL, strings(&["<next@void.invalid>"]), "mail")
@@ -1077,10 +1080,7 @@ mod sockets {
             new.timeouts.idle = Duration::from_secs(60);
             let handler = Keepalive::default();
             let recorded = handler.clone();
-            let server = start(config, (), Some(script(vec![plain(new)])), move |_| {
-                recorded
-            })
-            .await;
+            let server = start(config, (), Some(script(vec![plain(new)])), recorded).await;
             let mut mta = Mta::connect(lease.v4()).await;
             match step {
                 Step::Accepted => {}

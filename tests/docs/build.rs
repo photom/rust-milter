@@ -18,10 +18,15 @@ fn main() {
     for directory in DIRECTORIES {
         let path = root.join(directory);
         println!("cargo::rerun-if-changed={}", path.display());
-        let entries = std::fs::read_dir(&path)
-            .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()));
+        let entries = match std::fs::read_dir(&path) {
+            Ok(entries) => entries,
+            Err(error) => panic!("cannot read {}: {error}", path.display()),
+        };
         for entry in entries {
-            let entry = entry.unwrap_or_else(|error| panic!("cannot read {directory}: {error}"));
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => panic!("cannot read {directory}: {error}"),
+            };
             let Ok(name) = entry.file_name().into_string() else {
                 panic!("{directory} has a file name that is not UTF-8");
             };
@@ -34,15 +39,22 @@ fn main() {
 
     let mut generated = format!("#[cfg(test)]\nconst DOCUMENTS: &[&str] = &{documents:?};\n");
     for document in &documents {
-        let text = std::fs::read_to_string(root.join(document))
-            .unwrap_or_else(|error| panic!("cannot read {document}: {error}"));
-        let prepared = setup::prepare(&text).unwrap_or_else(|error| panic!("{document}: {error}"));
+        let text = match std::fs::read_to_string(root.join(document)) {
+            Ok(text) => text,
+            Err(error) => panic!("cannot read {document}: {error}"),
+        };
+        let prepared = match setup::prepare(&text) {
+            Ok(prepared) => prepared,
+            Err(error) => panic!("{document}: {error}"),
+        };
         let copy = out.join(document);
         let parent = copy.parent().expect("a document is in a directory");
-        std::fs::create_dir_all(parent)
-            .unwrap_or_else(|error| panic!("cannot create {}: {error}", parent.display()));
-        std::fs::write(&copy, prepared)
-            .unwrap_or_else(|error| panic!("cannot write {}: {error}", copy.display()));
+        if let Err(error) = std::fs::create_dir_all(parent) {
+            panic!("cannot create {}: {error}", parent.display());
+        }
+        if let Err(error) = std::fs::write(&copy, prepared) {
+            panic!("cannot write {}: {error}", copy.display());
+        }
         let name = document
             .trim_start_matches("docs/")
             .trim_end_matches(".md")
@@ -55,6 +67,7 @@ fn main() {
         .expect("writing to a String does not fail");
     }
     let target = out.join("documents.rs");
-    std::fs::write(&target, generated)
-        .unwrap_or_else(|error| panic!("cannot write {}: {error}", target.display()));
+    if let Err(error) = std::fs::write(&target, generated) {
+        panic!("cannot write {}: {error}", target.display());
+    }
 }

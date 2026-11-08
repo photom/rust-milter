@@ -13,15 +13,16 @@ use std::process::Command;
 
 use rust_milter::{ConfigError, ServerConfig};
 
-/// Runs `check` in a child process whose environment has `name` = `value`.
-/// In the child, where the variable is set, it runs `check` directly.
+/// Whether this process is the child that has `name` = `value` in its
+/// environment. The parent runs the calling test again in such a child,
+/// checks that it passed, and returns false; the child returns true, and the
+/// caller then runs its checks.
 ///
 /// `test` must be the calling test's name. The child must run exactly that
 /// test, because a name that matches no test would run nothing and succeed.
-fn with_var(test: &str, name: &OsStr, value: &OsStr, check: impl FnOnce()) {
+fn in_child_with_var(test: &str, name: &OsStr, value: &OsStr) -> bool {
     if std::env::var_os(name).is_some() {
-        check();
-        return;
+        return true;
     }
     let output = Command::new(std::env::current_exe().unwrap())
         .args([test, "--exact", "--test-threads=1"])
@@ -34,41 +35,40 @@ fn with_var(test: &str, name: &OsStr, value: &OsStr, check: impl FnOnce()) {
         "the child process did not run {test} successfully:\n{stdout}\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
+    false
 }
 
 #[test]
 fn cfg_094_rejects_a_name_with_the_prefix_that_is_not_utf8() {
     let name = OsStr::from_bytes(b"CFG094_\xFF");
 
-    with_var(
+    if in_child_with_var(
         "cfg_094_rejects_a_name_with_the_prefix_that_is_not_utf8",
         name,
         OsStr::new("1"),
-        || {
-            assert_eq!(
-                ServerConfig::from_env("CFG094_"),
-                Err(ConfigError::UnknownEnvVariable(
-                    "CFG094_\u{FFFD}".to_owned()
-                ))
-            );
-        },
-    );
+    ) {
+        assert_eq!(
+            ServerConfig::from_env("CFG094_"),
+            Err(ConfigError::UnknownEnvVariable(
+                "CFG094_\u{FFFD}".to_owned()
+            ))
+        );
+    }
 }
 
 #[test]
 fn cfg_095_rejects_a_value_that_is_not_utf8() {
     let value = OsStr::from_bytes(b"10\xFF");
 
-    with_var(
+    if in_child_with_var(
         "cfg_095_rejects_a_value_that_is_not_utf8",
         OsStr::new("CFG095_BACKLOG"),
         value,
-        || {
-            let result = ServerConfig::from_env("CFG095_");
-            assert!(
-                matches!(&result, Err(ConfigError::InvalidEnvValue { variable, .. }) if variable == "CFG095_BACKLOG"),
-                "got {result:?}"
-            );
-        },
-    );
+    ) {
+        let result = ServerConfig::from_env("CFG095_");
+        assert!(
+            matches!(&result, Err(ConfigError::InvalidEnvValue { variable, .. }) if variable == "CFG095_BACKLOG"),
+            "got {result:?}"
+        );
+    }
 }

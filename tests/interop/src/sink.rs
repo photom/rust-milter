@@ -99,16 +99,13 @@ impl Delivered {
 pub fn start() {
     START.call_once(|| {
         let (ready, started) = std::sync::mpsc::channel();
-        std::thread::Builder::new()
-            .name("sink".to_owned())
-            .spawn(move || {
-                let runtime = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("the sink's runtime starts");
-                runtime.block_on(serve(ready));
-            })
-            .expect("the sink's thread starts");
+        std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("the sink's runtime starts");
+            runtime.block_on(serve(ready));
+        });
         started.recv().expect("the sink binds its port");
     });
 }
