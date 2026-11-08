@@ -122,7 +122,7 @@ stateDiagram-v2
     Stopped --> [*]
 ```
 
-A request that arrives while a reload is running is not lost. The coordinator records it, and when the current reload ends it runs one more reload. Any number of requests that arrive in the meantime cause one extra reload only, which then picks up the latest configuration. Every caller whose request was folded into that reload gets its result. Only requests for the loader are folded: a `reload_with_config()` request carries its own configuration and runs on its own, in the order it arrived.
+A request that arrives while a reload is running is not lost. The coordinator records it and runs it when the current reload ends. Loader requests that arrive one after another in the meantime cause one extra reload only, which picks up the latest configuration, and every caller whose request was folded into it gets its result. A `reload_with_config()` request carries its own configuration and runs on its own, where it arrived: loader requests from before it run first, and those after it fold into a reload that runs after it. Every request takes effect in the order it arrived.
 
 The coordinator starts when `run()` has bound the listeners. A request made before that waits, and runs then.
 
@@ -207,6 +207,7 @@ Unit tests:
 - the listener set comparison for added, removed, and kept addresses
 - classification of every `ServerConfig` field (at once, new connections, restart)
 - coalescing: several requests during one reload cause exactly one more reload
+- arrival order: an explicit configuration between loader requests takes effect where it arrived
 - generation numbering on success and failure
 
 Integration tests:
