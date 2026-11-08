@@ -87,14 +87,14 @@ CI runs the tests with `--all-features`, so the tests that need the feature run 
 
 ## Style check
 
-`cargo test` checks that the Rust code keeps the procedural style of [ADR 0008](../adr/0008-rust-code-is-written-in-a-procedural-style.md) and [ADR 0009](../adr/0009-no-stored-closures-or-function-pointers.md). A separate Clippy run in CI checks the methods. How to write code that passes is in [Write Rust in the procedural style](../how-to/write-procedural-rust.md).
+`cargo test` checks that the Rust code keeps the procedural style of [ADR 0008](../adr/0008-rust-code-is-written-in-a-procedural-style.md), [ADR 0009](../adr/0009-no-stored-closures-or-function-pointers.md), and [ADR 0010](../adr/0010-builder-factory-type-parameter-and-loader-trait.md). A separate Clippy run in CI checks the methods. How to write code that passes is in [Write Rust in the procedural style](../how-to/write-procedural-rust.md).
 
 | Item | Behavior |
 |------|----------|
 | Files checked | Every `.rs` file under `src/`, `tests/`, and `examples/`, except in `target` directories |
-| Closures | A closure fails the check, unless it is an argument of a method call named `handler`, `reload_with`, or `call_once`, or of a call to `thread::spawn` or `std::thread::spawn`. A closure inside an allowed closure fails. An `async` block passes; an `async` closure fails |
+| Closures | A closure fails the check, unless it is an argument of a method call named `handler`, `call_once`, or `with_callback`, or of a call to `thread::spawn` or `std::thread::spawn`. A closure inside an allowed closure fails. An `async` block passes; an `async` closure fails |
 | Macros | The check reads the arguments of a macro when they parse as expressions separated by commas, as in `assert!`, `vec!`, and `format!`. It skips other macros, such as `tokio::select!` and `macro_rules!` |
-| `Fn` bounds | A bound on `Fn`, `FnMut`, `FnOnce`, `AsyncFn`, `AsyncFnMut`, or `AsyncFnOnce` fails, in an `impl` type, a `dyn` type, a generic parameter, or a `where` clause. Only the builder methods `handler` and `reload_with` in `src/server/mod.rs` may have them |
+| `Fn` bounds | A bound on `Fn`, `FnMut`, `FnOnce`, `AsyncFn`, `AsyncFnMut`, or `AsyncFnOnce` fails, in an `impl` type, a `dyn` type, a generic parameter, or a `where` clause. Only the builder methods `handler` and `build` in `src/server/mod.rs` may have them |
 | Function pointers | A function pointer type, such as `fn(u8) -> bool`, fails wherever it appears: a parameter, a field, a return type, a type alias, or an element type |
 | Methods | `clippy.toml` lists the methods that take a function under `disallowed-methods`. Methods that take no function, such as `unwrap_or`, `ok`, `enumerate`, and `collect`, are allowed. The workspace allows the lint, so a plain `cargo clippy` stays quiet. The style check's Clippy run turns it on with `-W clippy::disallowed_methods` and `--message-format=short`, and the `disallowed-methods` binary of `tests/style` reads the output, ignoring terminal colors. A call in a file that is not on the exemption list fails the run. A call that Clippy reports on the lines of a `derive` attribute, alone or inside `cfg_attr`, comes from the derive macro, such as serde's code for a `#[serde(with = ...)]` field, and is not counted |
 | Lints that suggest closures | The workspace allows `manual_filter`, `manual_filter_map`, `manual_find`, `manual_find_map`, `manual_map`, `manual_retain`, and `map_entry` |

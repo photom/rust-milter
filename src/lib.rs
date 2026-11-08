@@ -32,7 +32,7 @@ pub use message::{AddressFamily, Command, MilterText, Reply, ReplyCode};
 #[doc(hidden)]
 pub use server::SocketReadback;
 pub use server::{
-    ConfigWatch, ConnectionInfo, HandlerContext, ListenerStatus, ReloadReport, Reloaded, Server,
-    ServerBuilder, ServerHandle, Status,
+    ConfigWatch, ConnectionInfo, HandlerContext, ListenerStatus, ReloadLoader, ReloadReport,
+    Reloaded, Server, ServerBuilder, ServerHandle, Status,
 };
 pub use tokio_util::sync::CancellationToken;

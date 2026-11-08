@@ -20,7 +20,9 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use rust_milter::protocol::*;
-use rust_milter::{Bytes, Decision, EomContext, Handler, Reloaded, Result, Server, ServerConfig};
+use rust_milter::{
+    Bytes, Decision, EomContext, Handler, ReloadLoader, Reloaded, Result, Server, ServerConfig,
+};
 use support::logs::Logs;
 use support::mta::{Mta, Reach};
 use support::ports::PortLease;
@@ -118,24 +120,37 @@ async fn child_main() {
 fn build<H: Handler>(config: ServerConfig, file: Option<PathBuf>, handler: H) -> Result<Server<H>> {
     let builder = Server::builder().config(config.clone());
     let builder = match file {
-        Some(path) => builder.reload_with(move || load(path.clone(), config.clone())),
+        Some(path) => builder.reload_with(FileLoader { path, base: config }),
         None => builder,
     };
     builder.handler(move |_| handler).build()
 }
 
-/// `base` with the `max_connections` that `path` holds.
-async fn load(path: PathBuf, base: ServerConfig) -> io::Result<Reloaded<()>> {
-    tracing::info!("Loader called");
-    let text = std::fs::read_to_string(path)?;
-    let max_connections = text.trim().parse().map_err(io::Error::other)?;
-    Ok(Reloaded {
-        server: ServerConfig {
-            max_connections,
-            ..base
-        },
-        app: (),
-    })
+/// A loader that returns `base` with the `max_connections` that `path`
+/// holds.
+struct FileLoader {
+    path: PathBuf,
+    base: ServerConfig,
+}
+
+impl ReloadLoader<()> for FileLoader {
+    type Error = io::Error;
+
+    async fn load(&self) -> io::Result<Reloaded<()>> {
+        tracing::info!("Loader called");
+        let text = std::fs::read_to_string(&self.path)?;
+        let max_connections = match text.trim().parse() {
+            Ok(max_connections) => max_connections,
+            Err(error) => return Err(io::Error::other(error)),
+        };
+        Ok(Reloaded {
+            server: ServerConfig {
+                max_connections,
+                ..self.base.clone()
+            },
+            app: (),
+        })
+    }
 }
 
 /// Runs a built server and returns the exit code for the result.

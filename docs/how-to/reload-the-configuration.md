@@ -34,12 +34,12 @@ Keys you leave out in `[server]` keep their defaults. The key names and value fo
 
 ## Write a loader
 
-The loader reads the file and splits it into the server part and your part:
+The loader is a type of yours that implements `ReloadLoader`. Its `load` method reads the file and splits it into the server part and your part:
 
 ```rust
 use std::path::PathBuf;
 
-use rust_milter::{Reloaded, ServerConfig};
+use rust_milter::{ReloadLoader, Reloaded, ServerConfig};
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -70,20 +70,32 @@ async fn load(path: PathBuf) -> Result<Reloaded<TaggerConfig>, LoadError> {
         app: file.tagger,
     })
 }
+
+struct FileLoader {
+    path: PathBuf,
+}
+
+impl ReloadLoader<TaggerConfig> for FileLoader {
+    type Error = LoadError;
+
+    async fn load(&self) -> Result<Reloaded<TaggerConfig>, LoadError> {
+        load(self.path.clone()).await
+    }
+}
 ```
 
-The loader's error type must implement `std::error::Error` and be `Send + Sync + 'static`.
+The `Error` type must implement `std::error::Error` and be `Send + Sync + 'static`. The startup code calls the plain `load` function too, so it reads the file the same way.
 
 Keep the loader to reading and checking. rust-milter runs its own checks after the loader returns and can still reject the reload, for example when `backlog` changed. It cannot undo anything the loader did, so the loader must not replace values that other code reads, close connections, or start work based on the new settings. Return an error to reject settings your application cannot use; the reload then fails and nothing changes.
 
 ## Register the loader
 
-Load the file once at startup, then register the same loader for reloads:
+Load the file once at startup, then register a loader for the same file for reloads:
 
 <!-- doctest-setup
 use std::path::PathBuf;
 
-use rust_milter::{Handler, HandlerContext, Reloaded, Server, ServerConfig};
+use rust_milter::{Handler, HandlerContext, ReloadLoader, Reloaded, Server, ServerConfig};
 
 struct TaggerConfig;
 
@@ -96,6 +108,18 @@ async fn load(_path: PathBuf) -> Result<Reloaded<TaggerConfig>, LoadError> {
         server: ServerConfig::default(),
         app: TaggerConfig,
     })
+}
+
+struct FileLoader {
+    path: PathBuf,
+}
+
+impl ReloadLoader<TaggerConfig> for FileLoader {
+    type Error = LoadError;
+
+    async fn load(&self) -> Result<Reloaded<TaggerConfig>, LoadError> {
+        load(self.path.clone()).await
+    }
 }
 
 struct HeaderTagger;
@@ -124,7 +148,7 @@ let initial = load(path.clone()).await?;
 let server = Server::builder()
     .config(initial.server)
     .app_config(initial.app)
-    .reload_with(move || load(path.clone()))
+    .reload_with(FileLoader { path })
     .handler(HeaderTagger::new)
     .build()?;
 ```
