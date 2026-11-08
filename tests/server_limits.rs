@@ -1,4 +1,4 @@
-//! Resource limit and concurrency scenarios (SRV-050 to SRV-052, SRV-056,
+//! Resource limit and concurrency scenarios (SRV-050 to SRV-052, SRV-056, SRV-058,
 //! SRV-060, SRV-061, SRV-073) from `docs/testing/server.md`. SRV-053 to
 //! SRV-055 are unit tests of the accept loop.
 
@@ -239,5 +239,19 @@ async fn srv_073_status_counts_accepted_and_rejected_connections() {
     let status = server.handle.status();
     assert_eq!(status.connections_accepted, 3);
     assert_eq!(status.connections_rejected, 2);
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn srv_058_a_first_packet_reserves_no_room_before_negotiation() {
+    let server = TestServer::start_with(tight_memory(), ContinueAll).await;
+    let mut a = server.mta().await;
+    a.write_raw(&62_000u32.to_be_bytes()).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let mut b = server.mta().await;
+    b.negotiate().await;
+
+    assert!(a.closes().await);
     server.stop().await;
 }

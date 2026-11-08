@@ -35,12 +35,13 @@ pub enum Error {
     #[error("the connection was reset")]
     ConnectionReset,
 
-    /// A packet is longer than `per_connection_buffer`.
+    /// A packet is longer than `per_connection_buffer`, or the first packet
+    /// of a connection is longer than 1,024 bytes.
     #[error("a {length}-byte packet exceeds the {max}-byte limit")]
     FrameTooLarge {
         /// Length of the whole packet, length field included.
         length: usize,
-        /// The limit, `per_connection_buffer`.
+        /// The limit: `per_connection_buffer`, or 1,024 for the first packet.
         max: usize,
     },
 

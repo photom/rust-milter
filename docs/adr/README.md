@@ -16,6 +16,7 @@ Decisions that shape rust-milter's design and specification, with their context 
 | [0010](0010-builder-factory-type-parameter-and-loader-trait.md) | The builder keeps the handler factory in a type parameter and takes a loader trait | Accepted |
 | [0011](0011-the-disallowed-methods-run-stays-for-derive-code.md) | The disallowed-methods run stays for derive code | Accepted |
 | [0012](0012-no-file-descriptor-limit-setting.md) | rust-milter has no file descriptor limit setting | Accepted |
+| [0013](0013-the-first-packet-is-limited-to-1-kb.md) | The first packet of a connection is limited to 1 KB | Accepted |
 
 Conventions:
 - One file per decision, named `NNNN-short-title.md`, numbered in order.
