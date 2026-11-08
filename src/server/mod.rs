@@ -169,7 +169,11 @@ impl<H: Handler, A: Send + Sync + 'static, F> ServerBuilder<H, A, F> {
     where
         F: FnOnce(&HandlerContext<A>) -> H,
     {
-        self.config.validate()?;
+        if let Err(error) = self.config.validate() {
+            tracing::error!(field = error.setting(), error = %error, "Configuration error");
+            return Err(error.into());
+        }
+        tracing::info!(generation = FIRST_GENERATION, "Configuration loaded");
         let shutdown = CancellationToken::new();
         let counters = Arc::new(Counters::new(&self.config.bind_addresses));
         let (watch, publisher) = ConfigWatch::new(self.config, self.app);
@@ -668,7 +672,7 @@ fn log_close(
 }
 
 /// An error and its `source()` chain, joined by `: `.
-fn error_chain(error: &dyn std::error::Error) -> String {
+pub(crate) fn error_chain(error: &dyn std::error::Error) -> String {
     let mut text = error.to_string();
     let mut source = error.source();
     while let Some(cause) = source {

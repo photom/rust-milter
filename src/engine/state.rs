@@ -27,6 +27,29 @@ pub(crate) enum State {
     QuitNc = 14,
 }
 
+impl State {
+    /// The state's name in libmilter, for logs.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            State::Init => "ST_INIT",
+            State::Opts => "ST_OPTS",
+            State::Conn => "ST_CONN",
+            State::Helo => "ST_HELO",
+            State::Mail => "ST_MAIL",
+            State::Rcpt => "ST_RCPT",
+            State::Data => "ST_DATA",
+            State::Hdrs => "ST_HDRS",
+            State::Eohs => "ST_EOHS",
+            State::Body => "ST_BODY",
+            State::Endm => "ST_ENDM",
+            State::Quit => "ST_QUIT",
+            State::Abrt => "ST_ABRT",
+            State::Unkn => "ST_UNKN",
+            State::QuitNc => "ST_Q_NC",
+        }
+    }
+}
+
 const fn mask(states: &[State]) -> u16 {
     let mut bits = 0;
     let mut i = 0;

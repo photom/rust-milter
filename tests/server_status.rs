@@ -1,4 +1,4 @@
-//! Status and log scenarios (SRV-041, SRV-042, SRV-070 to SRV-072) from
+//! Status and log scenarios (SRV-041, SRV-042, SRV-070 to SRV-072, SRV-074 to SRV-079) from
 //! `docs/testing/server.md`.
 
 mod support;
@@ -213,4 +213,184 @@ fn position(order: &[String], message: &str) -> usize {
         }
     }
     panic!("no {message:?} in {order:?}");
+}
+
+#[tokio::test]
+async fn srv_074_logs_the_first_command_with_the_time_since_accept() {
+    let (logs, _guard) = Logs::capture();
+    let server = TestServer::start(ContinueAll).await;
+    let mut mta = server.mta().await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    mta.reach(Reach::Conn).await;
+    server.stop().await;
+
+    let first = logs.one("First command received");
+    assert_eq!(first.level, tracing::Level::DEBUG);
+    for field in ["conn_id", "remote_addr", "local_addr"] {
+        assert!(first.field(field).is_some(), "{field} in {first:?}");
+    }
+    // accept() returns a little after the fake MTA's connect, so the time
+    // from accept is a little below the 300 ms wait.
+    let waited: u64 = first.field("duration_ms").unwrap().parse().unwrap();
+    assert!((200..1_000).contains(&waited), "{waited} ms");
+}
+
+#[tokio::test]
+async fn srv_075_logs_each_command_as_active_and_each_wait_as_idle() {
+    let (logs, _guard) = Logs::capture();
+    let server = TestServer::start(ContinueAll).await;
+    let mut mta = server.mta().await;
+    mta.reach(Reach::Conn).await;
+    server.stop().await;
+
+    let mut seen = Vec::new();
+    for event in logs.all() {
+        if event.message == "Connection active" || event.message == "Connection idle" {
+            assert_eq!(event.level, tracing::Level::TRACE);
+            assert!(event.field("conn_id").is_some(), "{event:?}");
+            let state = event.field("state").unwrap().to_owned();
+            seen.push((event.message, state));
+        }
+    }
+    let expected = [
+        ("Connection active", "ST_INIT"),
+        ("Connection idle", "ST_OPTS"),
+        ("Connection active", "ST_OPTS"),
+        ("Connection idle", "ST_CONN"),
+    ];
+    let mut wanted = Vec::new();
+    for (message, state) in expected {
+        wanted.push((message.to_owned(), state.to_owned()));
+    }
+    assert_eq!(seen, wanted);
+}
+
+#[tokio::test]
+async fn srv_076_logs_draining_before_a_shutdown_closes_a_connection() {
+    let (logs, _guard) = Logs::capture();
+    let server = TestServer::start(ContinueAll).await;
+    let mut mta = server.mta().await;
+    mta.reach(Reach::Helo).await;
+
+    server.stop().await;
+    assert!(mta.closes().await);
+
+    let draining = logs.one("Connection draining");
+    assert_eq!(draining.level, tracing::Level::DEBUG);
+    assert!(draining.field("conn_id").is_some());
+    assert_eq!(draining.field("reason"), Some("server_shutdown"));
+    let mut order = Vec::new();
+    for event in logs.all() {
+        order.push(event.message);
+    }
+    assert!(position(&order, "Connection draining") < position(&order, "Connection closed"));
+}
+
+/// Waits 200 ms in `helo`, after logging that it started.
+#[derive(Clone, Default)]
+struct SlowHelo(support::Log);
+
+impl Handler for SlowHelo {
+    type Session = ();
+    type Message = ();
+
+    async fn helo(
+        &self,
+        _ctx: &mut SessionContext<Self>,
+        _name: &rust_milter::MilterText,
+    ) -> Result<ConnectDecision> {
+        self.0.push("helo");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        Ok(ConnectDecision::Continue)
+    }
+}
+
+/// The `operation` of the one "I/O error" log.
+fn io_error_operation(logs: &Logs) -> String {
+    let error = logs.one("I/O error");
+    assert_eq!(error.level, tracing::Level::DEBUG);
+    assert!(error.field("conn_id").is_some(), "{error:?}");
+    assert!(error.field("error").is_some(), "{error:?}");
+    error.field("operation").unwrap().to_owned()
+}
+
+#[tokio::test]
+async fn srv_077_logs_a_failed_read_and_a_failed_write() {
+    let (logs, _guard) = Logs::capture();
+    let server = TestServer::start(ContinueAll).await;
+    let mut mta = server.mta().await;
+    mta.reach(Reach::Helo).await;
+    mta.reset();
+    server.stop().await;
+    assert_eq!(io_error_operation(&logs), "read");
+    drop(_guard);
+
+    let (logs, _guard) = Logs::capture();
+    let handler = SlowHelo::default();
+    let started = handler.0.clone();
+    let server = TestServer::start(handler).await;
+    let mut mta = server.mta().await;
+    mta.reach(Reach::Conn).await;
+    mta.send(SMFIC_HELO, support::mta::strings(&["client.void.invalid"]))
+        .await;
+    started.wait_for("helo").await;
+    mta.reset();
+    server.stop().await;
+    assert_eq!(io_error_operation(&logs), "write");
+}
+
+#[tokio::test]
+async fn srv_078_logs_a_protocol_error_with_the_state() {
+    let (logs, _guard) = Logs::capture();
+    let server = TestServer::start(ContinueAll).await;
+    let mut mta = server.mta().await;
+    mta.reach(Reach::Helo).await;
+
+    mta.send(SMFIC_QUIT_NC, Bytes::new()).await;
+    assert!(mta.closes().await);
+    server.stop().await;
+
+    let error = logs.one("Protocol error");
+    assert_eq!(error.level, tracing::Level::WARN);
+    assert!(error.field("conn_id").is_some());
+    assert_eq!(error.field("details"), Some("ST_HELO"));
+    let text = error.field("error").unwrap();
+    assert!(text.contains("wrong state"), "{text}");
+}
+
+#[tokio::test]
+async fn srv_079_logs_whether_build_accepts_the_configuration() {
+    let (logs, _guard) = Logs::capture();
+    let lease = PortLease::acquire().await;
+    let valid = ServerConfig {
+        bind_addresses: vec![lease.v4()],
+        ..ServerConfig::default()
+    };
+    let invalid = ServerConfig {
+        backlog: 0,
+        ..valid.clone()
+    };
+
+    assert!(
+        Server::builder()
+            .config(valid)
+            .handler(ContinueAll::new)
+            .build()
+            .is_ok()
+    );
+    assert!(
+        Server::builder()
+            .config(invalid)
+            .handler(ContinueAll::new)
+            .build()
+            .is_err()
+    );
+
+    let loaded = logs.one("Configuration loaded");
+    assert_eq!(loaded.level, tracing::Level::INFO);
+    assert_eq!(loaded.field("generation"), Some("1"));
+    let error = logs.one("Configuration error");
+    assert_eq!(error.level, tracing::Level::ERROR);
+    assert_eq!(error.field("field"), Some("backlog"));
+    assert!(error.field("error").unwrap().contains("backlog"));
 }
