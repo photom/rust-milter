@@ -67,6 +67,11 @@ impl<H: Handler, A: Send + Sync + 'static> OnAccept<TcpStream> for Handoff<H, A>
         self.server
             .connection(stream, peer, self.address, &self.counts);
     }
+
+    fn failed(&mut self, error: &std::io::Error) {
+        let text = format!("cannot accept on {}: {error}", self.address);
+        self.server.shared.counters.listener_error(text);
+    }
 }
 
 /// The listener set. Only the reload coordinator changes it once the
