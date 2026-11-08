@@ -187,10 +187,13 @@ impl Default for KeepaliveConfig {
     serde(default, deny_unknown_fields)
 )]
 pub struct ShutdownConfig {
-    /// How long new connections are still accepted after a shutdown starts.
+    /// How long open connections are served as usual after a shutdown
+    /// starts. The listeners close at once; the grace period ends early when
+    /// no connection is open.
     #[cfg_attr(feature = "serde", serde(with = "file_format::duration"))]
     pub grace_period: Duration,
-    /// How long open sessions may take to finish.
+    /// How long open connections may take to finish after the grace period,
+    /// before the rest are closed by force.
     #[cfg_attr(feature = "serde", serde(with = "file_format::duration"))]
     pub drain_timeout: Duration,
 }
