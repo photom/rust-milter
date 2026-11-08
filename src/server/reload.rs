@@ -40,12 +40,49 @@ pub struct ReloadReport {
     pub bind_failures: Vec<(SocketAddr, String)>,
 }
 
-/// What a loader returns.
+/// The application's reload loader: it reads the new server and application
+/// configurations each time a reload runs, on `SIGHUP` or
+/// [`ServerHandle::reload`](crate::ServerHandle::reload). Register it with
+/// [`ServerBuilder::reload_with`](crate::ServerBuilder::reload_with).
+///
+/// The loader only reads and checks. rust-milter validates and applies what
+/// it returns, and can still reject the reload, so the loader must not
+/// change state that other code reads.
+pub trait ReloadLoader<A>: Send + Sync + 'static {
+    /// Why a load failed. The reload then fails with
+    /// [`ReloadError::Load`], which keeps this error as its source.
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    /// Reads the new configurations. Implement it as an `async fn`.
+    fn load(&self) -> impl Future<Output = Result<Reloaded<A>, Self::Error>> + Send;
+}
+
+/// What a loader returns, with its error boxed.
 pub(crate) type Loaded<A> = Result<Reloaded<A>, Box<dyn std::error::Error + Send + Sync>>;
 
-/// The application's reload loader.
-pub(crate) type Loader<A> =
-    Box<dyn Fn() -> Pin<Box<dyn Future<Output = Loaded<A>> + Send>> + Send + Sync>;
+/// The object-safe form of [`ReloadLoader`], so that the server can keep
+/// a loader of any type.
+pub(crate) trait DynLoader<A>: Send + Sync {
+    /// Runs [`ReloadLoader::load`] and boxes its error.
+    fn run(&self) -> Pin<Box<dyn Future<Output = Loaded<A>> + Send + '_>>;
+}
+
+impl<A: Send + 'static, L: ReloadLoader<A>> DynLoader<A> for L {
+    fn run(&self) -> Pin<Box<dyn Future<Output = Loaded<A>> + Send + '_>> {
+        Box::pin(load_boxed(self))
+    }
+}
+
+/// Runs `loader` and boxes its error.
+async fn load_boxed<A, L: ReloadLoader<A>>(loader: &L) -> Loaded<A> {
+    match ReloadLoader::load(loader).await {
+        Ok(reloaded) => Ok(reloaded),
+        Err(error) => Err(Box::new(error)),
+    }
+}
+
+/// The application's reload loader, as the server keeps it.
+pub(crate) type Loader<A> = Box<dyn DynLoader<A>>;
 
 /// The result of one reload request.
 pub(super) type Outcome = Result<ReloadReport, ReloadError>;
@@ -144,7 +181,7 @@ impl<A: Send + 'static, T: Target<A>> Coordinator<A, T> {
         let loaded = tokio::select! {
             biased;
             () = self.stop.cancelled() => return Err(ReloadError::ShuttingDown),
-            loaded = loader() => loaded,
+            loaded = loader.run() => loaded,
         };
         match loaded {
             Ok(new) => self.apply(new).await,
@@ -282,20 +319,22 @@ mod tests {
         }
 
         fn loader(&self) -> Loader<()> {
-            let gated = self.clone();
-            Box::new(move || {
-                let gated = gated.clone();
-                Box::pin(async move {
-                    *gated.calls.lock().unwrap() += 1;
-                    gated.gate.acquire().await.unwrap().forget();
-                    let server = gated.results.lock().unwrap().pop_front().unwrap();
-                    Ok(Reloaded { server, app: () })
-                })
-            })
+            Box::new(self.clone())
         }
 
         fn calls(&self) -> usize {
             *self.calls.lock().unwrap()
+        }
+    }
+
+    impl ReloadLoader<()> for Gated {
+        type Error = std::io::Error;
+
+        async fn load(&self) -> Result<Reloaded<()>, std::io::Error> {
+            *self.calls.lock().unwrap() += 1;
+            self.gate.acquire().await.unwrap().forget();
+            let server = self.results.lock().unwrap().pop_front().unwrap();
+            Ok(Reloaded { server, app: () })
         }
     }
 
