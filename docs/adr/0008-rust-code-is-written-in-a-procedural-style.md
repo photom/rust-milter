@@ -1,6 +1,6 @@
 # ADR 0008: Rust code is written in a procedural style
 
-- Status: Accepted
+- Status: Accepted; the exception for `Factory` and `Loader`, and the allowance of function pointers, are superseded by [ADR 0009](0009-no-stored-closures-or-function-pointers.md)
 - Date: 2026-11-05
 - Affects: all Rust code in the repository: the library, the tests, the test support code, the interop crate, and the examples
 
