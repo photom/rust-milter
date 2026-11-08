@@ -163,23 +163,20 @@ impl ServerConfig {
         if self.socket_options.ipv6_only {
             return Ok(());
         }
-        let wildcard = self
-            .bind_addresses
-            .iter()
-            .filter(|a| a.ip() == std::net::Ipv6Addr::UNSPECIFIED);
-        for v6 in wildcard {
-            let clash = self
-                .bind_addresses
-                .iter()
-                .find(|a| a.is_ipv4() && a.port() == v6.port());
-            if let Some(v4) = clash {
-                return Err(ConfigError::Inconsistent {
-                    rule: "ipv6_only",
-                    detail: format!(
-                        "{v6} also receives IPv4 connections while ipv6_only is false, \
-                         so {v4} cannot bind; set ipv6_only to true or remove {v4}"
-                    ),
-                });
+        for v6 in &self.bind_addresses {
+            if v6.ip() != std::net::Ipv6Addr::UNSPECIFIED {
+                continue;
+            }
+            for v4 in &self.bind_addresses {
+                if v4.is_ipv4() && v4.port() == v6.port() {
+                    return Err(ConfigError::Inconsistent {
+                        rule: "ipv6_only",
+                        detail: format!(
+                            "{v6} also receives IPv4 connections while ipv6_only is false, \
+                             so {v4} cannot bind; set ipv6_only to true or remove {v4}"
+                        ),
+                    });
+                }
             }
         }
         Ok(())

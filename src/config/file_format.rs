@@ -16,15 +16,22 @@ pub(super) mod duration {
         value: &Duration,
         serializer: S,
     ) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&text::format_duration(*value).map_err(S::Error::custom)?)
+        match text::format_duration(*value) {
+            Ok(text) => serializer.serialize_str(&text),
+            Err(reason) => Err(S::Error::custom(reason)),
+        }
     }
 
     pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Duration, D::Error> {
         let value = String::deserialize(deserializer)?;
-        text::parse_duration(&value)
-            .map_err(|reason| D::Error::custom(format!("invalid duration {value:?}: {reason}")))
+        match text::parse_duration(&value) {
+            Ok(duration) => Ok(duration),
+            Err(reason) => Err(D::Error::custom(format!(
+                "invalid duration {value:?}: {reason}"
+            ))),
+        }
     }
 }
 
@@ -53,13 +60,16 @@ pub(super) mod bind_addresses {
     pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Vec<SocketAddr>, D::Error> {
-        Vec::<String>::deserialize(deserializer)?
-            .iter()
-            .map(|text| {
-                ServerConfig::parse_bind_address(text)
-                    .map_err(|error| D::Error::custom(format!("bind address {text:?}: {error}")))
-            })
-            .collect()
+        let mut addresses = Vec::new();
+        for text in Vec::<String>::deserialize(deserializer)? {
+            match ServerConfig::parse_bind_address(&text) {
+                Ok(address) => addresses.push(address),
+                Err(error) => {
+                    return Err(D::Error::custom(format!("bind address {text:?}: {error}")));
+                }
+            }
+        }
+        Ok(addresses)
     }
 }
 
@@ -109,7 +119,9 @@ pub(super) mod keepalive {
         }
 
         fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
-            KeepaliveConfig::deserialize(de::value::MapAccessDeserializer::new(map)).map(Some)
+            let keepalive =
+                KeepaliveConfig::deserialize(de::value::MapAccessDeserializer::new(map))?;
+            Ok(Some(keepalive))
         }
     }
 }

@@ -129,3 +129,30 @@ fn sty_024_a_listed_file_with_nothing_left_to_convert_is_a_problem() {
     assert_eq!(problems.len(), 1, "{problems:?}");
     assert!(problems[0].starts_with("src/clean.rs "), "{problems:?}");
 }
+
+#[test]
+fn sty_026_a_call_that_a_derive_generates_is_not_a_problem() {
+    let source = "#[derive(Debug)]\n\
+                  #[cfg_attr(\n\
+                  \x20   feature = \"serde\",\n\
+                  \x20   derive(serde::Deserialize)\n\
+                  )]\n\
+                  struct A {\n\
+                  \x20   b: u8,\n\
+                  }\n";
+    let root = tree(
+        "sty-026",
+        &[("src/a.rs", source), ("src/listed.rs", source)],
+    );
+    let output = "src/a.rs:1:10: warning: use of a disallowed method `std::option::Option::map`\n\
+                  src/a.rs:4:12: warning: use of a disallowed method `std::option::Option::map`\n\
+                  src/a.rs:7:5: warning: use of a disallowed method `std::option::Option::map`\n\
+                  src/listed.rs:4:12: warning: use of a disallowed method `std::option::Option::map`\n";
+    let exempt = ["src/listed.rs".to_owned()];
+
+    let problems = method_problems(&root, output, &exempt).unwrap();
+
+    assert_eq!(problems.len(), 2, "{problems:?}");
+    assert!(problems[0].starts_with("src/a.rs:7:5: "), "{problems:?}");
+    assert!(problems[1].starts_with("src/listed.rs "), "{problems:?}");
+}

@@ -27,131 +27,206 @@ impl ReloadClass {
     }
 }
 
-/// One setting: its path, its class, and whether two configurations differ
-/// in it.
-pub(crate) struct Setting {
-    pub(crate) name: &'static str,
-    pub(crate) class: ReloadClass,
-    differs: fn(&ServerConfig, &ServerConfig) -> bool,
-}
-
-impl Setting {
-    pub(crate) fn differs(&self, old: &ServerConfig, new: &ServerConfig) -> bool {
-        (self.differs)(old, new)
-    }
-}
-
-/// Whether two configurations differ in the value `$get` reads.
-macro_rules! setting {
-    ($name:literal, $class:ident, |$config:ident| $get:expr) => {
-        Setting {
-            name: $name,
-            class: ReloadClass::$class,
-            differs: |old, new| {
-                let $config = old;
-                let old = $get;
-                let $config = new;
-                old != $get
-            },
-        }
-    };
-}
-
-/// Whether two configurations that both turn keepalive on differ in the
-/// value `$get` reads. Turning keepalive on or off counts as a change of
-/// `socket_options.keepalive` alone.
-macro_rules! keepalive {
-    ($name:literal, |$keepalive:ident| $get:expr) => {
-        Setting {
-            name: $name,
-            class: ReloadClass::NewConnections,
-            differs: |old, new| match (&old.socket_options.keepalive, &new.socket_options.keepalive)
-            {
-                (Some(old), Some(new)) => {
-                    let $keepalive: &KeepaliveConfig = old;
-                    let old = $get;
-                    let $keepalive: &KeepaliveConfig = new;
-                    old != $get
-                }
-                _ => false,
-            },
-        }
-    };
+/// One setting of [`ServerConfig`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Setting {
+    BindAddresses,
+    BindMode,
+    Backlog,
+    MaxConnections,
+    TimeoutsConnect,
+    TimeoutsRead,
+    TimeoutsWrite,
+    TimeoutsIdle,
+    TcpNodelay,
+    Keepalive,
+    RecvBufferSize,
+    SendBufferSize,
+    ReuseAddr,
+    ReusePort,
+    Ipv6Only,
+    KeepaliveTime,
+    KeepaliveInterval,
+    KeepaliveRetries,
+    GracePeriod,
+    DrainTimeout,
+    MaxFds,
+    MaxMemory,
+    PerConnectionBuffer,
+    TraceCommands,
 }
 
 /// Every setting of [`ServerConfig`], in the order of configuration.md.
-pub(crate) static SETTINGS: &[Setting] = &[
-    setting!("bind_addresses", Immediate, |c| &c.bind_addresses),
-    setting!("bind_mode", Immediate, |c| c.bind_mode),
-    setting!("backlog", Restart, |c| c.backlog),
-    setting!("max_connections", Immediate, |c| c.max_connections),
-    setting!("timeouts.connect", NewConnections, |c| c.timeouts.connect),
-    setting!("timeouts.read", NewConnections, |c| c.timeouts.read),
-    setting!("timeouts.write", NewConnections, |c| c.timeouts.write),
-    setting!("timeouts.idle", NewConnections, |c| c.timeouts.idle),
-    setting!("socket_options.tcp_nodelay", NewConnections, |c| {
-        c.socket_options.tcp_nodelay
-    }),
-    setting!("socket_options.keepalive", NewConnections, |c| {
-        c.socket_options.keepalive.is_some()
-    }),
-    setting!("socket_options.recv_buffer_size", NewConnections, |c| {
-        c.socket_options.recv_buffer_size
-    }),
-    setting!("socket_options.send_buffer_size", NewConnections, |c| {
-        c.socket_options.send_buffer_size
-    }),
-    setting!("socket_options.reuse_addr", Restart, |c| {
-        c.socket_options.reuse_addr
-    }),
-    setting!("socket_options.reuse_port", Restart, |c| {
-        c.socket_options.reuse_port
-    }),
-    setting!("socket_options.ipv6_only", Restart, |c| {
-        c.socket_options.ipv6_only
-    }),
-    keepalive!("socket_options.keepalive.time", |k| k.time),
-    keepalive!("socket_options.keepalive.interval", |k| k.interval),
-    keepalive!("socket_options.keepalive.retries", |k| k.retries),
-    setting!("shutdown.grace_period", Immediate, |c| {
-        c.shutdown.grace_period
-    }),
-    setting!("shutdown.drain_timeout", Immediate, |c| {
-        c.shutdown.drain_timeout
-    }),
-    setting!("resource_limits.max_fds", Immediate, |c| {
-        c.resource_limits.max_fds
-    }),
-    setting!("resource_limits.max_memory", Immediate, |c| {
-        c.resource_limits.max_memory
-    }),
-    setting!(
-        "resource_limits.per_connection_buffer",
-        NewConnections,
-        |c| { c.resource_limits.per_connection_buffer }
-    ),
-    setting!("telemetry.trace_commands", NewConnections, |c| {
-        c.telemetry.trace_commands
-    }),
+pub(crate) const SETTINGS: [Setting; 24] = [
+    Setting::BindAddresses,
+    Setting::BindMode,
+    Setting::Backlog,
+    Setting::MaxConnections,
+    Setting::TimeoutsConnect,
+    Setting::TimeoutsRead,
+    Setting::TimeoutsWrite,
+    Setting::TimeoutsIdle,
+    Setting::TcpNodelay,
+    Setting::Keepalive,
+    Setting::RecvBufferSize,
+    Setting::SendBufferSize,
+    Setting::ReuseAddr,
+    Setting::ReusePort,
+    Setting::Ipv6Only,
+    Setting::KeepaliveTime,
+    Setting::KeepaliveInterval,
+    Setting::KeepaliveRetries,
+    Setting::GracePeriod,
+    Setting::DrainTimeout,
+    Setting::MaxFds,
+    Setting::MaxMemory,
+    Setting::PerConnectionBuffer,
+    Setting::TraceCommands,
 ];
+
+impl Setting {
+    /// The setting's path in configuration.md.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Setting::BindAddresses => "bind_addresses",
+            Setting::BindMode => "bind_mode",
+            Setting::Backlog => "backlog",
+            Setting::MaxConnections => "max_connections",
+            Setting::TimeoutsConnect => "timeouts.connect",
+            Setting::TimeoutsRead => "timeouts.read",
+            Setting::TimeoutsWrite => "timeouts.write",
+            Setting::TimeoutsIdle => "timeouts.idle",
+            Setting::TcpNodelay => "socket_options.tcp_nodelay",
+            Setting::Keepalive => "socket_options.keepalive",
+            Setting::RecvBufferSize => "socket_options.recv_buffer_size",
+            Setting::SendBufferSize => "socket_options.send_buffer_size",
+            Setting::ReuseAddr => "socket_options.reuse_addr",
+            Setting::ReusePort => "socket_options.reuse_port",
+            Setting::Ipv6Only => "socket_options.ipv6_only",
+            Setting::KeepaliveTime => "socket_options.keepalive.time",
+            Setting::KeepaliveInterval => "socket_options.keepalive.interval",
+            Setting::KeepaliveRetries => "socket_options.keepalive.retries",
+            Setting::GracePeriod => "shutdown.grace_period",
+            Setting::DrainTimeout => "shutdown.drain_timeout",
+            Setting::MaxFds => "resource_limits.max_fds",
+            Setting::MaxMemory => "resource_limits.max_memory",
+            Setting::PerConnectionBuffer => "resource_limits.per_connection_buffer",
+            Setting::TraceCommands => "telemetry.trace_commands",
+        }
+    }
+
+    /// When a changed value takes effect.
+    pub(crate) fn class(self) -> ReloadClass {
+        match self {
+            Setting::BindAddresses
+            | Setting::BindMode
+            | Setting::MaxConnections
+            | Setting::GracePeriod
+            | Setting::DrainTimeout
+            | Setting::MaxFds
+            | Setting::MaxMemory => ReloadClass::Immediate,
+            Setting::TimeoutsConnect
+            | Setting::TimeoutsRead
+            | Setting::TimeoutsWrite
+            | Setting::TimeoutsIdle
+            | Setting::TcpNodelay
+            | Setting::Keepalive
+            | Setting::RecvBufferSize
+            | Setting::SendBufferSize
+            | Setting::KeepaliveTime
+            | Setting::KeepaliveInterval
+            | Setting::KeepaliveRetries
+            | Setting::PerConnectionBuffer
+            | Setting::TraceCommands => ReloadClass::NewConnections,
+            Setting::Backlog | Setting::ReuseAddr | Setting::ReusePort | Setting::Ipv6Only => {
+                ReloadClass::Restart
+            }
+        }
+    }
+
+    /// Whether `old` and `new` differ in this setting. Turning keepalive on
+    /// or off counts as a change of `socket_options.keepalive` alone, so the
+    /// keepalive fields differ only when both configurations turn it on.
+    pub(crate) fn differs(self, old: &ServerConfig, new: &ServerConfig) -> bool {
+        match self {
+            Setting::BindAddresses => old.bind_addresses != new.bind_addresses,
+            Setting::BindMode => old.bind_mode != new.bind_mode,
+            Setting::Backlog => old.backlog != new.backlog,
+            Setting::MaxConnections => old.max_connections != new.max_connections,
+            Setting::TimeoutsConnect => old.timeouts.connect != new.timeouts.connect,
+            Setting::TimeoutsRead => old.timeouts.read != new.timeouts.read,
+            Setting::TimeoutsWrite => old.timeouts.write != new.timeouts.write,
+            Setting::TimeoutsIdle => old.timeouts.idle != new.timeouts.idle,
+            Setting::TcpNodelay => old.socket_options.tcp_nodelay != new.socket_options.tcp_nodelay,
+            Setting::Keepalive => {
+                old.socket_options.keepalive.is_some() != new.socket_options.keepalive.is_some()
+            }
+            Setting::RecvBufferSize => {
+                old.socket_options.recv_buffer_size != new.socket_options.recv_buffer_size
+            }
+            Setting::SendBufferSize => {
+                old.socket_options.send_buffer_size != new.socket_options.send_buffer_size
+            }
+            Setting::ReuseAddr => old.socket_options.reuse_addr != new.socket_options.reuse_addr,
+            Setting::ReusePort => old.socket_options.reuse_port != new.socket_options.reuse_port,
+            Setting::Ipv6Only => old.socket_options.ipv6_only != new.socket_options.ipv6_only,
+            Setting::KeepaliveTime => match both_keepalive(old, new) {
+                Some((old, new)) => old.time != new.time,
+                None => false,
+            },
+            Setting::KeepaliveInterval => match both_keepalive(old, new) {
+                Some((old, new)) => old.interval != new.interval,
+                None => false,
+            },
+            Setting::KeepaliveRetries => match both_keepalive(old, new) {
+                Some((old, new)) => old.retries != new.retries,
+                None => false,
+            },
+            Setting::GracePeriod => old.shutdown.grace_period != new.shutdown.grace_period,
+            Setting::DrainTimeout => old.shutdown.drain_timeout != new.shutdown.drain_timeout,
+            Setting::MaxFds => old.resource_limits.max_fds != new.resource_limits.max_fds,
+            Setting::MaxMemory => old.resource_limits.max_memory != new.resource_limits.max_memory,
+            Setting::PerConnectionBuffer => {
+                old.resource_limits.per_connection_buffer
+                    != new.resource_limits.per_connection_buffer
+            }
+            Setting::TraceCommands => old.telemetry.trace_commands != new.telemetry.trace_commands,
+        }
+    }
+}
+
+/// The keepalive settings of both configurations, when both turn it on.
+fn both_keepalive<'a>(
+    old: &'a ServerConfig,
+    new: &'a ServerConfig,
+) -> Option<(&'a KeepaliveConfig, &'a KeepaliveConfig)> {
+    match (&old.socket_options.keepalive, &new.socket_options.keepalive) {
+        (Some(old), Some(new)) => Some((old, new)),
+        _ => None,
+    }
+}
 
 /// The names of the settings in which `new` differs from `old`.
 pub(crate) fn changed(old: &ServerConfig, new: &ServerConfig) -> Vec<&'static str> {
-    SETTINGS
-        .iter()
-        .filter(|setting| setting.differs(old, new))
-        .map(|setting| setting.name)
-        .collect()
+    let mut names = Vec::new();
+    for setting in SETTINGS {
+        if setting.differs(old, new) {
+            names.push(setting.name());
+        }
+    }
+    names
 }
 
 /// The names of the settings that require a restart and in which `new`
 /// differs from `old`.
 pub(crate) fn requires_restart(old: &ServerConfig, new: &ServerConfig) -> Vec<&'static str> {
-    SETTINGS
-        .iter()
-        .filter(|setting| setting.class == ReloadClass::Restart && setting.differs(old, new))
-        .map(|setting| setting.name)
-        .collect()
+    let mut names = Vec::new();
+    for setting in SETTINGS {
+        if setting.class() == ReloadClass::Restart && setting.differs(old, new) {
+            names.push(setting.name());
+        }
+    }
+    names
 }
 
 #[cfg(test)]
@@ -180,7 +255,10 @@ mod tests {
                 };
                 continue;
             }
-            let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+            let mut cells: Vec<&str> = Vec::new();
+            for cell in line.split('|') {
+                cells.push(cell.trim());
+            }
             // | field | type | default | valid values | reload class |
             if cells.len() != 7 || !cells[1].starts_with('`') {
                 continue;
@@ -197,10 +275,10 @@ mod tests {
 
     #[test]
     fn cfg_060_every_setting_has_its_documented_reload_class() {
-        let code: Vec<(String, String)> = SETTINGS
-            .iter()
-            .map(|setting| (setting.name.to_owned(), setting.class.name().to_owned()))
-            .collect();
+        let mut code = Vec::new();
+        for setting in SETTINGS {
+            code.push((setting.name().to_owned(), setting.class().name().to_owned()));
+        }
 
         assert_eq!(code, documented());
     }
