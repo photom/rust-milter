@@ -102,7 +102,7 @@ fn sty_005_every_fn_trait_bound_is_reported() {
 }
 
 #[test]
-fn sty_006_a_fn_bound_of_a_builder_item_is_not_reported() {
+fn sty_006_only_the_builder_methods_may_have_a_fn_bound() {
     let source = "type Factory<H, A> = Box<dyn FnOnce(&HandlerContext<A>) -> H>;\n\
                   impl<A> ServerBuilder<(), A> {\n\
                   \x20   pub fn handler<H, F>(self, factory: F) -> ServerBuilder<H, A>\n\
@@ -114,7 +114,10 @@ fn sty_006_a_fn_bound_of_a_builder_item_is_not_reported() {
 
     assert_eq!(
         findings("src/server/mod.rs", source),
-        [(7, Kind::FnBound("Fn".to_owned()))]
+        [
+            (1, Kind::FnBound("FnOnce".to_owned())),
+            (7, Kind::FnBound("Fn".to_owned()))
+        ]
     );
 }
 
@@ -145,4 +148,33 @@ fn sty_007_an_allow_or_expect_of_disallowed_methods_is_detected() {
     );
     assert!(!scan("src/a.rs", other).unwrap().allows_disallowed_methods);
     assert!(!scan("src/a.rs", without).unwrap().allows_disallowed_methods);
+}
+
+#[test]
+fn sty_008_every_function_pointer_type_is_reported() {
+    let source = "fn a(f: fn(u8) -> u8) {}\n\
+                  struct B { check: fn(&str) -> bool }\n\
+                  type C = fn();\n\
+                  fn d() -> Vec<fn(u8)> { todo!() }\n\
+                  fn e() { let table: [(u8, fn(u8)); 0] = []; }\n";
+
+    assert_eq!(
+        findings("src/a.rs", source),
+        [
+            (1, Kind::FnPointer),
+            (2, Kind::FnPointer),
+            (3, Kind::FnPointer),
+            (4, Kind::FnPointer),
+            (5, Kind::FnPointer),
+        ]
+    );
+}
+
+#[test]
+fn sty_008_a_function_item_is_not_a_function_pointer() {
+    let source = "fn a(x: u8) -> u8 { x }\n\
+                  trait B { fn b(&self); }\n\
+                  impl B for u8 { fn b(&self) {} }\n";
+
+    assert_eq!(findings("src/a.rs", source), []);
 }
