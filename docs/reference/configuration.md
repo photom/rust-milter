@@ -61,7 +61,7 @@ Every setting belongs to one of three classes.
 
 With Sendmail and Postfix one milter connection lasts one SMTP session, so a `new_connections` change reaches all traffic within one SMTP session of the reload.
 
-The four `ServerConfig` settings of class `restart` are read only when a listener is created, and a running listener cannot take a new value. A reload that changes one of them fails even if it also adds or removes addresses, and `RestartRequired` names every such setting that changed ([ADR 0007](../adr/0007-a-reload-that-changes-a-restart-setting-fails.md)). To apply the file, restart the process, or revert those settings and reload.
+The four `ServerConfig` settings of class `restart` are read only when a listener is created, and a running listener cannot take a new value. A reload that changes one of them fails even if it also adds or removes addresses, and `RestartRequired` names every such setting that changed ([ADR 0016](../adr/0016-a-reload-closes-no-connection-and-fails-on-a-restart-setting.md)). To apply the file, restart the process, or revert those settings and reload.
 
 ## Settings that need a restart
 
@@ -89,7 +89,7 @@ The reasons behind the reload classes are explained in [Configuration snapshots 
 | `telemetry.trace_commands` | `new_connections` |
 | Application configuration | `immediate` publication; handlers choose when to read it |
 
-Lowering `max_connections` below the current count closes no open connection. New connections are closed at once until the count drops below the new limit ([ADR 0005](../adr/0005-reload-closes-no-connection-and-rebinds-no-listener.md)).
+Lowering `max_connections` below the current count closes no open connection. New connections are closed at once until the count drops below the new limit ([ADR 0016](../adr/0016-a-reload-closes-no-connection-and-fails-on-a-restart-setting.md)).
 
 ## ServerConfig reference
 
