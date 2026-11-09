@@ -357,7 +357,7 @@ Two separate state machines track each connection:
 | Transport | `CONNECTED`, `IDLE`, `ACTIVE`, `DRAINING`, `ERROR`, `CLOSED`, driven by socket events, timeouts, and shutdown | [tcp-server.md](../reference/tcp-server.md#connection-lifecycle) |
 | Protocol | `ST_INIT` to `ST_QUIT`, driven by Milter commands, as libmilter defines them | [milter-protocol.md](../reference/milter-protocol.md#protocol-states) |
 
-The Connection component owns the transport state. The protocol engine owns the protocol state and validates every command against it. For a command in a wrong state it follows libmilter where libmilter's behavior works: it recovers for `SMFIC_HELO`, `SMFIC_MAIL`, and `SMFIC_UNKNOWN`, and ignores `SMFIC_ABORT` and `SMFIC_QUIT`. Where libmilter would ignore a command and leave the MTA waiting for a reply, including `SMFIC_QUIT_NC`, it closes the connection ([ADR 0001](../adr/0001-commands-in-wrong-state-recover-like-libmilter-or-close.md)). Handlers never see protocol state.
+The Connection component owns the transport state. The protocol engine owns the protocol state and validates every command against it. For a command in a wrong state it follows libmilter where libmilter's behavior works: it recovers for `SMFIC_HELO`, `SMFIC_MAIL`, and `SMFIC_UNKNOWN`, ignores `SMFIC_ABORT`, and ends the session on `SMFIC_QUIT` in any state ([ADR 0015](../adr/0015-smfic-quit-ends-the-session-in-any-state.md)). Where libmilter would ignore a command and leave the MTA waiting for a reply, including `SMFIC_QUIT_NC`, it closes the connection ([ADR 0001](../adr/0001-commands-in-wrong-state-recover-like-libmilter-or-close.md)). Handlers never see protocol state.
 
 ## Resource management
 
