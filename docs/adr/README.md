@@ -4,7 +4,7 @@ Decisions that shape rust-milter's design and specification, with their context 
 
 | ADR | Title | Status |
 |-----|-------|--------|
-| [0001](0001-commands-in-wrong-state-recover-like-libmilter-or-close.md) | Commands in a wrong state recover like libmilter, or close the connection | Accepted; the `SMFIC_QUIT` decision is superseded by ADR 0015 |
+| [0001](0001-commands-in-wrong-state-recover-like-libmilter-or-close.md) | Commands in a wrong state recover like libmilter, or close the connection | Accepted |
 | [0002](0002-library-runs-the-protocol-handlers-decide.md) | The library runs the Milter protocol; handlers make decisions | Accepted |
 | [0003](0003-never-record-the-smtp-client-address.md) | rust-milter never records the SMTP client's address | Accepted |
 | [0004](0004-metrics-come-from-opentelemetry-and-status.md) | Metrics come from OpenTelemetry and status(), with no collector trait | Accepted |
@@ -18,10 +18,9 @@ Decisions that shape rust-milter's design and specification, with their context 
 | [0012](0012-no-file-descriptor-limit-setting.md) | rust-milter has no file descriptor limit setting | Accepted |
 | [0013](0013-the-first-packet-is-limited-to-1-kb.md) | The first packet of a connection is limited to 1 KB | Accepted |
 | [0014](0014-stored-macros-count-against-the-connections-memory.md) | Stored macros count against the connection's memory | Accepted |
-| [0015](0015-smfic-quit-ends-the-session-in-any-state.md) | SMFIC_QUIT ends the session in any state | Accepted |
 
 Conventions:
 - One file per decision, named `NNNN-short-title.md`, numbered in order.
 - Sections: status and date, context, options considered, decision, consequences, references.
 - Status is `Proposed`, `Accepted`, `Superseded by ADR NNNN`, or `Deprecated`.
-- An accepted record is not rewritten. A changed decision gets a new ADR, and the old one is marked superseded.
+- When a later decision contradicts an accepted record, the record itself is corrected, and its date line says when and why. A new ADR is for a decision that contradicts none.
