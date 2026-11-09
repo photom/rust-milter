@@ -107,11 +107,11 @@ Each listener accepts TCP connections from its own address. The server spawns on
 
 ### Async runtime
 
-The server runs on a Tokio multi-threaded runtime. The application creates the runtime, for example with `#[tokio::main]`, and chooses its settings; rust-milter does not build one.
+The server runs on the Tokio runtime that the application creates, for example with `#[tokio::main]`; rust-milter does not build one. It works on the multi-threaded and on the current-thread runtime. The multi-threaded one spreads the connections over the CPU cores and suits production.
 
 | Setting | Tokio default | Set by |
 |---------|---------------|--------|
-| Runtime type | multi-threaded with `#[tokio::main]` | the application; rust-milter requires the multi-threaded runtime |
+| Runtime type | multi-threaded with `#[tokio::main]` | the application; both types work, and production should use the multi-threaded one |
 | Worker threads | number of CPU cores | the application |
 | I/O driver | epoll (Linux), kqueue (macOS, BSD) | Tokio |
 | Thread stack size | 2 MiB | the application |

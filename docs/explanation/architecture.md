@@ -324,8 +324,8 @@ sequenceDiagram
 
 ### Tasks
 
-The library runs on the Tokio multi-threaded runtime that the application creates:
-- one worker thread per CPU core by default; the application sets the number on its runtime
+The library runs on the Tokio runtime that the application creates. Both runtime types work, and the multi-threaded one is the usual choice:
+- on the multi-threaded runtime, one worker thread per CPU core by default; the application sets the number on its runtime
 - one accept task per listener
 - one task per connection
 - one reload coordinator task and one shutdown coordinator task
