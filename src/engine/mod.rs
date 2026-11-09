@@ -298,7 +298,7 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
         let command = Command::from_frame(frame)?;
 
         // `SMFIC_QUIT` ends the session in any state, as in libmilter, where
-        // it ends the command loop even when it does not fit (ADR 0015).
+        // it ends the command loop even when it does not fit (ADR 0001).
         if let Command::Quit = command {
             self.end(SessionEnd::Quit).await;
             return Ok(Flow::Close);
