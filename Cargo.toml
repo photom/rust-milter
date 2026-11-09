@@ -25,6 +25,8 @@ workspace = true
 
 [dependencies]
 bytes = "1"
+# FutureExt::catch_unwind, which takes no closure (ADR 0018).
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 opentelemetry = { version = "0.33", default-features = false, features = ["metrics"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 socket2 = { version = "0.6", features = ["all"] }
