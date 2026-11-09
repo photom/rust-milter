@@ -51,7 +51,7 @@ The public API of the rust-milter server library: its types, traits, errors, and
 | `ReplyCode` | Handler | A validated custom SMTP reply |
 | `SessionEnd` | Handler | Why an SMTP session ended |
 | `ConnectionInfo` | I/O | Read-only facts about an MTA connection: ID, addresses, accept time |
-| `Frame` | Protocol | Milter protocol frame (used by the milter client sample in `examples/` and by tests) |
+| `Frame` | Protocol | Milter protocol frame (used by tests, and by the planned milter client sample) |
 | `Command` | Protocol | Commands from MTA to milter (`SMFIC_*`) |
 | `AddressFamily` | Protocol | The SMTP client's address family in `Command::Connect` (`SMFIA_*`) |
 | `Reply` | Protocol | Replies from milter to MTA (`SMFIR_*`) |
@@ -359,7 +359,7 @@ Size: the whole packet (4 + 1 + data length) must fit in the connection's `per_c
 | `parse(&mut BytesMut, max)` | Remove and return one frame from the buffer |
 | `write_to(&mut BytesMut)` | Serialize the frame |
 
-Fields are public and the type is immutable. Thread safety: `Send + Sync`.
+Both fields are public. Thread safety: `Send + Sync`.
 
 ## Command
 
@@ -416,7 +416,7 @@ The enum has no variants for `SMFIR_SHUTDOWN`, `SMFIR_CONN_FAIL`, or `SMFIR_SETS
 
 Text fields are `String`: the milter writes them, so they are always valid UTF-8.
 
-`Reply` is the wire-level type, used by the milter client sample in `examples/` and by tests; handlers use the decision types and `ReplyCode` instead. `Reply::to_frame()` validates before encoding, and returns `Error::InvalidReply` on a failed check:
+`Reply` is the wire-level type, used by tests and by the planned milter client sample; handlers use the decision types and `ReplyCode` instead. `Reply::to_frame()` validates before encoding, and returns `Error::InvalidReply` on a failed check:
 - `ReplyCode` text: a 4xx or 5xx code, the multi-line rules from [milter-protocol.md](milter-protocol.md#multi-line-reply-handling), and every literal `%` already written as `%%`
 - header names in `AddHeader` and `InsertHeader`: not empty, printable ASCII (33 to 126), and no colon, as RFC 5322 defines a field name. `ChangeHeader` names a header the MTA delivered, which can hold non-ASCII bytes, so its name only must not be empty or hold a colon, whitespace, or control characters
 - header values: no CR, and LF only to fold the value, followed by a space or tab and more than whitespace; any other line break would start another header or end the header block
@@ -624,7 +624,7 @@ Reading the configuration costs one `Arc` clone at accept. Handlers reading `Con
 
 ## Usage constraints
 
-Runtime: Tokio, multi-threaded. The application creates the runtime. Other runtimes are not supported.
+Runtime: Tokio, created by the application. Both the multi-threaded and the current-thread runtime work; use the multi-threaded one in production, so that connections run on every core. Other async runtimes are not supported.
 
 Toolchain and platforms:
 - Rust 1.85 or later, edition 2024; the crate declares `rust-version`
