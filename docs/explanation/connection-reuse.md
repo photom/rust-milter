@@ -45,7 +45,7 @@ Closing the connection keeps the rule small. `SMFIC_QUIT_NC` is valid exactly wh
 
 The same reasoning covers every other command that libmilter would drop while the MTA waits for a reply, such as `SMFIC_RCPT` before any `SMFIC_MAIL`: the server closes the connection. Commands that libmilter recovers from, such as `SMFIC_MAIL` in the middle of a message, recover the same way in rust-milter.
 
-The decision is recorded in [ADR 0001](../adr/0001-commands-in-wrong-state-recover-like-libmilter-or-close.md).
+The decision is recorded in [ADR 0015](../adr/0015-commands-in-wrong-state-follow-libmilter-or-close.md).
 
 The library enforces this rule itself. Its protocol engine runs the whole conversation, as libmilter's does, so it knows the protocol state without help from the handler ([ADR 0002](../adr/0002-library-runs-the-protocol-handlers-decide.md)). Handler authors never deal with `SMFIC_QUIT_NC` at all: when a session ends this way, the engine calls `session_end` and drops the session's state.
 

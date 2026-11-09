@@ -117,7 +117,7 @@ The protocol engine runs the Milter conversation for each connection, as libmilt
 
 Responsibilities:
 - negotiate options: protocol version (2 to 6), action flags from `Handler::actions()`, protocol flags from `Handler::events()`
-- track the protocol state with libmilter's transition rules, recover from a command in a wrong state where libmilter recovers, and close the connection where libmilter would leave the MTA waiting ([ADR 0001](../adr/0001-commands-in-wrong-state-recover-like-libmilter-or-close.md))
+- track the protocol state with libmilter's transition rules, recover from a command in a wrong state where libmilter recovers, and close the connection where libmilter would leave the MTA waiting ([ADR 0015](../adr/0015-commands-in-wrong-state-follow-libmilter-or-close.md))
 - store macros per stage, drop the later stages' macros when a stage's command arrives, and clear them all when the session ends
 - create the handler's `Session` value when a callback first asks for it in a session, and its `Message` value at `SMFIC_MAIL` (or at the first command of a message when the handler leaves `MAIL` out of `events()`), and drop them when the session or message ends
 - call the matching handler callback for each command, and turn its decision into the protocol reply, or into no reply where the protocol forbids one
@@ -357,7 +357,7 @@ Two separate state machines track each connection:
 | Transport | `CONNECTED`, `IDLE`, `ACTIVE`, `DRAINING`, `ERROR`, `CLOSED`, driven by socket events, timeouts, and shutdown | [tcp-server.md](../reference/tcp-server.md#connection-lifecycle) |
 | Protocol | `ST_INIT` to `ST_QUIT`, driven by Milter commands, as libmilter defines them | [milter-protocol.md](../reference/milter-protocol.md#protocol-states) |
 
-The Connection component owns the transport state. The protocol engine owns the protocol state and validates every command against it. For a command in a wrong state it follows libmilter where libmilter's behavior works: it recovers for `SMFIC_HELO`, `SMFIC_MAIL`, and `SMFIC_UNKNOWN`, and ignores `SMFIC_ABORT` and `SMFIC_QUIT`. Where libmilter would ignore a command and leave the MTA waiting for a reply, including `SMFIC_QUIT_NC`, it closes the connection ([ADR 0001](../adr/0001-commands-in-wrong-state-recover-like-libmilter-or-close.md)). Handlers never see protocol state.
+The Connection component owns the transport state. The protocol engine owns the protocol state and validates every command against it. For a command in a wrong state it follows libmilter where libmilter's behavior works: it recovers for `SMFIC_HELO`, `SMFIC_MAIL`, and `SMFIC_UNKNOWN`, ignores `SMFIC_ABORT`, and ends the session on `SMFIC_QUIT` in any state. Where libmilter would ignore a command and leave the MTA waiting for a reply, including `SMFIC_QUIT_NC`, it closes the connection ([ADR 0015](../adr/0015-commands-in-wrong-state-follow-libmilter-or-close.md)). Handlers never see protocol state.
 
 ## Resource management
 

@@ -1,4 +1,4 @@
-//! Protocol state machine and abort scenarios (ENG-050 to ENG-070) from
+//! Protocol state machine and abort scenarios (ENG-050 to ENG-073) from
 //! `docs/testing/protocol-engine.md`.
 
 mod support;
@@ -381,17 +381,16 @@ async fn eng_065_a_switched_off_stage_is_skipped() {
 }
 
 #[tokio::test]
-async fn eng_066_quit_outside_a_message_is_ignored_until_the_connection_closes() {
+async fn eng_066_quit_after_helo_ends_the_session() {
     let (server, log) = Scripted::default().start().await;
     let mut mta = server.mta().await;
     mta.reach(Reach::Helo).await;
 
     mta.send(SMFIC_QUIT, Bytes::new()).await;
-    log.settles_at(&["connect", "helo"]).await;
-    mta.close().await;
 
-    let events = log.wait_for("session_end:ConnectionClosed").await;
-    assert_eq!(events, ["connect", "helo", "session_end:ConnectionClosed"]);
+    assert!(mta.closes().await, "no reply, and the connection closes");
+    let events = log.wait_for("session_end:Quit").await;
+    assert_eq!(events, ["connect", "helo", "session_end:Quit"]);
     server.stop().await;
 }
 
@@ -569,4 +568,109 @@ async fn eng_064_shutdown_ends_a_waiting_session() {
         ["connect", "helo", "session_end:ServerShutdown"]
     );
     assert!(mta.closes().await);
+}
+
+#[tokio::test]
+async fn eng_071_quit_ends_the_session_in_every_state() {
+    let states = [
+        Reach::Conn,
+        Reach::Helo,
+        Reach::Mail,
+        Reach::Rcpt,
+        Reach::Data,
+        Reach::Hdrs,
+        Reach::Eohs,
+        Reach::Body,
+        Reach::Endm,
+        Reach::Unkn,
+    ];
+    for state in states {
+        let (server, log) = Scripted::default().start().await;
+        let mut mta = server.mta().await;
+        mta.reach(state).await;
+        let before = log.events().len();
+
+        mta.send(SMFIC_QUIT, Bytes::new()).await;
+
+        assert!(mta.closes().await, "{state:?}");
+        let events = log.wait_for("session_end:Quit").await;
+        let expected: &[&str] = if Reach::IN_MESSAGE.contains(&state) {
+            &["abort", "session_end:Quit"]
+        } else {
+            &["session_end:Quit"]
+        };
+        assert_eq!(&events[before..], expected, "{state:?}");
+        server.stop().await;
+    }
+}
+
+#[tokio::test]
+async fn eng_072_quit_after_a_reply_that_resets_the_state_ends_the_session() {
+    let decisions = [
+        (Decision::Accept, SMFIR_ACCEPT),
+        (Decision::Reject, SMFIR_REJECT),
+        (Decision::TempFail, SMFIR_TEMPFAIL),
+        (Decision::Discard, SMFIR_DISCARD),
+    ];
+    for (eom, reply) in decisions {
+        let scripted = Scripted {
+            eom: eom.clone(),
+            ..Scripted::default()
+        };
+        let (server, log) = scripted.start().await;
+        let mut mta = server.mta().await;
+        mta.reach(Reach::Rcpt).await;
+        assert_eq!(mta.ask(SMFIC_BODYEOB, Bytes::new()).await.command, reply);
+
+        mta.send(SMFIC_QUIT, Bytes::new()).await;
+
+        assert!(mta.closes().await, "{eom:?}");
+        let events = log.wait_for("session_end:Quit").await;
+        assert_eq!(events[events.len() - 1], "session_end:Quit", "{eom:?}");
+        assert!(!events.contains(&"abort".to_owned()), "{eom:?}: {events:?}");
+        server.stop().await;
+    }
+
+    let (server, log) = Scripted::default().start().await;
+    let mut mta = server.mta().await;
+    mta.reach(Reach::Rcpt).await;
+    mta.send(SMFIC_ABORT, Bytes::new()).await;
+
+    mta.send(SMFIC_QUIT, Bytes::new()).await;
+
+    assert!(mta.closes().await);
+    let events = log.wait_for("session_end:Quit").await;
+    assert_eq!(&events[events.len() - 2..], ["abort", "session_end:Quit"]);
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn eng_073_quit_without_a_session_closes_quietly() {
+    let (logs, _guard) = Logs::capture();
+    let (server, log) = Scripted::default().start().await;
+    let mut before = server.mta().await;
+    before.send(SMFIC_QUIT, Bytes::new()).await;
+    assert!(before.closes().await, "before option negotiation");
+    let mut negotiated = server.mta().await;
+    negotiated.negotiate().await;
+    negotiated.send(SMFIC_QUIT, Bytes::new()).await;
+    assert!(negotiated.closes().await, "right after option negotiation");
+    assert!(log.events().is_empty(), "{:?}", log.events());
+    let mut reused = server.mta().await;
+    reused.reach(Reach::Endm).await;
+    reused.send(SMFIC_QUIT_NC, Bytes::new()).await;
+    log.wait_for("session_end:QuitNewConnection").await;
+    let ended = log.events().len();
+
+    reused.send(SMFIC_QUIT, Bytes::new()).await;
+
+    assert!(reused.closes().await, "after SMFIC_QUIT_NC");
+    server.stop().await;
+    assert_eq!(log.events().len(), ended, "{:?}", log.events());
+    assert!(logs.named("Protocol error").is_empty());
+    let closed = logs.named("Connection closed");
+    assert_eq!(closed.len(), 3);
+    for event in closed {
+        assert_eq!(event.field("reason"), Some("client_closed"));
+    }
 }

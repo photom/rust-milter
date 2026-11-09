@@ -237,7 +237,7 @@ pub enum ProtocolError {
     #[error("unknown command code 0x{0:02x}")]
     UnknownCommand(u8),
 
-    /// A command in a state where it closes the connection (ADR 0001).
+    /// A command in a state where it closes the connection (ADR 0015).
     #[error("command {} in a wrong state", char::from(*.command))]
     WrongState {
         /// The command code.
