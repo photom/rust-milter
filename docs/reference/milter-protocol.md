@@ -861,6 +861,8 @@ In sendmail.cf, set the timeouts with the `T=` equate of the filter definition, 
 
 The `E` timeout runs from the moment Sendmail sends `SMFIC_BODYEOB` until the final reply. `SMFIR_PROGRESS` restarts only the per-read `R` timeout, not `E`.
 
+Sendmail measures these timeouts with a clock of whole seconds (`curtime()` in `sendmail/milter.c`). A timeout of n seconds can therefore expire after just over n − 1 seconds. Sendmail checks `E` only between replies, so while the milter sends `SMFIR_PROGRESS` it can expire up to one reply interval late.
+
 Postfix timeouts, set in `main.cf`:
 
 | Parameter | Description | Default |

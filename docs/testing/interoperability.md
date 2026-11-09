@@ -47,8 +47,8 @@ Scenarios that run rust-milter behind real MTAs: the Postfix and Sendmail packag
 
 | ID | Level | Given | When | Then | Spec |
 |----|-------|-------|------|------|------|
-| INT-040 | interop | Postfix on port 2625, with `milter_content_timeout = 2s`, and a handler whose `end_of_message` takes 5 s and calls `progress()` every second | a client sends one message | the message is delivered: each `SMFIR_PROGRESS` restarts Postfix's timeout | [protocol: Timeouts](../reference/milter-protocol.md#timeouts) |
-| INT-041 | interop | `sendmail-short`, with `T=E:3s;R:2s`, and the same handler | a client sends one message | Sendmail times out at end of message after about 3 s and applies the filter's `F=` flags: `progress()` does not extend the `E` timeout | [protocol: Timeouts](../reference/milter-protocol.md#timeouts) |
+| INT-040 | interop | Postfix on port 2625, with `milter_content_timeout = 2s`, and a handler whose `end_of_message` takes 7 s and calls `progress()` every second | a client sends one message | the message is delivered: each `SMFIR_PROGRESS` restarts Postfix's timeout | [protocol: Timeouts](../reference/milter-protocol.md#timeouts) |
+| INT-041 | interop | `sendmail-short`, with `T=E:4s;R:3s`, and the same handler | a client sends one message | Sendmail times out at end of message between 3 and 5 s, before the handler finishes, and applies the filter's `F=` flags: `progress()` does not extend the `E` timeout | [protocol: Timeouts](../reference/milter-protocol.md#timeouts) |
 | INT-042 | interop | Both MTAs, `timeouts.idle` = 3 s, and a client that pauses 5 s between `RCPT` and `DATA` | the session runs | the milter closes the idle connection, and the MTA applies its failure policy to the session | [configuration: TimeoutConfig](../reference/configuration.md#timeoutconfig) |
 
 ## Server lifecycle
