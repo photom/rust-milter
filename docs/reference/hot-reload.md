@@ -173,7 +173,7 @@ The application configuration follows the same isolation rule as the rest of rus
 3. A published configuration is immutable. A reload publishes a new `Arc`; it never changes the old one in place.
 4. The generation number grows by one per published configuration and never goes back. A failed reload does not change it.
 5. Once shutdown has started, `reload()` returns `ShuttingDown` and `SIGHUP` is logged and ignored.
-6. Without a registered loader, `SIGHUP` is logged at WARN level and ignored. `reload()` with an explicit configuration still works.
+6. Without a registered loader, `SIGHUP` is logged at WARN level and ignored, and `reload()` fails with `NoLoader`. `reload_with_config()`, which takes the configuration from the caller, still works.
 
 ## API
 

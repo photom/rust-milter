@@ -151,7 +151,7 @@ async fn eng_043_macros_of_postfix_stages_get_no_reply() {
     let mut mta = server.mta().await;
     mta.reach(Reach::Rcpt).await;
 
-    for stage in [b'L', b'B', b'U'] {
+    for stage in *b"LBU" {
         mta.send(SMFIC_MACRO, macro_data(stage, &[("{x}", "1")]))
             .await;
     }

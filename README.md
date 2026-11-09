@@ -55,7 +55,7 @@ Accurate and complete technical specifications. Use them to look up specific det
 - [TCP server specification](docs/reference/tcp-server.md)
 - [API specification](docs/reference/api-specification.md)
 - [Configuration specification](docs/reference/configuration.md)
-- [Milter client sample](docs/reference/milter-client.md) (design reference for the sample in `examples/`)
+- [Milter client sample](docs/reference/milter-client.md) (design reference for the planned sample, to live in `examples/`)
 - [Configuration hot reload](docs/reference/hot-reload.md)
 - [Telemetry (OpenTelemetry)](docs/reference/telemetry.md)
 - [Test environment](docs/reference/test-environment.md)
