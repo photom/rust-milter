@@ -131,7 +131,7 @@ flowchart LR
 | `runner` | The official `rust` image, at the tag in `tests/interop/runner/Dockerfile`, with the repository copied in when the image is built | Builds the `INT` tests with the toolchain from `rust-toolchain.toml` when the image is built, while the build can still reach the network, then runs them offline, one at a time. Each test starts its own milter on port 8891 with the scenario's handler, sends mail through an MTA, and stops the milter. The runner also holds an SMTP sink on port 2525 that keeps every delivered message for the test to inspect |
 | `postfix` | The pinned Debian release with the `postfix` package | MTA under test |
 | `sendmail` | The same Debian release with the `sendmail` package | MTA under test |
-| `sendmail-short` | The `sendmail` image with the filter timeouts `T=E:3s;R:2s` | MTA for the Sendmail timeout scenario |
+| `sendmail-short` | The `sendmail` image with the filter timeouts `T=E:4s;R:3s`. `R` stays more than a second above the one-second progress interval, because Sendmail counts these timeouts in whole seconds | MTA for the Sendmail timeout scenario |
 | `dns` | The same Debian release with the `unbound` package | The MTAs' only DNS resolver. It answers for the names in `void.invalid` and their addresses, and answers NXDOMAIN at once for every other name, without sending a query anywhere ([testing ADR 0003](../testing/adr/0003-interop-stack-resolves-names-with-a-local-unbound.md)) |
 
 The network has the fixed subnet `10.231.0.0/24`, and each service has a fixed address, so that `dns` can answer for each name:

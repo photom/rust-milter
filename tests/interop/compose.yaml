@@ -82,7 +82,7 @@ services:
     build:
       context: ./sendmail
       args:
-        FILTER_TIMEOUTS: "E:3s;R:2s"
+        FILTER_TIMEOUTS: "E:4s;R:3s"
     hostname: sendmail-short.void.invalid
     environment: *mta-environment
     networks:
