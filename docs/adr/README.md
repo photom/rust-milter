@@ -17,6 +17,7 @@ Decisions that shape rust-milter's design and specification, with their context 
 | [0011](0011-the-disallowed-methods-run-stays-for-derive-code.md) | The disallowed-methods run stays for derive code | Accepted |
 | [0012](0012-no-file-descriptor-limit-setting.md) | rust-milter has no file descriptor limit setting | Accepted |
 | [0013](0013-the-first-packet-is-limited-to-1-kb.md) | The first packet of a connection is limited to 1 KB | Accepted |
+| [0014](0014-stored-macros-count-against-the-connections-memory.md) | Stored macros count against the connection's memory | Accepted |
 
 Conventions:
 - One file per decision, named `NNNN-short-title.md`, numbered in order.
