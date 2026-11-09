@@ -40,6 +40,9 @@ pub(crate) struct Inbound<R> {
     idle_since: Option<Instant>,
     /// This connection's share of `max_memory`.
     memory: Reservation,
+    /// What the macros the engine stores for this connection cost; they
+    /// count against `memory` and `max` (ADR 0014).
+    held: usize,
     /// The server's counts.
     traffic: Arc<Traffic>,
     /// Bytes received.
@@ -61,7 +64,8 @@ impl<R: AsyncRead + Unpin> Inbound<R> {
         Inbound {
             reader,
             conn_id,
-            buf: BytesMut::with_capacity(8 * 1024),
+            // The size every connection reserves when it is accepted.
+            buf: BytesMut::with_capacity(Reservation::BASE),
             max,
             timeouts,
             accepted_at,
@@ -69,6 +73,7 @@ impl<R: AsyncRead + Unpin> Inbound<R> {
             frame_started: None,
             idle_since: None,
             memory,
+            held: 0,
             traffic,
             bytes_read: 0,
             frames: 0,
@@ -94,9 +99,9 @@ impl<R: AsyncRead + Unpin> Inbound<R> {
                 } else {
                     Some(Instant::now())
                 };
-                // The frame's data is the handler's now; only the next frame
-                // needs room in the buffer.
-                self.memory.resize(0);
+                // The frame's data is the handler's now; only the stored
+                // macros and the next frame need room.
+                self.memory.resize(self.held);
                 return Ok(Some(frame));
             }
             self.reserve_frame()?;
@@ -139,6 +144,20 @@ impl<R: AsyncRead + Unpin> Inbound<R> {
         !self.buf.is_empty()
     }
 
+    /// Sets what the macros the engine stores for this connection cost, and
+    /// resizes the reservation to match. Fails when they would pass
+    /// `per_connection_buffer`, or the reservation `max_memory` (ADR 0014).
+    pub(crate) fn hold(&mut self, cost: usize) -> Result<()> {
+        if cost > self.max {
+            return Err(Error::ResourceLimit(ResourceKind::PerConnectionBuffer));
+        }
+        if !self.memory.resize(cost) {
+            return Err(Error::ResourceLimit(ResourceKind::MaxMemory));
+        }
+        self.held = cost;
+        Ok(())
+    }
+
     /// Once a frame's length field has arrived, reserves the whole frame
     /// from `max_memory` and makes room for it, before its data arrives.
     fn reserve_frame(&mut self) -> Result<()> {
@@ -147,7 +166,7 @@ impl<R: AsyncRead + Unpin> Inbound<R> {
         };
         // `Frame::parse` has checked the length against the limit already.
         let packet = LENGTH_FIELD + u32::from_be_bytes(*length_field) as usize;
-        if !self.memory.resize(packet) {
+        if !self.memory.resize(self.held + packet) {
             return Err(Error::ResourceLimit(ResourceKind::MaxMemory));
         }
         self.buf.reserve(packet.saturating_sub(self.buf.len()));
