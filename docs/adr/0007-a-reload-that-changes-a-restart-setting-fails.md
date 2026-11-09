@@ -1,6 +1,6 @@
 # ADR 0007: A reload that changes a setting that requires a restart fails
 
-- Status: Accepted
+- Status: Superseded by [ADR 0016](0016-a-reload-closes-no-connection-and-fails-on-a-restart-setting.md)
 - Date: 2026-11-04
 - Affects: configuration reload
 - Supersedes: the `backlog` decision of [ADR 0005](0005-reload-closes-no-connection-and-rebinds-no-listener.md)

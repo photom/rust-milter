@@ -33,7 +33,7 @@ cargo test --doc
 
 ## Run the style check
 
-The style check reports closures, `Fn` bounds, and function pointer types outside the exceptions of [ADR 0008](../adr/0008-rust-code-is-written-in-a-procedural-style.md):
+The style check reports closures, `Fn` bounds, and function pointer types outside the exceptions of [ADR 0017](../adr/0017-rust-code-is-written-in-a-procedural-style.md):
 
 ```sh
 cargo test -p rust-milter-style

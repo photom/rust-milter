@@ -79,7 +79,7 @@ Skills do not load automatically. Invoke one when its domain knowledge is needed
 
 - `/canon-tdd`: Kent Beck's TDD workflow (red, green, refactor)
 - `/rust-master`: Rust conventions, async, Tokio, concurrency
-- `/procedural-rust`: the procedural style of ADRs 0008 to 0011, and how to check and fix code
+- `/procedural-rust`: the procedural style of ADR 0017, and how to check and fix code
 - `/milter-protocol`: the Sendmail/Postfix Milter protocol, SMTP stages, RFCs
 - `/design-master`: DDD, Clean Architecture, SOLID, system design
 - `/docs-first`: documentation-first design with Mermaid diagrams

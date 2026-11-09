@@ -134,9 +134,9 @@ Every connection keeps the configuration snapshot it was accepted with until it 
 
 Which settings apply at once, which apply to new connections, and which require a restart is specified per setting in [configuration.md](configuration.md#reload-classes).
 
-A reload closes no open connection and rebinds no listener ([ADR 0005](../adr/0005-reload-closes-no-connection-and-rebinds-no-listener.md)). A lowered `max_connections` closes no open connection. New connections are closed at once until the count falls below the new limit.
+A reload closes no open connection and rebinds no listener ([ADR 0016](../adr/0016-a-reload-closes-no-connection-and-fails-on-a-restart-setting.md)). A lowered `max_connections` closes no open connection. New connections are closed at once until the count falls below the new limit.
 
-A reload that changes a setting that requires a restart fails with `RestartRequired` and applies nothing, even if it changes other settings too ([ADR 0007](../adr/0007-a-reload-that-changes-a-restart-setting-fails.md)). The error names every such setting that changed, and the server keeps running with the previous generation. After every applied reload, the server runs exactly the configuration the loader returned.
+A reload that changes a setting that requires a restart fails with `RestartRequired` and applies nothing, even if it changes other settings too ([ADR 0016](../adr/0016-a-reload-closes-no-connection-and-fails-on-a-restart-setting.md)). The error names every such setting that changed, and the server keeps running with the previous generation. After every applied reload, the server runs exactly the configuration the loader returned.
 
 ## Listener changes
 

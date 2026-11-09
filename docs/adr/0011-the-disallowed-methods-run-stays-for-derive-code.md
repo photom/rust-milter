@@ -1,6 +1,6 @@
 # ADR 0011: The disallowed-methods run stays for derive code
 
-- Status: Accepted
+- Status: Superseded by [ADR 0017](0017-rust-code-is-written-in-a-procedural-style.md)
 - Date: 2026-11-08
 - Affects: the style check, CI, the workspace lints
 - Supersedes: the end of the transition in [ADR 0008](0008-rust-code-is-written-in-a-procedural-style.md), where the workspace stops allowing `clippy::disallowed_methods` and the separate Clippy run goes away
