@@ -23,6 +23,11 @@ pub enum Error {
     #[error("the handler failed")]
     Handler(#[source] Box<dyn std::error::Error + Send + Sync>),
 
+    /// A `Handler` method panicked. The panic's message is not kept, because
+    /// it can hold data from an SMTP session (ADR 0018).
+    #[error("a handler method panicked")]
+    HandlerPanic,
+
     /// A connection timeout expired.
     #[error("the {0} timeout expired")]
     Timeout(TimeoutKind),
@@ -87,6 +92,7 @@ impl Error {
             Error::Protocol(_) => "Protocol",
             Error::ActionNotNegotiated(_) => "ActionNotNegotiated",
             Error::Handler(_) => "Handler",
+            Error::HandlerPanic => "HandlerPanic",
             Error::Timeout(_) => "Timeout",
             Error::ConnectionClosed => "ConnectionClosed",
             Error::ConnectionReset => "ConnectionReset",
