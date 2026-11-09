@@ -1,6 +1,6 @@
 # ADR 0001: Commands in a wrong state recover like libmilter, or close the connection
 
-- Status: Accepted
+- Status: Accepted; the `SMFIC_QUIT` decision is superseded by [ADR 0015](0015-smfic-quit-ends-the-session-in-any-state.md)
 - Date: 2026-10-30 (decision on `SMFIC_QUIT_NC`); extended 2026-10-31 to all other commands
 - Affects: protocol engine, milter client, handler contract
 - Related: [ADR 0002](0002-library-runs-the-protocol-handlers-decide.md)
