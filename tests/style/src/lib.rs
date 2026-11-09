@@ -1,7 +1,7 @@
 //! Checks that the Rust code of the repository keeps the procedural style
-//! of ADRs 0008 to 0010: no closures, no `Fn`, `FnMut`, or `FnOnce`
+//! of ADR 0017: no closures, no `Fn`, `FnMut`, or `FnOnce`
 //! bounds, and no function pointer types, apart from the exceptions the
-//! ADRs name. It also reads the disallowed method calls of `clippy.toml`
+//! ADR names. It also reads the disallowed method calls of `clippy.toml`
 //! from Clippy's output. The rules are in "Style check" in
 //! `docs/reference/test-environment.md`.
 
@@ -53,14 +53,14 @@ pub enum Kind {
 impl fmt::Display for Kind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Kind::Closure => write!(f, "closure; use a named function or a loop (ADR 0008)"),
+            Kind::Closure => write!(f, "closure; use a named function or a loop (ADR 0017)"),
             Kind::FnBound(name) => write!(
                 f,
-                "{name} bound; take a value or a trait of your own instead (ADR 0008)"
+                "{name} bound; take a value or a trait of your own instead (ADR 0017)"
             ),
             Kind::FnPointer => write!(
                 f,
-                "function pointer; name the cases with an enum and match on it (ADR 0009)"
+                "function pointer; name the cases with an enum and match on it (ADR 0017)"
             ),
         }
     }
@@ -226,7 +226,7 @@ pub fn method_problems(root: &Path, output: &str) -> std::io::Result<Vec<String>
             continue;
         }
         problems.push(format!(
-            "{}:{}:{}: use of a disallowed method `{}` (ADR 0008)",
+            "{}:{}:{}: use of a disallowed method `{}` (ADR 0017)",
             call.file, call.line, call.column, call.method
         ));
     }
