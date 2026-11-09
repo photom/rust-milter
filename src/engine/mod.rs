@@ -2,7 +2,7 @@
 //! calls the handler, as libmilter's `mi_engine` does.
 //!
 //! The rules it follows are in "Protocol engine behavior" in
-//! `docs/reference/api-specification.md` and in ADR 0001.
+//! `docs/reference/api-specification.md` and in ADR 0015.
 
 mod io;
 mod macros;
@@ -297,6 +297,12 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
         let code = frame.command;
         let command = Command::from_frame(frame)?;
 
+        // `SMFIC_QUIT` ends the session in any state, as in libmilter, where
+        // it ends the command loop even when it does not fit (ADR 0015).
+        if let Command::Quit = command {
+            self.end(SessionEnd::Quit).await;
+            return Ok(Flow::Close);
+        }
         if self.state == State::Init {
             let Command::OptNeg {
                 version,
@@ -316,7 +322,7 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
 
         let target = target_state(&command);
         if !self.rules.allows(self.state, target) {
-            if matches!(command, Command::Abort | Command::Quit) {
+            if let Command::Abort = command {
                 return Ok(Flow::Open);
             }
             if !self.rules.allows(State::Helo, target) {
@@ -325,7 +331,7 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
             self.abort().await?;
             self.state = State::Helo;
         }
-        if !self.in_session && !matches!(command, Command::Abort | Command::Quit) {
+        if !self.in_session && !matches!(command, Command::Abort) {
             self.open_session();
         }
         self.ctx.message.session.macros.drop_after(code);
@@ -449,12 +455,8 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
                 };
                 self.decide(decision, Origin::Unknown).await?;
             }
-            Command::Quit => {
-                self.end(SessionEnd::Quit).await;
-                return Ok(Flow::Close);
-            }
             Command::QuitNewConnection => self.end(SessionEnd::QuitNewConnection).await,
-            Command::OptNeg { .. } | Command::Macro { .. } => {
+            Command::OptNeg { .. } | Command::Macro { .. } | Command::Quit => {
                 unreachable!("handled before the state check")
             }
         }

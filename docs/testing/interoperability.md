@@ -8,7 +8,7 @@ Scenarios that run rust-milter behind real MTAs: the Postfix and Sendmail packag
 |----|-------|-------|------|------|------|
 | INT-001 | interop | Both MTAs, each with a milter that adds `X-Filtered-By: rust-milter` at end of message | a client sends one message | the delivered message has the header, and the milter log shows no WARN or ERROR | [api: EomContext](../reference/api-specification.md#eomcontext) |
 | INT-002 | interop | Postfix with `milter_protocol` = 2, 3, 4, and 6 (ports 2602, 2603, 2604, and 25), in four runs | a client sends one message with an unknown SMTP command before MAIL | the negotiated version equals the setting; `unknown` is called only for 3 and later, `data` only for 4 and later; the message is delivered | [protocol: Protocol version configuration](../reference/milter-protocol.md#protocol-version-configuration) |
-| INT-003 | interop | Both MTAs | a client opens a session and quits without mail | the handler's `session_end` gets `Quit` or `ConnectionClosed`, and the milter log shows no WARN or ERROR | [protocol: Connection lifecycle](../reference/milter-protocol.md#connection-lifecycle) |
+| INT-003 | interop | Both MTAs | a client opens a session and quits without mail | the handler's `session_end` gets `Quit`, and the milter log shows no WARN or ERROR | [protocol: Connection lifecycle](../reference/milter-protocol.md#connection-lifecycle) |
 | INT-004 | interop | Both MTAs and a client that sends two messages in one SMTP session | the session runs | the milter sees two messages on one connection, each with a fresh `Message` value | [api: Associated types](../reference/api-specification.md#associated-types) |
 
 ## Decisions and replies

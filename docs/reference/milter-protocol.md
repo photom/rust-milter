@@ -73,8 +73,9 @@ rust-milter supports Milter protocol versions 2 through 6. The minimum is 2, the
 - Otherwise rust-milter answers with the lower of the MTA's version and 6, as libmilter does.
 - rust-milter uses only the commands, replies, and flags that the negotiated version and the MTA's offered flags allow. See [Protocol version](#protocol-version) for what each version adds.
 - There is no protocol version 5. Neither MTA sends it, and Postfix rejects it in `milter_protocol`.
-- `SMFIC_QUIT_NC` is accepted only where libmilter accepts it: in `ST_ENDM` (after the final reply at end of message, if that reply did not reset the state) and in `ST_UNKN`. In any other state rust-milter treats it as a protocol error and closes the connection, where libmilter would ignore it, then ignore the next `SMFIC_CONNECT` too, and leave the MTA waiting for a reply. The decision is recorded in [ADR 0001](../adr/0001-commands-in-wrong-state-recover-like-libmilter-or-close.md), and [Connection reuse and session isolation](../explanation/connection-reuse.md) explains it.
-- Any other command in a wrong state recovers as in libmilter if it fits from `ST_HELO` (`SMFIC_HELO`, `SMFIC_MAIL`, `SMFIC_UNKNOWN`); `SMFIC_ABORT` and `SMFIC_QUIT` are ignored as in libmilter; every other command closes the connection, where libmilter would ignore it without a reply ([ADR 0001](../adr/0001-commands-in-wrong-state-recover-like-libmilter-or-close.md)).
+- `SMFIC_QUIT_NC` is accepted only where libmilter accepts it: in `ST_ENDM` (after the final reply at end of message, if that reply did not reset the state) and in `ST_UNKN`. In any other state rust-milter treats it as a protocol error and closes the connection, where libmilter would ignore it, then ignore the next `SMFIC_CONNECT` too, and leave the MTA waiting for a reply. The decision is recorded in [ADR 0015](../adr/0015-commands-in-wrong-state-follow-libmilter-or-close.md), and [Connection reuse and session isolation](../explanation/connection-reuse.md) explains it.
+- Any other command in a wrong state recovers as in libmilter if it fits from `ST_HELO` (`SMFIC_HELO`, `SMFIC_MAIL`, `SMFIC_UNKNOWN`); `SMFIC_ABORT` is ignored as in libmilter; every other command closes the connection, where libmilter would ignore it without a reply ([ADR 0015](../adr/0015-commands-in-wrong-state-follow-libmilter-or-close.md)).
+- `SMFIC_QUIT` ends the session in any state, as in libmilter: rust-milter calls `abort` if a message is open, then `session_end`, and closes the connection ([ADR 0015](../adr/0015-commands-in-wrong-state-follow-libmilter-or-close.md)).
 - The library's protocol engine runs the whole conversation and enforces these rules; handlers never see protocol frames ([ADR 0002](../adr/0002-library-runs-the-protocol-handlers-decide.md)). It tracks the protocol state with libmilter's rules (see [Protocol states](#protocol-states)).
 
 ## MTA-specific differences
@@ -361,10 +362,11 @@ What each state accepts:
 - `ST_ABRT`: message aborted. The state has no allowed transitions of its own; the next command goes through the recovery rule below, which in effect returns to `ST_HELO`. The connection stays open.
 - `ST_UNKN`: unknown command received. Can move to most other states, which allows flexible recovery.
 - `ST_Q_NC`: quit with a new connection to follow. Accepts a new connect or unknown commands.
-- `ST_QUIT`: the terminal state, and the only state that ends the connection normally.
+- `ST_QUIT`: the terminal state after `SMFIC_QUIT`. A `SMFIC_QUIT` in any other state ends the connection too; see the recovery rules below.
 
 Recovery and resets in libmilter:
 - On an invalid transition, libmilter calls `xxfi_abort` if a message transaction is open, then retries the transition from `ST_HELO`. If that also fails, it ignores the command and sends no reply.
+- `SMFIC_QUIT` ends the session even where it does not fit. It carries the `CT_END` flag, which ends libmilter's command loop after the ignored command, so libmilter calls `xxfi_close` and closes the connection in any state.
 - After the milter replies `SMFIS_ACCEPT`, the state returns to `ST_HELO`.
 - After `SMFIS_REJECT`, `SMFIS_DISCARD`, or `SMFIS_TEMPFAIL`, the state returns to `ST_HELO`, except for `SMFIC_RCPT` and `SMFIC_UNKNOWN`, where it stays put.
 
@@ -884,7 +886,7 @@ Postfix uses `milter_default_action`: `accept`, `reject`, `tempfail`, `quarantin
 ### Protocol errors
 
 These are libmilter's reactions:
-- Invalid state transition: call `xxfi_abort` if a message is open, then try to recover to `ST_HELO`; if that fails, ignore the command.
+- Invalid state transition: call `xxfi_abort` if a message is open, then try to recover to `ST_HELO`; if that fails, ignore the command. An ignored `SMFIC_QUIT` still ends the session (see [State transitions](#state-transitions)).
 - Unknown command code: abort the connection.
 - Timeout: abort the connection, and call `xxfi_abort` if a message is in progress.
 - Malformed message: abort the connection.
