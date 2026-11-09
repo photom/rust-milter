@@ -1,11 +1,11 @@
 ---
 name: procedural-rust
-description: Write rust-milter's Rust code in the procedural style of ADRs 0008 to 0011 (match, if let, let-else, ?, loops; no closures, Fn bounds, function pointers, or methods that take a function), and run its checks. Use when writing any Rust in this repository, or when the style check or the disallowed-methods step fails.
+description: Write rust-milter's Rust code in the procedural style of ADR 0017 (match, if let, let-else, ?, loops; no closures, Fn bounds, function pointers, or methods that take a function), and run its checks. Use when writing any Rust in this repository, or when the style check or the disallowed-methods step fails.
 ---
 
 # Procedural Rust in rust-milter
 
-The rule is in ADRs 0008, 0009, and 0010; ADR 0011 says how the methods are checked. The rewrite for each pattern, with compiled examples, is in `docs/how-to/write-procedural-rust.md`. Read that guide before you write or fix code; this skill adds the checks and the workflow around it.
+The rule, and how the methods are checked, is in ADR 0017. The rewrite for each pattern, with compiled examples, is in `docs/how-to/write-procedural-rust.md`. Read that guide before you write or fix code; this skill adds the checks and the workflow around it.
 
 ## The rule in one screen
 
@@ -21,12 +21,12 @@ The rule is in ADRs 0008, 0009, and 0010; ADR 0011 says how the methods are chec
 
 - `src/` must build with Rust 1.85, which has no let chains: nest `if let` and the condition. Test crates (Rust 1.89) may use let chains, and Clippy's `collapsible_if` will ask for them there.
 - Clippy's `question_mark` rejects `let Some(x) = x else { return None; };`. Write `let x = x?;`.
-- A plain `cargo clippy` does not report the disallowed methods: the workspace allows the lint, because serde's derive generates `Option::map` for `#[serde(with = ...)]` fields (ADR 0011). Run the separate Clippy command below.
+- A plain `cargo clippy` does not report the disallowed methods: the workspace allows the lint, because serde's derive generates `Option::map` for `#[serde(with = ...)]` fields (ADR 0017). Run the separate Clippy command below.
 - `sort_by_key` takes a function. Derive `Ord` and call `sort`, or keep the order with an ordered insert in a loop.
 - Test helpers take values, not closures: `TestServer::start(handler)`, `TestServer::start_with(config, handler)` with `support::config()`, and `support::wait_until(&handle, Until::...)` (testing ADR 0004). A handler that needs the `HandlerContext` passes its closure straight to `ServerBuilder::handler`.
 - proptest's `prop_map` takes a function. Draw the raw values and build the input in the test body.
 - The style check reads only `.rs` files. Review the Rust blocks of `docs/tutorials/` and `docs/how-to/` yourself.
-- A change that needs a public API or behavior decision, as the builder's factory and loader did (ADR 0010), is the user's to make. Stop and ask, with the options and a recommendation.
+- A change that needs a public API or behavior decision, as the builder's factory and loader did (ADR 0017), is the user's to make. Stop and ask, with the options and a recommendation.
 
 ## Check your code
 
