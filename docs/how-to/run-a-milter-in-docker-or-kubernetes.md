@@ -50,7 +50,7 @@ To combine a configuration file with environment overrides, read the file first 
 Build the binary in a Rust image and copy it into a small runtime image that runs as an unprivileged user:
 
 ```dockerfile
-FROM rust:1.89 AS build
+FROM rust:1.99 AS build
 WORKDIR /src
 COPY . .
 RUN cargo build --release

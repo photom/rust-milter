@@ -1,4 +1,6 @@
+# No Dependabot job updates this file; bump it by hand to the current stable
+# release (docs/reference/test-environment.md, Toolchain).
 [toolchain]
-channel = "1.89"
+channel = "1.99"
 components = ["clippy", "rustfmt"]
 profile = "minimal"
