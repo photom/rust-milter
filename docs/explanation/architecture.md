@@ -364,8 +364,9 @@ The Connection component owns the transport state. The protocol engine owns the 
 ### Memory
 
 - each connection has one read buffer that grows up to `per_connection_buffer` (default 128 KB, minimum 65,540 bytes, the largest default-size milter packet), and one write buffer that holds one reply at a time
-- frame data is shared without copying through `bytes::Bytes`
-- `max_memory` caps the total of the read buffers; the write buffers and the values handlers keep are not counted
+- frame data is shared without copying through `bytes::Bytes`; only the stored macros are copied, so they do not keep a read buffer
+- the stored macros cost at most `per_connection_buffer` per connection
+- `max_memory` caps the total of the read buffers and the stored macros; the write buffers and the values handlers keep are not counted
 
 ### File descriptors
 

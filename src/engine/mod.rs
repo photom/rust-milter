@@ -275,6 +275,8 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
         }
         self.command_span = self.span();
         let flow = self.handle(frame).await?;
+        // The stored macros count against the connection's memory (ADR 0014).
+        self.inbound.hold(self.ctx.message.session.macros.cost())?;
         if trace::traced(self.trace.commands, code) {
             let reply = self.ctx.outbound.last_reply.unwrap_or("noreply");
             // Entered, not only named as the parent, so that a log bridge
