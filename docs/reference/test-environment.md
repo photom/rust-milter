@@ -87,7 +87,7 @@ CI runs the tests with `--all-features`, so the tests that need the feature run 
 
 ## Style check
 
-`cargo test` checks that the Rust code keeps the procedural style of [ADR 0008](../adr/0008-rust-code-is-written-in-a-procedural-style.md), [ADR 0009](../adr/0009-no-stored-closures-or-function-pointers.md), and [ADR 0010](../adr/0010-builder-factory-type-parameter-and-loader-trait.md). A separate Clippy run in CI checks the methods ([ADR 0011](../adr/0011-the-disallowed-methods-run-stays-for-derive-code.md)). How to write code that passes is in [Write Rust in the procedural style](../how-to/write-procedural-rust.md).
+`cargo test` checks that the Rust code keeps the procedural style of [ADR 0017](../adr/0017-rust-code-is-written-in-a-procedural-style.md), and a separate Clippy run in CI checks the methods. How to write code that passes is in [Write Rust in the procedural style](../how-to/write-procedural-rust.md).
 
 | Item | Behavior |
 |------|----------|
