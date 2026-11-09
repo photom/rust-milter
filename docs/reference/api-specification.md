@@ -218,6 +218,7 @@ The library calls a callback only for the stages in `events()`, and only if the 
 Contract:
 - Callbacks for one connection run one at a time, in protocol order. Callbacks for different connections run concurrently.
 - A callback that returns an error closes the connection; the library calls `session_end` with `SessionEnd::Error` first. A handler turns its own error into `Error::Handler` with `Error::handler(err)`, which accepts any `std::error::Error + Send + Sync + 'static`.
+- A callback that panics closes the connection with `Error::HandlerPanic`. No further callback runs for that session, not even `abort` or `session_end`, and the library drops its `Session` and `Message` values. The same holds for a panic in `events()` or `actions()`, and in `abort` or `session_end` while a session ends ([ADR 0018](../adr/0018-panics-in-handler-code-and-the-reload-loader-are-caught.md)).
 - A callback should finish promptly when the shutdown token from its context is cancelled.
 - Settings come from the `ConfigWatch<A>` the handler holds. Read the application configuration once per session (in `connect`) or once per message (in `mail`), and keep the value in `Session` or `Message`.
 
@@ -301,7 +302,7 @@ The library performs these protocol duties for every handler:
 | Commands in a wrong state | Recovers like libmilter for a command that fits from `ST_HELO` (`SMFIC_HELO`, `SMFIC_MAIL`, `SMFIC_UNKNOWN`, and later stages the handler switched off): calls `abort` if a message is open, then processes the command. Ignores `SMFIC_ABORT`. Ends the session on `SMFIC_QUIT`, as libmilter does. Closes the connection with a protocol error on any other command ([ADR 0015](../adr/0015-commands-in-wrong-state-follow-libmilter-or-close.md)) |
 | Replies | Encodes each decision as the matching `SMFIR_*` reply; sends no reply to `SMFIC_MACRO`, `SMFIC_ABORT`, `SMFIC_QUIT`, or `SMFIC_QUIT_NC` |
 | Abort | Calls `abort` and drops the message state when a message is open; ignores `SMFIC_ABORT` outside a message. A message that ends without its final reply or a decision that ends it also gets `abort`: on recovery from a wrong state, on an `SMFIC_MAIL` that starts a new message while one is open, and before `session_end` when the session ends with a message open |
-| Session end | Calls `session_end` and drops the session state on `SMFIC_QUIT` in any state, after `abort` if a message is open, then closes the connection (`Quit`); on `SMFIC_QUIT_NC` (`QuitNewConnection`), on end of file between frames without `SMFIC_QUIT` (`ConnectionClosed`), before closing the connection for an error, a reset, an end of file in the middle of a frame, or a timeout (`Error`), and when shutdown closes the connection (`ServerShutdown`). A forced shutdown closes the connection without calling `abort` or `session_end`. A connection that closes before a session starts, or between `SMFIC_QUIT_NC` and the next session, calls no callback |
+| Session end | Calls `session_end` and drops the session state on `SMFIC_QUIT` in any state, after `abort` if a message is open, then closes the connection (`Quit`); on `SMFIC_QUIT_NC` (`QuitNewConnection`), on end of file between frames without `SMFIC_QUIT` (`ConnectionClosed`), before closing the connection for an error, a reset, an end of file in the middle of a frame, or a timeout (`Error`), and when shutdown closes the connection (`ServerShutdown`). A forced shutdown closes the connection without calling `abort` or `session_end`. A connection that closes before a session starts, or between `SMFIC_QUIT_NC` and the next session, calls no callback. A panic in a callback ends the session without `abort` or `session_end` ([ADR 0018](../adr/0018-panics-in-handler-code-and-the-reload-loader-are-caught.md)) |
 
 `SessionEnd`: `Quit`, `QuitNewConnection`, `ConnectionClosed`, `Error`, `ServerShutdown`.
 
@@ -466,7 +467,7 @@ Environment variable helpers on `ServerConfig` ([configuration.md](configuration
 | Item | Description |
 |------|-------------|
 | `type Error` | Why a load failed. It implements `std::error::Error` and is `Send + Sync + 'static`. The reload then fails with `ReloadError::Load`, which keeps the error as its source |
-| `load(&self)` | Reads the new configurations: an `async fn` that returns `Result<Reloaded<A>, Self::Error>`, whose future is `Send` |
+| `load(&self)` | Reads the new configurations: an `async fn` that returns `Result<Reloaded<A>, Self::Error>`, whose future is `Send`. A panic in it fails the reload with `ReloadError::Load` ([ADR 0018](../adr/0018-panics-in-handler-code-and-the-reload-loader-are-caught.md)) |
 
 An example loader is in [Reload the configuration without a restart](../how-to/reload-the-configuration.md#write-a-loader).
 
@@ -492,6 +493,7 @@ Errors are `thiserror` enums. Every error type implements `std::error::Error`, `
 | `Protocol(ProtocolError)` | Malformed frame, unknown command, invalid state | connection closed |
 | `ActionNotNegotiated(Actions)` | A modification method was called without its action negotiated | the method fails; the connection stays open |
 | `Handler(Box<dyn std::error::Error + Send + Sync>)` | A callback returned an error | connection closed |
+| `HandlerPanic` | A `Handler` method panicked. The panic's message is not kept | connection closed, with no further callback |
 | `Timeout(TimeoutKind)` | `Connect`, `Read`, `Write`, or `Idle` timeout expired | connection closed |
 | `ConnectionClosed` | The MTA closed the connection in the middle of a frame | connection closed |
 | `ConnectionReset` | The MTA reset the connection | connection closed |
@@ -525,7 +527,7 @@ A reload during shutdown fails with `ReloadError::ShuttingDown`, not with an `Er
 | Variant | Meaning |
 |---------|---------|
 | `NoLoader` | `reload()` was called without a registered loader |
-| `Load(Box<dyn std::error::Error + Send + Sync>)` | The application's loader failed; its error is kept as the source |
+| `Load(Box<dyn std::error::Error + Send + Sync>)` | The application's loader failed or panicked; its error, or one that says it panicked, is kept as the source |
 | `Validation(ConfigError)` | The new configuration is invalid |
 | `RestartRequired { settings }` | The new configuration changes settings that require a restart; `settings` (`Vec<&'static str>`) names them, in the order of [configuration.md](configuration.md#serverconfig-reference), and the message lists them. Nothing was applied |
 | `Bind { addr, source }` | A new listener failed to bind in `FailFast` mode; the reload was rolled back |
@@ -561,7 +563,7 @@ A reload during shutdown fails with `ReloadError::ShuttingDown`, not with an `Er
 | `EmptyField` | An address or quarantine reason is empty |
 | `BodyChunkTooLarge { length }` | A `ReplaceBody` chunk is longer than 65,535 bytes |
 
-`ReloadError::Load` and `Error::Handler` box errors whose types belong to the application. They are the only boxed errors in the public API.
+`ReloadError::Load` and `Error::Handler` box errors whose types belong to the application, except the one `Load` holds for a loader that panicked. They are the only boxed errors in the public API.
 
 A failed reload leaves the server running with the previous generation.
 
