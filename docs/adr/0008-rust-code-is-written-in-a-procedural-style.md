@@ -1,6 +1,6 @@
 # ADR 0008: Rust code is written in a procedural style
 
-- Status: Accepted; the exception for `Factory` and `Loader`, and the allowance of function pointers, are superseded by [ADR 0009](0009-no-stored-closures-or-function-pointers.md), the `reload_with` exceptions by [ADR 0010](0010-builder-factory-type-parameter-and-loader-trait.md), and the end of the transition, where the separate Clippy run goes away, by [ADR 0011](0011-the-disallowed-methods-run-stays-for-derive-code.md)
+- Status: Superseded by [ADR 0017](0017-rust-code-is-written-in-a-procedural-style.md)
 - Date: 2026-11-05
 - Affects: all Rust code in the repository: the library, the tests, the test support code, the interop crate, and the examples
 
