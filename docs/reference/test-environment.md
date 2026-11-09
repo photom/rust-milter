@@ -199,4 +199,4 @@ Every action is pinned to a full commit SHA. Dependabot proposes updates to Carg
 
 ## Toolchain
 
-The library's minimum supported Rust version stays 1.85. The test support code locks files with `std::fs::File::try_lock`, stable since Rust 1.89, so running the tests needs Rust 1.89 or later. `rust-toolchain.toml` is the only file that sets the toolchain version. It applies to work in the repository, to every CI job except MSRV, and to the interop runner, whatever the tag of the runner's image. The MSRV check in CI builds the library without its tests.
+The library's minimum supported Rust version stays 1.85. The test support code locks files with `std::fs::File::try_lock`, stable since Rust 1.89, so running the tests needs Rust 1.89 or later. `rust-toolchain.toml` is the only file that sets the toolchain version. It applies to work in the repository, to every CI job except MSRV, and to the interop runner, whatever the tag of the runner's image. No Dependabot job updates it: bump it by hand to the current stable release, for example when Dependabot moves the runner image to a newer Rust tag. The MSRV check in CI builds the library without its tests.
