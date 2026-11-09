@@ -394,6 +394,7 @@ Fatal for the connection, which is closed:
 - frames longer than `per_connection_buffer`, and first packets longer than 1,024 bytes
 - expired timeouts
 - I/O errors
+- a panic in a handler method, after which no further callback runs for the session ([ADR 0018](../adr/0018-panics-in-handler-code-and-the-reload-loader-are-caught.md))
 
 Recoverable within the connection:
 - incomplete frames, which need more data
@@ -404,7 +405,7 @@ Fatal for startup:
 - a bind failure in `FailFast` mode, returned by `run()`
 
 Not fatal on reload:
-- a failed load, an invalid configuration, a changed setting that requires a restart, or a bind failure leaves the running configuration in place and is reported as a `ReloadError`
+- a failed or panicking load, an invalid configuration, a changed setting that requires a restart, or a bind failure leaves the running configuration in place and is reported as a `ReloadError`
 
 ### Propagation
 
