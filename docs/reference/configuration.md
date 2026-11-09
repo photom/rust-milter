@@ -162,7 +162,7 @@ Time a handler spends in a callback counts against none of them; the MTA's own m
 | `max_memory` | `Option<usize>` | `None` (unlimited) | at least `per_connection_buffer` | `immediate` |
 | `per_connection_buffer` | `usize` | 128 KB | 65,540 bytes to 16 MB | `new_connections` |
 
-`per_connection_buffer` is also the largest milter packet the server accepts. Its lower bound is one full default-size packet: 4 length bytes, 1 command byte, and 65,535 data bytes. Neither MTA sends a larger packet in its default build: both send the body in chunks of at most 65,535 bytes, Postfix cuts each header to 60,000 bytes when a milter is configured, and Sendmail limits all headers together to 32,768 bytes ([protocol: Headers and body](milter-protocol.md#headers-and-body)). Raise the value only for an MTA that sends larger packets.
+`per_connection_buffer` is also the largest milter packet the server accepts. Its lower bound is one full default-size packet: 4 length bytes, 1 command byte, and 65,535 data bytes. Neither MTA sends a larger packet in its default build: both send the body in chunks of at most 65,535 bytes, Postfix cuts each header to 60,000 bytes when a milter is configured, and Sendmail limits all headers together to 32,768 bytes ([protocol: Headers and body](milter-protocol.md#headers-and-body)). Raise the value only for an MTA that sends larger packets. It also caps what the macros a connection stores may cost, which real MTAs stay far below ([ADR 0014](../adr/0014-stored-macros-count-against-the-connections-memory.md)).
 
 ### TelemetryConfig
 

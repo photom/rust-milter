@@ -129,17 +129,18 @@ impl std::fmt::Display for TimeoutKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ResourceKind {
-    /// `max_connections`.
-    MaxConnections,
     /// `resource_limits.max_memory`.
     MaxMemory,
+    /// `resource_limits.per_connection_buffer`, which also caps the macros
+    /// a connection stores.
+    PerConnectionBuffer,
 }
 
 impl std::fmt::Display for ResourceKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            ResourceKind::MaxConnections => "max_connections",
             ResourceKind::MaxMemory => "max_memory",
+            ResourceKind::PerConnectionBuffer => "per_connection_buffer",
         })
     }
 }

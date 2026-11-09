@@ -26,7 +26,7 @@ When descriptors run out anyway, the server backs off and keeps running; watch f
 
 ## Cap the buffer memory
 
-Set `resource_limits.max_memory` to the memory the host can spare for connection buffers. Each connection reserves 4 KB when it is accepted, and up to `per_connection_buffer` while a frame arrives. Without a cap, the read buffers can take `max_connections` times `per_connection_buffer`: about 1.25 GB with the defaults. Past the cap, new connections are closed at once, and the MTA applies its failure policy.
+Set `resource_limits.max_memory` to the memory the host can spare for connection buffers. Each connection reserves 4 KB when it is accepted, and up to `per_connection_buffer` while a frame arrives. The macros it stores count too: a few kilobytes from a real MTA, and at most `per_connection_buffer` more from a hostile peer. Without a cap, connections can take `max_connections` times `per_connection_buffer`, about 1.25 GB with the defaults, and twice that when a peer sends hostile macros. Past the cap, new connections are closed at once, and the MTA applies its failure policy.
 
 ## Match the timeouts to the MTA
 

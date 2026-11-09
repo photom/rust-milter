@@ -295,7 +295,7 @@ The library performs these protocol duties for every handler:
 | Version negotiation | Closes the connection if the MTA offers a version below 2; otherwise answers with the lower of the MTA's version and 6 |
 | Flags | Treats zero action or protocol flags from the MTA as the version 1 defaults; requests only flags the MTA offered |
 | Stage filtering | Requests `SMFIP_NO*` for the stages missing from `events()` |
-| Macros | Stores the macros of the stage bytes `C`, `H`, `M`, `R`, `T`, `L`, `N`, `B`, `E`, and `U`, including `L`, `B`, and `U` from Postfix, and drops those of any other byte, which no lookup reaches; never replies to `SMFIC_MACRO`. Macros sent again for a stage replace that stage's earlier ones. Each command of a stage drops the macros of the later stages, as libmilter does, so a message never sees an earlier message's RCPT, DATA, header, body, or end-of-message macros. It also drops the `U` macros, which belong to the unknown command they came with. All macros are cleared when the session ends. `macro_value` looks in the current command's stage first, then in the earlier stages in protocol order (`C`, `H`, `M`, `R`, `T`, `L`, `N`, `B`, `E`). In `unknown`, `abort`, and `session_end`, it looks in every stage, the latest first, starting with `U` |
+| Macros | Stores the macros of the stage bytes `C`, `H`, `M`, `R`, `T`, `L`, `N`, `B`, `E`, and `U`, including `L`, `B`, and `U` from Postfix, and drops those of any other byte, which no lookup reaches; never replies to `SMFIC_MACRO`. Macros sent again for a stage replace that stage's earlier ones. Each command of a stage drops the macros of the later stages, as libmilter does, so a message never sees an earlier message's RCPT, DATA, header, body, or end-of-message macros. It also drops the `U` macros, which belong to the unknown command they came with. All macros are cleared when the session ends. `macro_value` looks in the current command's stage first, then in the earlier stages in protocol order (`C`, `H`, `M`, `R`, `T`, `L`, `N`, `B`, `E`). In `unknown`, `abort`, and `session_end`, it looks in every stage, the latest first, starting with `U`. The stored macros are copies that count against the connection's memory ([ADR 0014](../adr/0014-stored-macros-count-against-the-connections-memory.md)) |
 | Session start | A session starts with `SMFIC_CONNECT`. When the MTA leaves `SMFIC_CONNECT` out, the session starts with the first command after option negotiation, or after `SMFIC_QUIT_NC`, that is not `SMFIC_MACRO`, `SMFIC_ABORT`, or `SMFIC_QUIT` |
 | State machine | Tracks the protocol state with libmilter's transition rules; closes the connection on `SMFIC_QUIT_NC` outside `ST_ENDM` and `ST_UNKN` ([ADR 0001](../adr/0001-commands-in-wrong-state-recover-like-libmilter-or-close.md)) |
 | Commands in a wrong state | Recovers like libmilter for a command that fits from `ST_HELO` (`SMFIC_HELO`, `SMFIC_MAIL`, `SMFIC_UNKNOWN`, and later stages the handler switched off): calls `abort` if a message is open, then processes the command. Ignores `SMFIC_ABORT` and `SMFIC_QUIT`. Closes the connection with a protocol error on any other command ([ADR 0001](../adr/0001-commands-in-wrong-state-recover-like-libmilter-or-close.md)) |
@@ -322,7 +322,7 @@ The library performs these protocol duties for every handler:
 | `as_str()` | `Option<&str>`: the text when it is valid UTF-8 |
 | `to_string_lossy()` | `Cow<str>`: the text with invalid bytes replaced by U+FFFD, for logging and display |
 
-`MilterText` shares the frame's buffer (`bytes::Bytes`), so creating one copies nothing.
+`MilterText` shares the frame's buffer (`bytes::Bytes`), so creating one copies nothing. The macros the library stores are the exception: it copies them, so they do not keep the frame's buffer.
 
 ## Connection information
 
@@ -500,7 +500,7 @@ Errors are `thiserror` enums. Every error type implements `std::error::Error`, `
 | `Config(ConfigError)` | Invalid configuration at build time | `build()` fails |
 | `Bind { addr, source }` | A listener could not bind | `run()` fails in `FailFast` mode, and in `BestEffort` mode when no address binds |
 | `Signals(std::io::Error)` | `run()` could not register the handlers for `SIGTERM`, `SIGINT`, `SIGQUIT`, and `SIGHUP` | `run()` fails |
-| `ResourceLimit(ResourceKind)` | `MaxConnections` or `MaxMemory` reached | connection rejected or closed |
+| `ResourceLimit(ResourceKind)` | `MaxMemory`: a reservation would pass `max_memory`; `PerConnectionBuffer`: a connection's stored macros would pass `per_connection_buffer` | connection closed |
 
 A reload during shutdown fails with `ReloadError::ShuttingDown`, not with an `Error`.
 
@@ -615,7 +615,7 @@ Deprecation:
 Zero copy: frame data, body chunks, and `MilterText` values share `bytes::Bytes` buffers. Text is copied only when a handler converts it, for example with `to_string_lossy()`.
 
 Allocation:
-- per connection: one read buffer, which grows up to `per_connection_buffer` and counts against `max_memory`, and one write buffer, which holds one reply at a time and counts against neither. The largest reply the library builds is a 65,540-byte body chunk; a header or address that a handler sends can make a reply longer
+- per connection: one read buffer, which grows up to `per_connection_buffer` and counts against `max_memory`; the stored macros, which cost at most `per_connection_buffer` and count against `max_memory`; and one write buffer, which holds one reply at a time and counts against neither. The largest reply the library builds is a 65,540-byte body chunk; a header or address that a handler sends can make a reply longer
 - shared: the published configuration (`Arc`), the status counters
 
 Latency targets per frame: P50 < 100 µs, P99 < 1 ms, P99.9 < 10 ms.
@@ -631,7 +631,7 @@ Toolchain and platforms:
 - Linux, macOS, or BSD
 - file descriptors: at least `max_connections` + listeners + 10
 
-Recommended for production: 4 or more CPU cores; memory for one `per_connection_buffer` and one 65,540-byte reply per connection (about 2 GB for 10,000 connections at the default 128 KB), or `max_memory` set to cap the read buffers; and `ulimit -n` of at least `max_connections` plus the listeners plus 10 (10,011 for the defaults with one listener).
+Recommended for production: 4 or more CPU cores; memory for one `per_connection_buffer` and one 65,540-byte reply per connection (about 2 GB for 10,000 connections at the default 128 KB), or `max_memory` set to cap the read buffers and stored macros; and `ulimit -n` of at least `max_connections` plus the listeners plus 10 (10,011 for the defaults with one listener).
 
 ## Possible future additions
 

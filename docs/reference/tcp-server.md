@@ -320,16 +320,18 @@ To support 10,000 or more concurrent connections:
 | Limit | Description |
 |-------|-------------|
 | `max_memory` | Memory limit for buffers (approximate) |
-| `per_connection_buffer` | Per-connection buffer limit |
+| `per_connection_buffer` | Per-connection buffer limit, and the limit on what a connection's stored macros cost |
 
 ### Backpressure
 
 As the server approaches its resource limits:
 
 1. When `max_connections` is reached, the server accepts each new connection and closes it at once. The MTA sees the connection close during option negotiation and applies its own failure policy (Sendmail `F=` flags, Postfix `milter_default_action`). A TCP server cannot answer an incoming connection with `ECONNREFUSED`; only a port with no listener does that. The server checks the limit and counts the new connection in one atomic step, so the listeners together never pass it.
-2. When `max_memory` is set and the connection buffers would exceed it, the server closes new connections at once, as at `max_connections`, and closes a connection whose buffer would have to grow past the limit (`Error::ResourceLimit`).
+2. When `max_memory` is set and the connection buffers would exceed it, the server closes new connections at once, as at `max_connections`, and closes a connection whose reservation would have to grow past the limit (`Error::ResourceLimit`).
 
-`max_memory` counts the read buffers of the open connections. Each connection reserves 4 KB when it is accepted, and grows its reservation to the length of a frame as soon as the frame's length field arrives, before the data. The reservation falls back to 4 KB once the frame is complete. Replies and the values a handler keeps are not counted.
+`max_memory` counts the read buffers and the stored macros of the open connections. Each connection reserves 4 KB when it is accepted, and grows its reservation to the length of a frame as soon as the frame's length field arrives, before the data. Once the frame is complete, the reservation falls back to what its stored macros cost, and at least 4 KB. Replies and the values a handler keeps are not counted.
+
+The protocol engine keeps the macros of up to ten stages between commands. It stores a copy of each stage, so a stored macro does not keep the read buffer it arrived in. Stored macros cost their text plus 64 bytes per name and value pair. That cost may not pass `per_connection_buffer`, with or without `max_memory`: a macro frame that would pass it closes the connection with `Error::ResourceLimit(ResourceKind::PerConnectionBuffer)`. Sendmail and Postfix send a few hundred bytes of macros per stage, so only a hostile peer reaches the limit ([ADR 0014](../adr/0014-stored-macros-count-against-the-connections-memory.md)).
 
 Until its first packet has arrived, a connection accepts a packet of at most 1,024 bytes, or `per_connection_buffer` if that is smaller. Only `SMFIC_OPTNEG` is valid there, and Sendmail and Postfix send it as a 17-byte packet. A longer first packet fails with `Error::FrameTooLarge` as soon as its length field arrives, so a connection that has not negotiated holds only its 4 KB reservation ([ADR 0013](../adr/0013-the-first-packet-is-limited-to-1-kb.md)).
 
@@ -398,7 +400,7 @@ In `BestEffort` mode the server:
 
 Each command that arrives logs "Connection active" with `state`, the protocol state it arrives in, named as in libmilter (such as `ST_HELO`); the first one also logs "First command received". When the connection waits for the next command again, it logs "Connection idle" with the state the command left it in. A connection that sees the shutdown token logs "Connection draining" with `reason` = `server_shutdown` before it closes. A forced close logs no "Connection draining".
 
-The close log is the error form, at WARN, only for the reason `error`: a protocol error, a failed callback, an end of file in the middle of a frame, a frame longer than `per_connection_buffer` or a first packet longer than 1,024 bytes, or a socket error other than a reset. A close for the reasons `client_closed`, `server_shutdown`, `timeout`, `reset`, and `limit_reached` (a buffer that would pass `max_memory`) is the normal form at DEBUG, with `error` added for a timeout, a reset, and a limit. MTAs close idle milter connections and reset connections in normal operation, so neither is a warning.
+The close log is the error form, at WARN, only for the reason `error`: a protocol error, a failed callback, an end of file in the middle of a frame, a frame longer than `per_connection_buffer` or a first packet longer than 1,024 bytes, or a socket error other than a reset. A close for the reasons `client_closed`, `server_shutdown`, `timeout`, `reset`, and `limit_reached` (a reservation that would pass `max_memory`, or stored macros that would pass `per_connection_buffer`) is the normal form at DEBUG, with `error` added for a timeout, a reset, and a limit. MTAs close idle milter connections and reset connections in normal operation, so neither is a warning.
 
 Fields of the "connection accepted" log:
 
