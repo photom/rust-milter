@@ -2,7 +2,7 @@
 
 This guide follows [ADR 0008](../adr/0008-rust-code-is-written-in-a-procedural-style.md), [ADR 0009](../adr/0009-no-stored-closures-or-function-pointers.md), [ADR 0010](../adr/0010-builder-factory-type-parameter-and-loader-trait.md), and the [style check](../reference/test-environment.md#style-check).
 
-rust-milter's code branches with `match`, `if let`, and `let ... else`, returns errors with `?`, and repeats with loops. It calls no method that takes a function, writes no closures outside the builder, and has no `Fn` bounds or function pointer types. This guide shows the rewrite for each pattern the checks reject.
+rust-milter's code branches with `match`, `if let`, and `let ... else`, returns errors with `?`, and repeats with loops. It calls no method that takes a function, writes a closure only where an API requires one (see [Pass a closure where one is allowed](#pass-a-closure-where-one-is-allowed)), and has no `Fn` bounds or function pointer types. This guide shows the rewrite for each pattern the checks reject.
 
 ## Check your code
 
@@ -68,7 +68,7 @@ fn starts_with_digit_too(line: &[u8]) -> bool {
 }
 ```
 
-The library builds with Rust 1.85, which has no let chains. In `src/`, nest the `if let` and the condition. The test crates build with Rust 1.89 and may write `if let Some(first) = line.first() && first.is_ascii_digit()`.
+The library builds with Rust 1.85, which has no let chains. In `src/`, nest the `if let` and the condition. The test crates need Rust 1.89 or later and may write `if let Some(first) = line.first() && first.is_ascii_digit()`.
 
 ## Replace a Result combinator
 
