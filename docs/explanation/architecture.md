@@ -118,7 +118,7 @@ The protocol engine runs the Milter conversation for each connection, as libmilt
 Responsibilities:
 - negotiate options: protocol version (2 to 6), action flags from `Handler::actions()`, protocol flags from `Handler::events()`
 - track the protocol state with libmilter's transition rules, recover from a command in a wrong state where libmilter recovers, and close the connection where libmilter would leave the MTA waiting ([ADR 0001](../adr/0001-commands-in-wrong-state-recover-like-libmilter-or-close.md))
-- store macros per stage and clear them when the session ends
+- store macros per stage, drop the later stages' macros when a stage's command arrives, and clear them all when the session ends
 - create the handler's `Session` value when a callback first asks for it in a session, and its `Message` value at `SMFIC_MAIL` (or at the first command of a message when the handler leaves `MAIL` out of `events()`), and drop them when the session or message ends
 - call the matching handler callback for each command, and turn its decision into the protocol reply, or into no reply where the protocol forbids one
 - offer the modification methods only at end of message, and check that their actions were negotiated

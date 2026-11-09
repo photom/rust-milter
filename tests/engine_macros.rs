@@ -1,4 +1,4 @@
-//! Macro scenarios (ENG-040 to ENG-046) from
+//! Macro scenarios (ENG-040 to ENG-049) from
 //! `docs/testing/protocol-engine.md`.
 
 mod support;
@@ -63,6 +63,11 @@ impl Handler for Reads {
     async fn end_of_message(&self, ctx: &mut EomContext<Self>) -> Result<Decision> {
         self.record("end_of_message", ctx.macro_value(self.name));
         Ok(Decision::Continue)
+    }
+
+    async fn abort(&self, ctx: &mut MessageContext<Self>) -> Result<()> {
+        self.record("abort", ctx.macro_value(self.name));
+        Ok(())
     }
 }
 
@@ -240,5 +245,51 @@ async fn eng_046_a_later_stages_macros_are_not_searched() {
         &log.events()[1..],
         ["mail=m1", "rcpt=r1", "end_of_message=r1", "mail=m2"]
     );
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn eng_048_a_new_message_drops_the_later_stages_macros() {
+    let (server, log) = start("{i}").await;
+    let mut mta = server.mta().await;
+    mta.reach(Reach::Body).await;
+    mta.send(
+        SMFIC_MACRO,
+        macro_data(SMFIC_BODYEOB, &[("i", "QUEUE-ONE")]),
+    )
+    .await;
+    mta.ask_continue(SMFIC_BODYEOB, Bytes::new()).await;
+
+    mta.ask_continue(SMFIC_MAIL, strings(&["<two@void.invalid>"]))
+        .await;
+    mta.ask_continue(SMFIC_RCPT, strings(&["<rcpt@void.invalid>"]))
+        .await;
+    mta.send(SMFIC_ABORT, Bytes::new()).await;
+    // HELO gets a reply, so the abort has run once it arrives.
+    mta.ask_continue(SMFIC_HELO, strings(&["mx.void.invalid"]))
+        .await;
+
+    let events = log.events();
+    assert_eq!(events.last().unwrap(), "abort=none");
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn eng_049_a_stage_command_drops_the_unknown_commands_macros() {
+    let (server, log) = start("{x}").await;
+    let mut mta = server.mta().await;
+    mta.reach(Reach::Helo).await;
+    mta.send(SMFIC_MACRO, macro_data(SMFIC_UNKNOWN, &[("{x}", "u1")]))
+        .await;
+    mta.ask_continue(SMFIC_UNKNOWN, strings(&["NOOP"])).await;
+
+    mta.ask_continue(SMFIC_MAIL, strings(&["<one@void.invalid>"]))
+        .await;
+    mta.send(SMFIC_ABORT, Bytes::new()).await;
+    mta.ask_continue(SMFIC_HELO, strings(&["mx.void.invalid"]))
+        .await;
+
+    let events = log.events();
+    assert_eq!(events.last().unwrap(), "abort=none");
     server.stop().await;
 }
