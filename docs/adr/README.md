@@ -8,17 +8,19 @@ Decisions that shape rust-milter's design and specification, with their context 
 | [0002](0002-library-runs-the-protocol-handlers-decide.md) | The library runs the Milter protocol; handlers make decisions | Accepted |
 | [0003](0003-never-record-the-smtp-client-address.md) | rust-milter never records the SMTP client's address | Accepted |
 | [0004](0004-metrics-come-from-opentelemetry-and-status.md) | Metrics come from OpenTelemetry and status(), with no collector trait | Accepted |
-| [0005](0005-reload-closes-no-connection-and-rebinds-no-listener.md) | A reload closes no open connection and rebinds no listener | Accepted; the `backlog` decision is superseded by ADR 0007 |
+| [0005](0005-reload-closes-no-connection-and-rebinds-no-listener.md) | A reload closes no open connection and rebinds no listener | Superseded by ADR 0016 |
 | [0006](0006-connection-timeouts-per-frame-and-libmilter-idle-default.md) | Connection timeouts are split per frame, and the idle default follows libmilter | Accepted |
-| [0007](0007-a-reload-that-changes-a-restart-setting-fails.md) | A reload that changes a setting that requires a restart fails | Accepted |
-| [0008](0008-rust-code-is-written-in-a-procedural-style.md) | Rust code is written in a procedural style | Accepted; the `Factory` and `Loader` exception and the allowance of function pointers are superseded by ADR 0009, the `reload_with` exceptions by ADR 0010, and the end of the transition by ADR 0011 |
-| [0009](0009-no-stored-closures-or-function-pointers.md) | No stored closures or function pointers | Accepted; its list of exceptions is extended by ADR 0010 |
-| [0010](0010-builder-factory-type-parameter-and-loader-trait.md) | The builder keeps the handler factory in a type parameter and takes a loader trait | Accepted |
-| [0011](0011-the-disallowed-methods-run-stays-for-derive-code.md) | The disallowed-methods run stays for derive code | Accepted |
+| [0007](0007-a-reload-that-changes-a-restart-setting-fails.md) | A reload that changes a setting that requires a restart fails | Superseded by ADR 0016 |
+| [0008](0008-rust-code-is-written-in-a-procedural-style.md) | Rust code is written in a procedural style | Superseded by ADR 0017 |
+| [0009](0009-no-stored-closures-or-function-pointers.md) | No stored closures or function pointers | Superseded by ADR 0017 |
+| [0010](0010-builder-factory-type-parameter-and-loader-trait.md) | The builder keeps the handler factory in a type parameter and takes a loader trait | Superseded by ADR 0017 |
+| [0011](0011-the-disallowed-methods-run-stays-for-derive-code.md) | The disallowed-methods run stays for derive code | Superseded by ADR 0017 |
 | [0012](0012-no-file-descriptor-limit-setting.md) | rust-milter has no file descriptor limit setting | Accepted |
 | [0013](0013-the-first-packet-is-limited-to-1-kb.md) | The first packet of a connection is limited to 1 KB | Accepted |
 | [0014](0014-stored-macros-count-against-the-connections-memory.md) | Stored macros count against the connection's memory | Accepted |
 | [0015](0015-commands-in-wrong-state-follow-libmilter-or-close.md) | Commands in a wrong state follow libmilter, or close the connection | Accepted |
+| [0016](0016-a-reload-closes-no-connection-and-fails-on-a-restart-setting.md) | A reload closes no open connection, and fails when it changes a setting that requires a restart | Accepted |
+| [0017](0017-rust-code-is-written-in-a-procedural-style.md) | Rust code is written in a procedural style | Accepted |
 
 Conventions:
 - One file per decision, named `NNNN-short-title.md`, numbered in order.
