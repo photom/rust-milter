@@ -41,6 +41,27 @@ impl Macros {
         self.stages.push((stage, macros));
     }
 
+    /// Drops the macros of the stages after `stage` when the command of
+    /// `stage` arrives, as libmilter's `mi_clr_macros` does, so a message
+    /// never sees an earlier message's later-stage macros. Also drops those
+    /// of `U`, which belong to the unknown command they came with; libmilter
+    /// has no `U` stage. A byte that is no stage in [`ORDER`] drops nothing.
+    pub(crate) fn drop_after(&mut self, stage: u8) {
+        let Some(position) = order_position(stage) else {
+            return;
+        };
+        let later = &ORDER[position + 1..];
+        let mut index = 0;
+        while index < self.stages.len() {
+            let stored = self.stages[index].0;
+            if stored == SMFIC_UNKNOWN || later.contains(&stored) {
+                self.stages.swap_remove(index);
+            } else {
+                index += 1;
+            }
+        }
+    }
+
     /// Looks `name` up in `stage` and the earlier stages, the latest first.
     /// Without a stage, or for `U`, it looks in every stage, starting with
     /// `U`.

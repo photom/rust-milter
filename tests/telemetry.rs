@@ -295,6 +295,27 @@ async fn tel_021_a_message_span_carries_the_queue_id() {
 }
 
 #[tokio::test]
+async fn tel_033_an_aborted_message_has_no_earlier_queue_id() {
+    let server = TestServer::start(ContinueAll).await;
+    let window = Window::open(&server);
+    let mut mta = server.mta().await;
+    mta.reach(Reach::Body).await;
+    mta.send(SMFIC_MACRO, macro_data(SMFIC_BODYEOB, &[("i", "4XyZ12")]))
+        .await;
+    mta.ask_continue(SMFIC_BODYEOB, Bytes::new()).await;
+    mta.ask_continue(SMFIC_MAIL, strings(&["<two@void.invalid>"]))
+        .await;
+    mta.ask_continue(SMFIC_RCPT, strings(&["<rcpt@void.invalid>"]))
+        .await;
+    mta.send(SMFIC_ABORT, Bytes::new()).await;
+    mta.close().await;
+    let traces = window.close(server).await;
+    let messages = traces.named("milter.message");
+    let ids = span_texts(&messages, "milter.queue_id");
+    assert_eq!(ids, [Some("4XyZ12".to_owned()), None]);
+}
+
+#[tokio::test]
 async fn tel_022_the_connection_span_names_both_ends() {
     let server = TestServer::start(ContinueAll).await;
     let window = Window::open(&server);

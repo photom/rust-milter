@@ -326,6 +326,7 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
         if !self.in_session && !matches!(command, Command::Abort | Command::Quit) {
             self.open_session();
         }
+        self.ctx.message.session.macros.drop_after(code);
         self.state = target;
         self.dispatch(command).await
     }
