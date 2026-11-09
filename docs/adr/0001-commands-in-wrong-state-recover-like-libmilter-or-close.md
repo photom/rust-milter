@@ -1,7 +1,7 @@
 # ADR 0001: Commands in a wrong state recover like libmilter, or close the connection
 
-- Status: Accepted
-- Date: 2026-10-30 (decision on `SMFIC_QUIT_NC`); extended 2026-10-31 to all other commands; `SMFIC_QUIT` corrected 2026-11-09 after a closer reading of `mi_engine`
+- Status: Superseded by [ADR 0015](0015-commands-in-wrong-state-follow-libmilter-or-close.md)
+- Date: 2026-10-30 (decision on `SMFIC_QUIT_NC`); extended 2026-10-31 to all other commands
 - Affects: protocol engine, milter client, handler contract
 - Related: [ADR 0002](0002-library-runs-the-protocol-handlers-decide.md)
 
@@ -27,15 +27,12 @@ The protocol engine must decide what to do when the MTA sends a command that doe
 2. It checks whether the command fits from `ST_HELO`, using its transition table (`trans_ok`), which also skips stages the milter switched off (`fix_stm`).
 3. If it fits, libmilter processes the command normally and replies. If it does not, libmilter ignores the command and sends no reply.
 
-The loop that reads the commands is `do { ... } while (!bitset(CT_END, cmds[i].cm_todo))`, and an ignored command takes a `continue` to the loop condition. `SMFIC_QUIT` carries `CT_END`, so even an ignored `SMFIC_QUIT` ends the loop: libmilter then calls `xxfi_close` and closes the connection, in any state and even before option negotiation.
-
 From `ST_HELO`, only `SMFIC_HELO`, `SMFIC_MAIL`, and `SMFIC_UNKNOWN` fit, plus commands of later stages the milter switched off. The outcome for the MTA therefore depends on the command:
 
 | Command in a wrong state | libmilter | Effect on the MTA |
 |---|---|---|
 | `SMFIC_HELO`, `SMFIC_MAIL`, `SMFIC_UNKNOWN` | processed as if the state were `ST_HELO` | normal reply |
-| `SMFIC_ABORT` | ignored | none; the command gets no reply |
-| `SMFIC_QUIT` | ignored, but `CT_END` ends the command loop: `xxfi_close` runs and the connection closes | none; the command gets no reply, and the session ends |
+| `SMFIC_ABORT`, `SMFIC_QUIT` | ignored | none; neither command gets a reply |
 | `SMFIC_QUIT_NC` | ignored | the next `SMFIC_CONNECT` is ignored too; the MTA waits until its timeout |
 | every other command, such as `SMFIC_RCPT`, `SMFIC_DATA`, `SMFIC_HEADER`, `SMFIC_EOH`, `SMFIC_BODY`, `SMFIC_BODYEOB`, `SMFIC_CONNECT`, `SMFIC_OPTNEG` | ignored, no reply | the MTA waits for a reply until its timeout |
 
@@ -62,8 +59,7 @@ Option (b) in both cases: follow libmilter, except where libmilter would leave t
 | Command in a wrong state | rust-milter |
 |---|---|
 | `SMFIC_HELO`, `SMFIC_MAIL`, `SMFIC_UNKNOWN`, and any command that fits from `ST_HELO` under libmilter's transition rules | recover like libmilter: if a message is open, call the handler's `abort` and drop the message state; then process the command as if the state were `ST_HELO` |
-| `SMFIC_ABORT` | ignore like libmilter: no callback, no reply, no state change |
-| `SMFIC_QUIT` | end the session like libmilter: call the handler's `abort` if a message is open, then `session_end` with `SessionEnd::Quit`, send no reply, and close the connection. With no session open, before option negotiation, before the first session command, or after `SMFIC_QUIT_NC`, close the connection without a callback |
+| `SMFIC_ABORT`, `SMFIC_QUIT` | ignore like libmilter: no callback, no reply, no state change |
 | `SMFIC_QUIT_NC` outside `ST_ENDM` and `ST_UNKN` | close the connection with a protocol error |
 | every other command | close the connection with a protocol error |
 
@@ -77,14 +73,13 @@ Positive:
 - rust-milter behaves like libmilter wherever libmilter's behavior works: the same commands recover, and the same harmless commands are ignored.
 - No command leaves the MTA waiting for a reply. Where libmilter would hang, the connection closes at once, the MTA applies its failure policy, and it can reconnect.
 - Handler authors never deal with protocol state, and meet `SMFIC_QUIT_NC` only as a `session_end` with `QuitNewConnection`.
-- A handler sees `SessionEnd::Quit` whenever the MTA sent `SMFIC_QUIT`, whatever the reply to the last message was. Sendmail and Postfix send it after HELO without mail, and after a message the milter accepted, rejected, tempfailed, or discarded, all of which reset the state to `ST_HELO`.
 - The milter client uses one reuse rule for libmilter and rust-milter servers. Its reuse policy is `libmilter_compatible` (default) or `never`; there is no `any_state` policy.
 
 Negative:
 - Connection reuse stays limited. A connection is reusable only when the milter ended the last message with `SMFIR_CONTINUE`, or after an unknown command. A milter that ends messages with `SMFIR_ACCEPT` gets a new connection per session.
 - An MTA that sends commands out of order and relies on libmilter's silence to keep the connection open loses the connection instead. Neither Sendmail nor Postfix does this; both follow the state order.
 - An MTA that relies on rust-milter accepting `SMFIC_QUIT_NC` in more states than libmilter does will see closed connections.
-- An MTA that sends `SMFIC_QUIT` and then more commands on the same connection loses the connection. libmilter closes it too, and neither Sendmail nor Postfix does this.
+- An ignored `SMFIC_QUIT` in a wrong state, for example right after `SMFIC_HELO`, ends the session only when the MTA closes the connection, so the handler's `session_end` reports `ConnectionClosed`, not `Quit`. libmilter behaves the same way: it calls `xxfi_close` at end of file.
 
 Follow-up work:
 - Test every command in every protocol state against the decision table, with and without stages switched off in `events()`, and check the close reason (`error`, with `error.type` `Protocol`) in telemetry.
@@ -98,5 +93,5 @@ Follow-up work:
 - [milter-client.md, reuse rules](../reference/milter-client.md#reuse-rules)
 - [Connection reuse and session isolation](../explanation/connection-reuse.md)
 - [Library architecture, state management](../explanation/architecture.md#state-management)
-- Sendmail 8.19.0.2 source: `libmilter/engine.c` (`mi_engine`, `next_states`, `trans_ok`, `fix_stm`, the `cmds` table, `st_quit`)
+- Sendmail 8.19.0.2 source: `libmilter/engine.c` (`mi_engine`, `next_states`, `trans_ok`, `fix_stm`)
 - Postfix 3.12 source: `src/milter/milter8.c`
