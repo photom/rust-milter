@@ -8,7 +8,7 @@ use rust_milter_interop::{Logs, Mail, Milter, Mta, Smtp, sink};
 /// How long [`SlowWithProgress`] takes at the end of each message. It stays
 /// above the latest moment `sendmail-short`'s 4-second `E` timeout can fire,
 /// about 5 s after end of message.
-const SLOW: Duration = Duration::from_secs(8);
+const SLOW: Duration = Duration::from_secs(7);
 
 /// Takes [`SLOW`] at the end of each message, and calls `progress()` every
 /// second meanwhile.
