@@ -4,7 +4,7 @@ Decisions that shape rust-milter's design and specification, with their context 
 
 | ADR | Title | Status |
 |-----|-------|--------|
-| [0001](0001-commands-in-wrong-state-recover-like-libmilter-or-close.md) | Commands in a wrong state recover like libmilter, or close the connection | Accepted |
+| [0001](0001-commands-in-wrong-state-recover-like-libmilter-or-close.md) | Commands in a wrong state recover like libmilter, or close the connection | Superseded by ADR 0015 |
 | [0002](0002-library-runs-the-protocol-handlers-decide.md) | The library runs the Milter protocol; handlers make decisions | Accepted |
 | [0003](0003-never-record-the-smtp-client-address.md) | rust-milter never records the SMTP client's address | Accepted |
 | [0004](0004-metrics-come-from-opentelemetry-and-status.md) | Metrics come from OpenTelemetry and status(), with no collector trait | Accepted |
@@ -18,9 +18,12 @@ Decisions that shape rust-milter's design and specification, with their context 
 | [0012](0012-no-file-descriptor-limit-setting.md) | rust-milter has no file descriptor limit setting | Accepted |
 | [0013](0013-the-first-packet-is-limited-to-1-kb.md) | The first packet of a connection is limited to 1 KB | Accepted |
 | [0014](0014-stored-macros-count-against-the-connections-memory.md) | Stored macros count against the connection's memory | Accepted |
+| [0015](0015-commands-in-wrong-state-follow-libmilter-or-close.md) | Commands in a wrong state follow libmilter, or close the connection | Accepted |
 
 Conventions:
 - One file per decision, named `NNNN-short-title.md`, numbered in order.
 - Sections: status and date, context, options considered, decision, consequences, references.
 - Status is `Proposed`, `Accepted`, `Superseded by ADR NNNN`, or `Deprecated`.
-- When a later decision contradicts an accepted record, the record itself is corrected, and its date line says when and why. A new ADR is for a decision that contradicts none.
+- An accepted record is not rewritten; only its status line changes.
+- When a decision turns out wrong or changes, a new ADR restates the whole decision, so that it can be read alone. The old record's status becomes `Superseded by ADR NNNN`, and its body stays as it was.
+- Specifications and other documents link only to records in force, and describe current behavior without its history.

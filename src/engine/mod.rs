@@ -2,7 +2,7 @@
 //! calls the handler, as libmilter's `mi_engine` does.
 //!
 //! The rules it follows are in "Protocol engine behavior" in
-//! `docs/reference/api-specification.md` and in ADR 0001.
+//! `docs/reference/api-specification.md` and in ADR 0015.
 
 mod io;
 mod macros;
@@ -298,7 +298,7 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
         let command = Command::from_frame(frame)?;
 
         // `SMFIC_QUIT` ends the session in any state, as in libmilter, where
-        // it ends the command loop even when it does not fit (ADR 0001).
+        // it ends the command loop even when it does not fit (ADR 0015).
         if let Command::Quit = command {
             self.end(SessionEnd::Quit).await;
             return Ok(Flow::Close);
