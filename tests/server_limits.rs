@@ -1,7 +1,8 @@
 //! Resource limit and concurrency scenarios (SRV-050 to SRV-052, SRV-056, SRV-058,
-//! SRV-060, SRV-061, SRV-073, SRV-080 to SRV-083, SRV-085, SRV-086) from
-//! `docs/testing/server.md`. SRV-053 to SRV-055 are unit tests of the accept
-//! loop, and SRV-084 a unit test of the macro store.
+//! SRV-060, SRV-061, SRV-073, SRV-080 to SRV-083, SRV-085, SRV-086, SRV-089 to
+//! SRV-092) from `docs/testing/server.md`. SRV-053 to SRV-055 are unit tests
+//! of the accept loop, SRV-084 a unit test of the macro store, and SRV-087
+//! and SRV-088 unit tests of the connection's reader.
 
 mod support;
 
@@ -438,6 +439,154 @@ async fn srv_083_dropped_macros_return_their_memory() {
     b.write_raw(&frame_start(30_000)).await;
     b.write_raw(&frame_rest(30_000)).await;
 
+    assert_eq!(b.recv().await.unwrap().command, SMFIR_CONTINUE);
+    server.stop().await;
+}
+
+/// Whether the recorder logged `event`.
+fn ran(recorder: &Recorder, event: &str) -> bool {
+    let mut seen = false;
+    for logged in recorder.log.events() {
+        if logged == event {
+            seen = true;
+        }
+    }
+    seen
+}
+
+#[tokio::test]
+async fn srv_089_a_command_may_not_cost_more_than_per_connection_buffer() {
+    let nul_strings = Bytes::from(vec![0u8; 60_000]);
+    let mut empty_pairs = vec![SMFIC_CONNECT];
+    empty_pairs.resize(60_001, 0);
+    let runs = [
+        (Reach::Helo, SMFIC_MAIL, nul_strings.clone(), "mail"),
+        (Reach::Mail, SMFIC_RCPT, nul_strings, "rcpt"),
+        (Reach::Helo, SMFIC_MACRO, Bytes::from(empty_pairs), "mail"),
+    ];
+    for (state, command, data, callback) in runs {
+        let (logs, _guard) = Logs::capture();
+        let recorder = Recorder::default();
+        let server = TestServer::start(recorder.clone()).await;
+        let mut mta = server.mta().await;
+        mta.reach(state).await;
+        let before = ran(&recorder, callback);
+
+        mta.send(command, data).await;
+
+        assert!(mta.closes().await, "{command}");
+        assert!(closed_at_limit(&logs, "per_connection_buffer"), "{command}");
+        assert_eq!(ran(&recorder, callback), before, "{command}");
+        server.stop().await;
+    }
+}
+
+#[tokio::test]
+async fn srv_090_decoded_strings_count_against_max_memory() {
+    let (logs, _guard) = Logs::capture();
+    let recorder = Recorder::default();
+    let server = TestServer::start_with(tight_memory(), recorder.clone()).await;
+    let mut a = server.mta().await;
+    a.negotiate().await;
+    let value = "v".repeat(40_000);
+    a.send(SMFIC_MACRO, macro_data(SMFIC_CONNECT, &[("{x}", &value)]))
+        .await;
+    a.ask_continue(
+        SMFIC_CONNECT,
+        connect_data("[192.0.2.1]", "192.0.2.1", 4711),
+    )
+    .await;
+    let mut b = server.mta().await;
+    b.reach(Reach::Helo).await;
+    // 1,000 strings of 19 bytes and a NUL: 20,000 bytes of data.
+    let address = format!("<{}>", "s".repeat(17));
+    let mut texts = Vec::new();
+    for _ in 0..1_000 {
+        texts.push(address.as_str());
+    }
+
+    b.send(SMFIC_MAIL, strings(&texts)).await;
+
+    assert!(b.closes().await);
+    assert!(closed_at_limit(&logs, "max_memory"));
+    assert!(!ran(&recorder, "mail"));
+    a.ask_continue(SMFIC_HELO, strings(&["client.void.invalid"]))
+        .await;
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn srv_091_a_frame_stays_reserved_until_its_command_finishes() {
+    let (logs, _guard) = Logs::capture();
+    let server = TestServer::start_with(tight_memory(), SlowForOne).await;
+    let mut a = server.mta().await;
+    a.negotiate().await;
+    a.ask_continue(SMFIC_CONNECT, connect_data("slow", "192.0.2.1", 4711))
+        .await;
+    let sender = format!("<{}@void.invalid>", "s".repeat(29_985));
+    a.send(SMFIC_MAIL, strings(&[sender.as_str()])).await;
+    // Let the server read A's frame and start the slow `mail`.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let mut b = server.mta().await;
+    b.reach(Reach::Data).await;
+
+    b.write_raw(&frame_start(40_000)).await;
+
+    assert!(b.closes().await);
+    assert!(closed_at_limit(&logs, "max_memory"));
+    assert_eq!(a.recv().await.unwrap().command, SMFIR_CONTINUE);
+    let mut c = server.mta().await;
+    c.reach(Reach::Data).await;
+    c.write_raw(&frame_start(40_000)).await;
+    c.write_raw(&frame_rest(40_000)).await;
+    assert_eq!(c.recv().await.unwrap().command, SMFIR_CONTINUE);
+    server.stop().await;
+}
+
+/// Records the sender and arguments `mail` receives.
+#[derive(Clone, Default)]
+struct Envelope(Arc<Mutex<Vec<String>>>);
+
+impl Handler for Envelope {
+    type Session = ();
+    type Message = ();
+
+    async fn mail(
+        &self,
+        _ctx: &mut MessageContext<Self>,
+        sender: &MilterText,
+        args: &[MilterText],
+    ) -> Result<Decision> {
+        let mut seen = self.0.lock().unwrap();
+        seen.push(sender.to_string_lossy().into_owned());
+        for arg in args {
+            seen.push(arg.to_string_lossy().into_owned());
+        }
+        Ok(Decision::Continue)
+    }
+}
+
+#[tokio::test]
+async fn srv_092_a_command_returns_its_memory_after_the_reply() {
+    let envelope = Envelope::default();
+    let server = TestServer::start_with(tight_memory(), envelope.clone()).await;
+    let mut a = server.mta().await;
+    a.reach(Reach::Helo).await;
+
+    a.ask_continue(
+        SMFIC_MAIL,
+        strings(&["<sender@void.invalid>", "SIZE=1024", "BODY=8BITMIME"]),
+    )
+    .await;
+
+    assert_eq!(
+        *envelope.0.lock().unwrap(),
+        ["<sender@void.invalid>", "SIZE=1024", "BODY=8BITMIME"]
+    );
+    let mut b = server.mta().await;
+    b.reach(Reach::Data).await;
+    b.write_raw(&frame_start(60_000)).await;
+    b.write_raw(&frame_rest(60_000)).await;
     assert_eq!(b.recv().await.unwrap().command, SMFIR_CONTINUE);
     server.stop().await;
 }

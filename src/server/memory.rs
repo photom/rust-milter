@@ -1,5 +1,6 @@
-//! The `max_memory` budget for the connections' read buffers and stored
-//! macros. See "Backpressure" in `docs/reference/tcp-server.md`.
+//! The `max_memory` budget for the connections' read buffers, the commands
+//! they are processing, and their stored macros. See "Backpressure" in
+//! `docs/reference/tcp-server.md`.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -102,6 +103,17 @@ impl Reservation {
         }
         self.size = wanted;
         true
+    }
+}
+
+#[cfg(test)]
+impl Reservation {
+    /// A reservation against a budget of its own, with no limit.
+    pub(crate) fn unlimited() -> Reservation {
+        match Reservation::new(&Budget::new(None)) {
+            Some(reservation) => reservation,
+            None => unreachable!("a budget with no limit takes every reservation"),
+        }
     }
 }
 
