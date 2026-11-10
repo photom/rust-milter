@@ -197,6 +197,8 @@ A loader that panics fails the reload with `ReloadError::Load`, as a loader that
 
 Logs carry the names of changed settings, never their values. A configuration can contain secrets, and the application configuration is opaque to the library.
 
+The `error` field of "Reload failed" holds the error and its source chain. For `ReloadError::Load` that includes the loader's own error, which the library writes as the loader formatted it. A loader must keep setting values and file contents out of its errors. Parser errors often quote the line they failed on, so wrap the position instead of the parser's error. [Write a loader](../how-to/reload-the-configuration.md#write-a-loader) shows one way.
+
 The reload metrics are defined under "Configuration reload metrics" in [telemetry.md](telemetry.md).
 
 `ServerHandle::status()` reports one more field next to the [health check](tcp-server.md#health-check) fields: `config_generation`, the current generation.
