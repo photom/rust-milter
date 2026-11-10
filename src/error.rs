@@ -143,8 +143,8 @@ impl std::fmt::Display for TimeoutKind {
 pub enum ResourceKind {
     /// `resource_limits.max_memory`.
     MaxMemory,
-    /// `resource_limits.per_connection_buffer`, which also caps the macros
-    /// a connection stores.
+    /// `resource_limits.per_connection_buffer`, which also caps what one
+    /// command and the macros a connection stores may cost.
     PerConnectionBuffer,
 }
 

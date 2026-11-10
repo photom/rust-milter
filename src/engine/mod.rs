@@ -283,7 +283,8 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
         }
         self.command_span = self.span();
         let flow = self.handle(frame).await?;
-        // The stored macros count against the connection's memory (ADR 0014).
+        // The stored macros count against the connection's memory, and the
+        // finished command no longer does (ADR 0019).
         self.inbound.hold(self.ctx.message.session.macros.cost())?;
         if trace::traced(self.trace.commands, code) {
             let reply = self.ctx.outbound.last_reply.unwrap_or("noreply");
@@ -303,6 +304,8 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
 
     async fn handle(&mut self, frame: Frame) -> Result<Flow> {
         let code = frame.command;
+        // Reserved before decoding, until `process` calls `hold` (ADR 0019).
+        self.inbound.reserve_command(crate::message::cost(&frame))?;
         let command = Command::from_frame(frame)?;
 
         // `SMFIC_QUIT` ends the session in any state, as in libmilter, where

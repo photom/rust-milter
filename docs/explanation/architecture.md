@@ -363,10 +363,10 @@ The Connection component owns the transport state. The protocol engine owns the 
 
 ### Memory
 
-- each connection has one read buffer that grows up to `per_connection_buffer` (default 128 KB, minimum 65,540 bytes, the largest default-size milter packet), and one write buffer that holds one reply at a time
+- each connection has one 4 KB read buffer, and one write buffer that holds one reply at a time. The read buffer grows to fit a larger frame, up to `per_connection_buffer` (default 128 KB, minimum 65,540 bytes, the largest default-size milter packet), and goes back to 4 KB once that frame has been parsed, so an idle connection does not keep a large allocation
 - frame data is shared without copying through `bytes::Bytes`; only the stored macros are copied, so they do not keep a read buffer
-- the stored macros cost at most `per_connection_buffer` per connection
-- `max_memory` caps the total of the read buffers and the stored macros; the write buffers and the values handlers keep are not counted
+- a command holds its frame and the strings decoded from it until it finishes, and costs at most `per_connection_buffer`; the stored macros cost at most `per_connection_buffer` too
+- `max_memory` caps the total of the read buffers, the commands being processed, and the stored macros; the write buffers and the values handlers keep are not counted ([ADR 0019](../adr/0019-a-connection-counts-what-it-holds-until-each-command-ends.md))
 
 ### File descriptors
 
@@ -380,7 +380,7 @@ All limits and defaults are in [configuration.md](../reference/configuration.md)
 
 Practices the implementation follows inside the data plane:
 - `tokio::select!` with the shutdown token wherever a task waits, so cancellation is prompt and safe.
-- Buffered I/O on each connection, with buffers reused for the life of the connection; the read buffer is bounded by `per_connection_buffer`.
+- Buffered I/O on each connection. The write buffer is reused for the life of the connection. The read buffer, bounded by `per_connection_buffer`, is reused between frames of up to 4 KB and replaced with a new 4 KB buffer after a larger frame.
 - `bytes::Bytes` for frame data, so body chunks and header values are shared rather than copied.
 - No blocking calls on runtime threads; CPU-heavy work, if a handler needs it, goes to `tokio::task::spawn_blocking`.
 - File descriptors released as soon as a connection closes; on exhaustion the accept loop backs off instead of failing.

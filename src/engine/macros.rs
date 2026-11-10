@@ -18,7 +18,7 @@ const ORDER: [u8; 9] = [
 ];
 
 /// What a stored name and value pair costs besides its text: the two
-/// `MilterText` values (ADR 0014).
+/// `MilterText` values (ADR 0019).
 const PAIR_COST: usize = std::mem::size_of::<(MilterText, MilterText)>();
 
 /// Macro values per stage byte.
@@ -69,7 +69,7 @@ impl Macros {
     }
 
     /// What the stored macros cost: their text, plus [`PAIR_COST`] per pair.
-    /// It counts against the connection's memory (ADR 0014).
+    /// It counts against the connection's memory (ADR 0019).
     pub(crate) fn cost(&self) -> usize {
         let mut cost = 0;
         for (_, macros) in &self.stages {

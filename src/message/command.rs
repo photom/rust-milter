@@ -9,6 +9,9 @@ use crate::{Frame, ProtocolError, Result};
 /// Length of the three 32-bit fields of an option negotiation.
 const OPTNEG_LENGTH: usize = 12;
 
+/// Length of a frame's length field and command byte.
+const FRAME_HEADER: usize = 5;
+
 /// A command from the MTA (`SMFIC_*`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -133,6 +136,31 @@ impl Command {
     }
 }
 
+/// What `frame` holds while its command is processed: the whole packet,
+/// plus one [`MilterText`] for each NUL byte in the data of a command that
+/// decodes to text, an upper bound on the strings it decodes to. The engine
+/// reserves it before it decodes the frame, because a frame of NUL bytes
+/// decodes to many times its own size (ADR 0019).
+pub(crate) fn cost(frame: &Frame) -> usize {
+    let packet = FRAME_HEADER + frame.data.len();
+    match frame.command {
+        SMFIC_MACRO | SMFIC_CONNECT | SMFIC_HELO | SMFIC_MAIL | SMFIC_RCPT | SMFIC_HEADER
+        | SMFIC_UNKNOWN => packet + nul_count(&frame.data) * std::mem::size_of::<MilterText>(),
+        _ => packet,
+    }
+}
+
+/// The number of NUL bytes in `data`.
+fn nul_count(data: &[u8]) -> usize {
+    let mut count = 0;
+    for byte in data {
+        if *byte == 0 {
+            count += 1;
+        }
+    }
+    count
+}
+
 /// The value decoded from the data of `command`, or a
 /// [`ProtocolError::Malformed`] error when the data did not decode.
 fn required<T>(decoded: Option<T>, command: u8) -> Result<T> {
@@ -148,7 +176,9 @@ fn decode_macro(mut data: Bytes) -> Option<Command> {
         return None;
     }
     let stage = data.get_u8();
-    let mut macros = Vec::new();
+    // Of the exact size: a growing vector would hold its old and new
+    // buffers at once.
+    let mut macros = Vec::with_capacity(nul_count(&data) / 2);
     while !data.is_empty() {
         let name = MilterText::take(&mut data)?;
         let value = MilterText::take(&mut data)?;
@@ -204,9 +234,30 @@ fn only_one(mut data: Bytes) -> Option<MilterText> {
 ///
 /// Returns `None` when `data` is empty or does not end with a NUL.
 fn strings(mut data: Bytes) -> Option<Vec<MilterText>> {
-    let mut texts = Vec::new();
+    let mut texts = Vec::with_capacity(nul_count(&data));
     while !data.is_empty() {
         texts.push(MilterText::take(&mut data)?);
     }
     (!texts.is_empty()).then_some(texts)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn frame(command: u8, data: &[u8]) -> Frame {
+        Frame::new(command, Bytes::copy_from_slice(data))
+    }
+
+    #[test]
+    fn cmd_045_a_command_costs_its_packet_and_its_strings() {
+        let text = std::mem::size_of::<MilterText>();
+        let mail = frame(SMFIC_MAIL, b"<a@void.invalid>\0SIZE=100\0");
+        let macros = frame(SMFIC_MACRO, b"C{j}\0mx.void.invalid\0{x}\0\0");
+        let body = frame(SMFIC_BODY, &[0; 100]);
+
+        assert_eq!(cost(&mail), 5 + mail.data.len() + 2 * text);
+        assert_eq!(cost(&macros), 5 + macros.data.len() + 4 * text);
+        assert_eq!(cost(&body), 5 + 100);
+    }
 }
