@@ -31,6 +31,7 @@ Scenarios for decoding commands, encoding replies, and validating custom reply c
 | CMD-042 | unit | An `M` frame whose sender holds bytes that are not valid UTF-8 | the frame is decoded | `Mail` with the raw bytes kept in a `MilterText` whose `as_str()` returns `None`; no error | [api: Text from the MTA](../reference/api-specification.md#text-from-the-mta) |
 | CMD-043 | unit | An `M` frame with an SMTPUTF8 address such as `<ユーザー@void.invalid>` | the frame is decoded | `Mail` whose sender's `as_str()` returns the address | [api: Text from the MTA](../reference/api-specification.md#text-from-the-mta) |
 | CMD-044 | unit | `H`, `U`, `L`, and `C` frames with bytes after their last field, and an `O` frame with 16 data bytes | each frame is decoded | a protocol error for the first four; `OptNeg` from the first 12 bytes for the last, because libmilter accepts a longer option negotiation | [api: Command](../reference/api-specification.md#command) |
+| CMD-045 | unit | An `M` frame with `<a@void.invalid>\0SIZE=100\0`, a `D` frame with stage `C` and two pairs, and a `B` frame of 100 NUL bytes | the cost of each frame is computed | the packet's length plus 64 bytes for the `M` frame, plus 128 bytes for the `D` frame, and the packet's length alone for the `B` frame, whose data is not split into strings | [tcp-server: Backpressure](../reference/tcp-server.md#backpressure) |
 
 ## Reply encoding
 
