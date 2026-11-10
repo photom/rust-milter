@@ -20,6 +20,7 @@ pub enum Error {
     ActionNotNegotiated(Actions),
 
     /// A callback returned an error. Build it with [`Error::handler`].
+    /// rust-milter logs it with its source chain.
     #[error("the handler failed")]
     Handler(#[source] Box<dyn std::error::Error + Send + Sync>),
 
@@ -81,6 +82,11 @@ pub enum Error {
 
 impl Error {
     /// Wraps a handler's own error as [`Error::Handler`].
+    ///
+    /// rust-milter writes the error and its source chain into the WARN
+    /// "Connection closed" log. Keep SMTP data, such as addresses, header
+    /// values, and macro values, out of its message and out of the errors
+    /// it wraps.
     pub fn handler(error: impl std::error::Error + Send + Sync + 'static) -> Error {
         Error::Handler(Box::new(error))
     }

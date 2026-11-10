@@ -396,9 +396,11 @@ In `BestEffort` mode the server:
 | Connection closed (normal) | DEBUG | `conn_id`, `remote_addr`, `duration_ms`, `bytes_read`, `bytes_written`, `reason` |
 | Connection closed (error) | WARN | `conn_id`, `remote_addr`, `duration_ms`, `bytes_read`, `bytes_written`, `error`, `reason` |
 | Connection timeout | DEBUG | `conn_id`, `timeout_type`, `timeout_value` |
-| Connection rejected (limit) | WARN | `conn_id`, `remote_addr`, `max_connections` |
+| Connection rejected (limit) | WARN for the first rejection of a run, DEBUG for the rest | `conn_id`, `remote_addr`, `max_connections` |
 
 Each command that arrives logs "Connection active" with `state`, the protocol state it arrives in, named as in libmilter (such as `ST_HELO`); the first one also logs "First command received". When the connection waits for the next command again, it logs "Connection idle" with the state the command left it in. A connection that sees the shutdown token logs "Connection draining" with `reason` = `server_shutdown` before it closes. A forced close logs no "Connection draining".
+
+A connection turned away at `max_connections` logs "Connection rejected (limit)", and one turned away at accept because its 4 KB reservation would pass `max_memory` logs "Resource limit reached". A run of rejections at one limit lasts until the server takes on a connection again. Only the first rejection of a run logs at WARN; the rest log at DEBUG, so a peer that keeps reconnecting at a limit adds no WARN lines. `milter.server.connection.rejected` and `status()` count every rejection.
 
 The close log is the error form, at WARN, only for the reason `error`: a protocol error, a failed callback, an end of file in the middle of a frame, a frame longer than `per_connection_buffer` or a first packet longer than 1,024 bytes, or a socket error other than a reset. A close for the reasons `client_closed`, `server_shutdown`, `timeout`, `reset`, and `limit_reached` (a reservation that would pass `max_memory`, or stored macros that would pass `per_connection_buffer`) is the normal form at DEBUG, with `error` added for a timeout, a reset, and a limit. MTAs close idle milter connections and reset connections in normal operation, so neither is a warning.
 
@@ -421,7 +423,7 @@ Fields of the "connection closed" log:
 | `bytes_read` | u64 | Total bytes read |
 | `bytes_written` | u64 | Total bytes written |
 | `reason` | String | Close reason: one of the `milter.close_reason` values in [telemetry.md](telemetry.md#attribute-values) |
-| `error` | String | Error message (if applicable) |
+| `error` | String | Error message and its source chain (if applicable). For `Error::Handler` this includes the handler's own error text |
 | `commands` | u64 | Number of commands received |
 
 ### Server lifecycle logs
@@ -449,7 +451,7 @@ Fields of the "connection closed" log:
 |-------|-------|-----------------|
 | Accept error | WARN | `listener`, `error`, `consecutive_errors` |
 | Accept error (fatal) | ERROR | `listener`, `error` |
-| Resource limit reached | WARN | `limit_type`, `current`, `max` |
+| Resource limit reached | WARN for the first rejection of a run, DEBUG for the rest | `limit_type`, `current`, `max` |
 | I/O error | DEBUG | `conn_id`, `operation`, `error` |
 | Protocol error | WARN | `conn_id`, `error`, `details` |
 

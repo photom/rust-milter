@@ -86,7 +86,7 @@ Telemetry follows the session isolation rule (see [Connection reuse and session 
 
 No setting makes rust-milter record any of this data ([ADR 0003](../adr/0003-never-record-the-smtp-client-address.md)).
 
-A handler can add its own attributes to the current span. The rules above cover only what rust-milter records; what a handler records is the application's responsibility. [Record the SMTP client's address](../how-to/record-the-smtp-client-address.md) shows how a handler records the client's address.
+A handler can add its own attributes to the current span. The rules above cover only what rust-milter records; what a handler records is the application's responsibility. That includes the text of two application errors, which rust-milter logs as written, with their source chains. The error a callback returns through `Error::handler` goes into the `error` field of the WARN "Connection closed" log. The error a reload loader returns goes into the `error` field of the ERROR "Reload failed" log. [Record the SMTP client's address](../how-to/record-the-smtp-client-address.md) shows how a handler records the client's address.
 
 ## Metrics
 

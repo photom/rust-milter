@@ -1,5 +1,5 @@
 //! Resource limit and concurrency scenarios (SRV-050 to SRV-052, SRV-056, SRV-058,
-//! SRV-060, SRV-061, SRV-073, SRV-080 to SRV-083) from
+//! SRV-060, SRV-061, SRV-073, SRV-080 to SRV-083, SRV-085, SRV-086) from
 //! `docs/testing/server.md`. SRV-053 to SRV-055 are unit tests of the accept
 //! loop, and SRV-084 a unit test of the macro store.
 
@@ -71,12 +71,7 @@ async fn srv_051_a_closed_connection_frees_its_place() {
     let second = server.mta().await;
     first.reach(Reach::Helo).await;
     second.close().await;
-    // Wait until the server has seen the close.
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while server.handle.status().connections > 1 {
-        assert!(Instant::now() < deadline, "the close was not seen");
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    wait_for_connections(&server, 1).await;
 
     let mut third = server.mta().await;
 
@@ -100,9 +95,7 @@ async fn srv_052_closes_a_connection_whose_frame_would_pass_max_memory() {
 
     assert!(b.closes().await);
     // A completes its frame and keeps working.
-    let mut rest = vec![b'v'; 60_000 - frame_start(60_000).len() + 4 - 1];
-    rest.push(0);
-    a.write_raw(&rest).await;
+    a.write_raw(&frame_rest(60_000)).await;
     assert_eq!(a.recv().await.unwrap().command, SMFIR_CONTINUE);
     a.ask_continue(SMFIC_EOH, Bytes::new()).await;
     let mut found = None;
@@ -133,9 +126,89 @@ async fn srv_056_closes_a_new_connection_when_max_memory_is_full() {
     let limit = logs.one("Resource limit reached");
     assert_eq!(limit.level, tracing::Level::WARN);
     assert_eq!(limit.field("limit_type"), Some("max_memory"));
-    let mut rest = vec![b'v'; 62_000 - frame_start(62_000).len() + 4 - 1];
-    rest.push(0);
-    a.write_raw(&rest).await;
+    a.write_raw(&frame_rest(62_000)).await;
+    assert_eq!(a.recv().await.unwrap().command, SMFIR_CONTINUE);
+    server.stop().await;
+}
+
+/// The levels of the events with this message, in order.
+fn levels(logs: &Logs, message: &str) -> Vec<tracing::Level> {
+    let mut levels = Vec::new();
+    for event in logs.named(message) {
+        levels.push(event.level);
+    }
+    levels
+}
+
+/// Waits until the server counts `open` connections.
+async fn wait_for_connections(server: &TestServer, open: usize) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while server.handle.status().connections != open {
+        assert!(
+            Instant::now() < deadline,
+            "the server did not see the change"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+#[tokio::test]
+async fn srv_085_only_the_first_rejection_of_a_run_logs_at_warn() {
+    use tracing::Level;
+    let (logs, _guard) = Logs::capture();
+    let server = TestServer::start_with(max_connections(1), ContinueAll).await;
+    let mut open = server.mta().await;
+    open.reach(Reach::Helo).await;
+
+    let mut second = server.mta().await;
+    assert!(second.closes().await);
+    let mut third = server.mta().await;
+    assert!(third.closes().await);
+    open.close().await;
+    wait_for_connections(&server, 0).await;
+    let mut served = server.mta().await;
+    served.reach(Reach::Helo).await;
+    let mut last = server.mta().await;
+    assert!(last.closes().await);
+
+    assert_eq!(
+        levels(&logs, "Connection rejected (limit)"),
+        [Level::WARN, Level::DEBUG, Level::WARN]
+    );
+    assert_eq!(server.handle.status().connections_rejected, 3);
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn srv_086_only_the_first_memory_rejection_of_a_run_logs_at_warn() {
+    use tracing::Level;
+    let (logs, _guard) = Logs::capture();
+    let server = TestServer::start_with(tight_memory(), ContinueAll).await;
+    let mut a = server.mta().await;
+    a.reach(Reach::Data).await;
+    a.write_raw(&frame_start(62_000)).await;
+    // Let the server read the length field and reserve the frame.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let mut b = server.mta().await;
+    assert!(b.closes().await);
+    let mut c = server.mta().await;
+    assert!(c.closes().await);
+    a.write_raw(&frame_rest(62_000)).await;
+    assert_eq!(a.recv().await.unwrap().command, SMFIR_CONTINUE);
+    let mut d = server.mta().await;
+    d.reach(Reach::Helo).await;
+    a.write_raw(&frame_start(60_000)).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let mut e = server.mta().await;
+    assert!(e.closes().await);
+
+    assert_eq!(
+        levels(&logs, "Resource limit reached"),
+        [Level::WARN, Level::DEBUG, Level::WARN]
+    );
+    // A connection finishes the frame it is receiving before it drains.
+    a.write_raw(&frame_rest(60_000)).await;
     assert_eq!(a.recv().await.unwrap().command, SMFIR_CONTINUE);
     server.stop().await;
 }

@@ -217,7 +217,7 @@ The library calls a callback only for the stages in `events()`, and only if the 
 
 Contract:
 - Callbacks for one connection run one at a time, in protocol order. Callbacks for different connections run concurrently.
-- A callback that returns an error closes the connection; the library calls `session_end` with `SessionEnd::Error` first. A handler turns its own error into `Error::Handler` with `Error::handler(err)`, which accepts any `std::error::Error + Send + Sync + 'static`.
+- A callback that returns an error closes the connection; the library calls `session_end` with `SessionEnd::Error` first. A handler turns its own error into `Error::Handler` with `Error::handler(err)`, which accepts any `std::error::Error + Send + Sync + 'static`. The library writes that error and its source chain into the WARN "Connection closed" log, so its text must not hold SMTP data ([telemetry: Data that must never be recorded](telemetry.md#data-that-must-never-be-recorded)).
 - A callback that panics closes the connection with `Error::HandlerPanic`. No further callback runs for that session, not even `abort` or `session_end`, and the library drops its `Session` and `Message` values. The same holds for a panic in `events()` or `actions()`, and in `abort` or `session_end` while a session ends ([ADR 0018](../adr/0018-panics-in-handler-code-and-the-reload-loader-are-caught.md)).
 - A callback should finish promptly when the shutdown token from its context is cancelled.
 - Settings come from the `ConfigWatch<A>` the handler holds. Read the application configuration once per session (in `connect`) or once per message (in `mail`), and keep the value in `Session` or `Message`.
@@ -229,7 +229,7 @@ Contract:
 | Method | Returns |
 |--------|---------|
 | `session()` | `&mut H::Session` |
-| `macro_value(name)` | `Option<&MilterText>`: the value of a macro the MTA sent in this session, at this stage or an earlier one |
+| `macro_value(name)` | `Option<&MilterText>`: the value of a macro the MTA sent in this session, at this stage or an earlier one. A one-letter name matches with or without braces, as in libmilter: `i` and `{i}` name the same macro |
 | `connection()` | `&ConnectionInfo` of the MTA connection |
 | `negotiated()` | `&Negotiated` |
 | `shutdown()` | the server's `CancellationToken`, cancelled when the shutdown grace period ends |
@@ -466,7 +466,7 @@ Environment variable helpers on `ServerConfig` ([configuration.md](configuration
 
 | Item | Description |
 |------|-------------|
-| `type Error` | Why a load failed. It implements `std::error::Error` and is `Send + Sync + 'static`. The reload then fails with `ReloadError::Load`, which keeps the error as its source |
+| `type Error` | Why a load failed. It implements `std::error::Error` and is `Send + Sync + 'static`. The reload then fails with `ReloadError::Load`, which keeps the error as its source. The ERROR "Reload failed" log carries the error and its source chain, so its text must not hold setting values ([hot-reload: Logging and metrics](hot-reload.md#logging-and-metrics)) |
 | `load(&self)` | Reads the new configurations: an `async fn` that returns `Result<Reloaded<A>, Self::Error>`, whose future is `Send`. A panic in it fails the reload with `ReloadError::Load` ([ADR 0018](../adr/0018-panics-in-handler-code-and-the-reload-loader-are-caught.md)) |
 
 An example loader is in [Reload the configuration without a restart](../how-to/reload-the-configuration.md#write-a-loader).
@@ -640,5 +640,6 @@ Recommended for production: 4 or more CPU cores; memory for one `per_connection_
 - TLS support
 - authentication
 - a low-level frame API for applications that need raw protocol access; this needs a new ADR ([ADR 0002](../adr/0002-library-runs-the-protocol-handlers-decide.md))
+- a way for a handler to request the macros it needs for each stage, as libmilter's `smfi_setsymlist` does. The engine sends no macro list in its `SMFIC_OPTNEG` response, so the MTA sends the macros its own configuration lists ([protocol: Symbol list in option negotiation](milter-protocol.md#symbol-list-in-option-negotiation-optional))
 
 New traits will come with default method implementations where possible, and optional functionality will sit behind Cargo features.

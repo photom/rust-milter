@@ -146,7 +146,11 @@ fn same_macro(stored: &[u8], name: &str, bare: Option<&str>) -> bool {
             return true;
         }
     }
-    name.len() == 1 && stored == format!("{{{name}}}").as_bytes()
+    // `name` is one letter `x`, and `stored` is `{x}`.
+    if let [b'{', letter, b'}'] = stored {
+        return name.as_bytes() == [*letter];
+    }
+    false
 }
 
 /// The position of a stage byte in [`ORDER`].
@@ -178,6 +182,25 @@ mod tests {
 
         assert_eq!(macros.stages.len(), 1);
         assert_eq!(macros.get("{x}", None).unwrap().as_bytes(), b"2");
+    }
+
+    #[test]
+    fn eng_116_a_one_letter_macro_matches_with_or_without_braces() {
+        let mut macros = Macros::default();
+
+        macros.set(
+            SMFIC_BODYEOB,
+            vec![pair("{i}", "Q1"), pair("j", "host.void.invalid")],
+        );
+
+        for name in ["i", "{i}"] {
+            assert_eq!(macros.get(name, None).unwrap().as_bytes(), b"Q1", "{name}");
+        }
+        for name in ["j", "{j}"] {
+            let value = macros.get(name, None).unwrap();
+            assert_eq!(value.as_bytes(), b"host.void.invalid", "{name}");
+        }
+        assert!(macros.get("{ij}", None).is_none());
     }
 
     #[test]

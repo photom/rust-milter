@@ -53,6 +53,11 @@ pub struct ReloadReport {
 pub trait ReloadLoader<A>: Send + Sync + 'static {
     /// Why a load failed. The reload then fails with
     /// [`ReloadError::Load`], which keeps this error as its source.
+    ///
+    /// rust-milter writes this error and its source chain into the ERROR
+    /// "Reload failed" log. A configuration can hold secrets, so keep
+    /// setting values and file contents out of its message and out of the
+    /// errors it wraps.
     type Error: std::error::Error + Send + Sync + 'static;
 
     /// Reads the new configurations. Implement it as an `async fn`.

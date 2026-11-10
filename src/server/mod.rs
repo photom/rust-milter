@@ -260,6 +260,7 @@ impl<H: Handler, A: Send + Sync + 'static> Server<H, A> {
             connections: TaskTracker::new(),
             next_id: AtomicU64::new(1),
             sessions: Arc::new(AtomicU64::new(1)),
+            rejecting: Rejecting::default(),
         });
         #[cfg(unix)]
         let _signals = AbortOnDrop(tokio::spawn(signals.watch(Arc::clone(shared))));
@@ -400,6 +401,18 @@ struct Accepting<H, A> {
     next_id: AtomicU64,
     /// The next `milter.session.id`.
     sessions: Arc<AtomicU64>,
+    /// The limits that have turned a connection away since the last
+    /// connection taken on.
+    rejecting: Rejecting,
+}
+
+/// Which limits have turned connections away since the last connection the
+/// server took on. Only the first rejection of such a run logs at WARN, so a
+/// peer that keeps reconnecting at a limit cannot flood the logs.
+#[derive(Default)]
+struct Rejecting {
+    connections: AtomicBool,
+    memory: AtomicBool,
 }
 
 /// Records a connection's duration, with the `otel` feature.
@@ -452,25 +465,45 @@ impl<H: Handler, A: Send + Sync + 'static> Accepting<H, A> {
             max_connections,
         ) else {
             self.reject(counts, accepted_at);
-            tracing::warn!(
-                conn_id = id,
-                remote_addr = %peer_addr,
-                max_connections,
-                "Connection rejected (limit)"
-            );
+            macro_rules! rejected {
+                ($level:ident) => {
+                    tracing::$level!(
+                        conn_id = id,
+                        remote_addr = %peer_addr,
+                        max_connections,
+                        "Connection rejected (limit)"
+                    )
+                };
+            }
+            if self.rejecting.connections.swap(true, Ordering::Relaxed) {
+                rejected!(debug);
+            } else {
+                rejected!(warn);
+            }
             return;
         };
         let Some(memory) = Reservation::new(&self.budget) else {
             drop(open);
             self.reject(counts, accepted_at);
-            tracing::warn!(
-                limit_type = "max_memory",
-                current = self.budget.used(),
-                max = self.budget.max(),
-                "Resource limit reached"
-            );
+            macro_rules! limit_reached {
+                ($level:ident) => {
+                    tracing::$level!(
+                        limit_type = "max_memory",
+                        current = self.budget.used(),
+                        max = self.budget.max(),
+                        "Resource limit reached"
+                    )
+                };
+            }
+            if self.rejecting.memory.swap(true, Ordering::Relaxed) {
+                limit_reached!(debug);
+            } else {
+                limit_reached!(warn);
+            }
             return;
         };
+        self.rejecting.connections.store(false, Ordering::Relaxed);
+        self.rejecting.memory.store(false, Ordering::Relaxed);
         let local_addr = match stream.local_addr() {
             Ok(local_addr) => local_addr,
             Err(error) => return self.setup_failed(accepted_at, error),
