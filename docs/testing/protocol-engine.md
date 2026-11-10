@@ -99,6 +99,19 @@ A keepalive failure, such as an MTA host that went away, reaches the protocol en
 | ENG-106 | integration | A recording handler inside a message | the MTA sends half of a frame, then closes the connection normally | `abort`, then `session_end` with `SessionEnd::Error`: end of file in the middle of a frame is an error | [api: Protocol engine behavior](../reference/api-specification.md#protocol-engine-behavior) |
 | ENG-107 | integration | A recording handler inside a message | the MTA closes the connection normally between frames | `abort`, then `session_end` with `SessionEnd::ConnectionClosed` | [api: Protocol engine behavior](../reference/api-specification.md#protocol-engine-behavior) |
 
+## Panics in the handler
+
+A handler method that panics ends the session at once: the connection closes with `Error::HandlerPanic`, and no further callback runs for that session ([ADR 0018](../adr/0018-panics-in-handler-code-and-the-reload-loader-are-caught.md)).
+
+| ID | Level | Given | When | Then | Spec |
+|----|-------|-------|------|------|------|
+| ENG-110 | integration | A recording handler whose `connect` panics | the MTA sends connect | no reply; the connection closes, and the close counts under `error` and `HandlerPanic`; `session_end` is not called; a new connection then negotiates normally | [api: Callbacks](../reference/api-specification.md#callbacks) |
+| ENG-111 | integration | A recording handler whose `header` panics, with a message open | the MTA sends a header | the connection closes, and the close counts under `error` and `HandlerPanic`; neither `abort` nor `session_end` is called | [api: Callbacks](../reference/api-specification.md#callbacks) |
+| ENG-112 | integration | A recording handler whose `end_of_message` panics | the MTA sends end of message | no final reply; the connection closes, and the close counts under `error` and `HandlerPanic`; neither `abort` nor `session_end` is called | [api: Callbacks](../reference/api-specification.md#callbacks) |
+| ENG-113 | integration | A recording handler whose `abort` panics, with a message open | the MTA sends `SMFIC_QUIT` | the connection closes, and the close counts under `error` and `HandlerPanic`; `session_end` is not called | [api: Protocol engine behavior](../reference/api-specification.md#protocol-engine-behavior) |
+| ENG-114 | integration | A recording handler whose `session_end` panics, after HELO | the MTA sends `SMFIC_QUIT` | the connection closes with the close reason `error` and `error.type` `HandlerPanic` | [api: Protocol engine behavior](../reference/api-specification.md#protocol-engine-behavior) |
+| ENG-115 | integration | A handler whose `events()` panics | the MTA sends option negotiation | the connection closes without a reply, and the close counts under `error` and `HandlerPanic`; the server keeps running | [api: Callbacks](../reference/api-specification.md#callbacks) |
+
 ## Session isolation
 
 | ID | Level | Given | When | Then | Spec |

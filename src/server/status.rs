@@ -81,11 +81,12 @@ pub(crate) const CLOSE_REASONS: [&str; 6] = [
 ];
 
 /// The `error.type` values: the variant names of `Error`.
-const ERROR_TYPES: [&str; 13] = [
+const ERROR_TYPES: [&str; 14] = [
     "Io",
     "Protocol",
     "ActionNotNegotiated",
     "Handler",
+    "HandlerPanic",
     "Timeout",
     "ConnectionClosed",
     "ConnectionReset",

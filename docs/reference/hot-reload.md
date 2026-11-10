@@ -183,6 +183,8 @@ The reload API (`ServerBuilder::reload_with`, `ServerHandle::reload`, `reload_wi
 
 The reload errors are the variants of `ReloadError` in [api-specification.md](api-specification.md#reloaderror). Every one of them leaves the server running with the previous generation; none ends `Server::run()`.
 
+A loader that panics fails the reload with `ReloadError::Load`, as a loader that returns an error does. The coordinator keeps running, and later reloads run as usual ([ADR 0018](../adr/0018-panics-in-handler-code-and-the-reload-loader-are-caught.md)).
+
 ## Logging and metrics
 
 | Event | Level | Fields |

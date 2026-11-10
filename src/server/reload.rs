@@ -4,9 +4,11 @@
 
 use std::future::Future;
 use std::net::SocketAddr;
+use std::panic::AssertUnwindSafe;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use futures_util::FutureExt;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
@@ -73,13 +75,31 @@ impl<A: Send + 'static, L: ReloadLoader<A>> DynLoader<A> for L {
     }
 }
 
-/// Runs `loader` and boxes its error.
+/// Runs `loader` and boxes its error. A panic in the loader becomes a
+/// [`LoaderPanicked`] error, so the coordinator keeps running (ADR 0018).
 async fn load_boxed<A, L: ReloadLoader<A>>(loader: &L) -> Loaded<A> {
-    match ReloadLoader::load(loader).await {
-        Ok(reloaded) => Ok(reloaded),
-        Err(error) => Err(Box::new(error)),
+    match AssertUnwindSafe(ReloadLoader::load(loader))
+        .catch_unwind()
+        .await
+    {
+        Ok(Ok(reloaded)) => Ok(reloaded),
+        Ok(Err(error)) => Err(Box::new(error)),
+        Err(_panic) => Err(Box::new(LoaderPanicked)),
     }
 }
+
+/// The source of `ReloadError::Load` when the loader panicked. The panic's
+/// message is not kept.
+#[derive(Debug)]
+struct LoaderPanicked;
+
+impl std::fmt::Display for LoaderPanicked {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the reload loader panicked")
+    }
+}
+
+impl std::error::Error for LoaderPanicked {}
 
 /// The application's reload loader, as the server keeps it.
 pub(crate) type Loader<A> = Box<dyn DynLoader<A>>;
