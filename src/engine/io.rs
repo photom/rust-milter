@@ -41,7 +41,7 @@ pub(crate) struct Inbound<R> {
     /// This connection's share of `max_memory`.
     memory: Reservation,
     /// What the macros the engine stores for this connection cost; they
-    /// count against `memory` and `max` (ADR 0014).
+    /// count against `memory` and `max` (ADR 0019).
     held: usize,
     /// The server's counts.
     traffic: Arc<Traffic>,
@@ -99,9 +99,11 @@ impl<R: AsyncRead + Unpin> Inbound<R> {
                 } else {
                     Some(Instant::now())
                 };
-                // The frame's data is the handler's now; only the stored
-                // macros and the next frame need room.
-                self.memory.resize(self.held);
+                if LENGTH_FIELD + 1 + frame.data.len() > Reservation::BASE {
+                    self.shrink_buffer();
+                }
+                // The frame stays reserved until its command has finished,
+                // when `hold` sets the reservation to the stored macros.
                 return Ok(Some(frame));
             }
             self.reserve_frame()?;
@@ -144,9 +146,25 @@ impl<R: AsyncRead + Unpin> Inbound<R> {
         !self.buf.is_empty()
     }
 
+    /// Reserves what a command holds until it has finished: its frame and
+    /// the strings decoded from it, `cost` bytes in all, besides the stored
+    /// macros. Fails when the command would cost more than
+    /// `per_connection_buffer`, or the reservation would pass `max_memory`
+    /// (ADR 0019).
+    pub(crate) fn reserve_command(&mut self, cost: usize) -> Result<()> {
+        if cost > self.max {
+            return Err(Error::ResourceLimit(ResourceKind::PerConnectionBuffer));
+        }
+        if !self.memory.resize(self.held + cost) {
+            return Err(Error::ResourceLimit(ResourceKind::MaxMemory));
+        }
+        Ok(())
+    }
+
     /// Sets what the macros the engine stores for this connection cost, and
-    /// resizes the reservation to match. Fails when they would pass
-    /// `per_connection_buffer`, or the reservation `max_memory` (ADR 0014).
+    /// resizes the reservation to match, which ends the reservation of the
+    /// command that has finished. Fails when they would pass
+    /// `per_connection_buffer`, or the reservation `max_memory` (ADR 0019).
     pub(crate) fn hold(&mut self, cost: usize) -> Result<()> {
         if cost > self.max {
             return Err(Error::ResourceLimit(ResourceKind::PerConnectionBuffer));
@@ -156,6 +174,17 @@ impl<R: AsyncRead + Unpin> Inbound<R> {
         }
         self.held = cost;
         Ok(())
+    }
+
+    /// Replaces the read buffer with a new one of [`Reservation::BASE`]
+    /// bytes, holding the bytes of the next frame that have arrived. The
+    /// old buffer grew to fit the frame just parsed; its allocation now
+    /// belongs to that frame alone and is freed with it, instead of staying
+    /// with the connection uncounted (ADR 0019).
+    fn shrink_buffer(&mut self) {
+        let mut fresh = BytesMut::with_capacity(Reservation::BASE.max(self.buf.len()));
+        fresh.extend_from_slice(&self.buf);
+        self.buf = fresh;
     }
 
     /// Once a frame's length field has arrived, reserves the whole frame
@@ -280,5 +309,91 @@ fn started_now_or_before(slot: &mut Option<Instant>) -> Instant {
             *slot = Some(now);
             now
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::io::{AsyncWriteExt, DuplexStream};
+
+    use super::*;
+
+    /// A reader of `per_connection_buffer` = `max` over one end of a pipe.
+    fn inbound(reader: DuplexStream, max: usize) -> Inbound<DuplexStream> {
+        Inbound::new(
+            reader,
+            1,
+            max,
+            TimeoutConfig::default(),
+            Instant::now(),
+            Reservation::unlimited(),
+            Arc::default(),
+        )
+    }
+
+    /// A packet of `length` bytes in all: the length field, a body command,
+    /// and zeros.
+    fn packet(length: usize) -> Vec<u8> {
+        let field = u32::try_from(length - LENGTH_FIELD).unwrap();
+        let mut packet = field.to_be_bytes().to_vec();
+        packet.push(crate::protocol::SMFIC_BODY);
+        packet.resize(length, 0);
+        packet
+    }
+
+    /// Sends a first packet, which may be at most 1 KB, and reads it.
+    async fn past_first_packet(mta: &mut DuplexStream, inbound: &mut Inbound<DuplexStream>) {
+        mta.write_all(&packet(17)).await.unwrap();
+        inbound.next_frame().await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn srv_087_a_large_frame_takes_its_allocation_with_it() {
+        let (mut mta, milter) = tokio::io::duplex(256 * 1024);
+        let mut inbound = inbound(milter, 131_072);
+        past_first_packet(&mut mta, &mut inbound).await;
+        mta.write_all(&packet(131_072)).await.unwrap();
+        let large = inbound.next_frame().await.unwrap().unwrap();
+        assert_eq!(large.data.len(), 131_072 - LENGTH_FIELD - 1);
+        drop(large);
+
+        mta.write_all(&packet(17)).await.unwrap();
+        inbound.next_frame().await.unwrap().unwrap();
+
+        assert!(
+            inbound.buf.capacity() <= Reservation::BASE,
+            "{}",
+            inbound.buf.capacity()
+        );
+    }
+
+    #[tokio::test]
+    async fn srv_088_bytes_of_the_next_frame_move_to_the_new_buffer() {
+        let (mut mta, milter) = tokio::io::duplex(256 * 1024);
+        let mut inbound = inbound(milter, 131_072);
+        past_first_packet(&mut mta, &mut inbound).await;
+        let next = packet(17);
+        let mut sent = packet(5_000);
+        sent.extend_from_slice(&next[..10]);
+        mta.write_all(&sent).await.unwrap();
+
+        let first = inbound.next_frame().await.unwrap().unwrap();
+
+        assert_eq!(first.data.len(), 5_000 - LENGTH_FIELD - 1);
+        assert_eq!(&inbound.buf[..], &next[..10]);
+        let frame_end = first.data.as_ptr() as usize + first.data.len();
+        assert_ne!(
+            inbound.buf.as_ptr() as usize,
+            frame_end,
+            "the buffer still shares the frame's allocation"
+        );
+        assert!(
+            inbound.buf.capacity() <= Reservation::BASE,
+            "{}",
+            inbound.buf.capacity()
+        );
+        mta.write_all(&next[10..]).await.unwrap();
+        let second = inbound.next_frame().await.unwrap().unwrap();
+        assert_eq!(second.data.len(), 17 - LENGTH_FIELD - 1);
     }
 }
