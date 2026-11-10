@@ -17,11 +17,12 @@ Decisions that shape rust-milter's design and specification, with their context 
 | [0011](0011-the-disallowed-methods-run-stays-for-derive-code.md) | The disallowed-methods run stays for derive code | Superseded by ADR 0017 |
 | [0012](0012-no-file-descriptor-limit-setting.md) | rust-milter has no file descriptor limit setting | Accepted |
 | [0013](0013-the-first-packet-is-limited-to-1-kb.md) | The first packet of a connection is limited to 1 KB | Accepted |
-| [0014](0014-stored-macros-count-against-the-connections-memory.md) | Stored macros count against the connection's memory | Accepted |
+| [0014](0014-stored-macros-count-against-the-connections-memory.md) | Stored macros count against the connection's memory | Superseded by ADR 0019 |
 | [0015](0015-commands-in-wrong-state-follow-libmilter-or-close.md) | Commands in a wrong state follow libmilter, or close the connection | Accepted |
 | [0016](0016-a-reload-closes-no-connection-and-fails-on-a-restart-setting.md) | A reload closes no open connection, and fails when it changes a setting that requires a restart | Accepted |
 | [0017](0017-rust-code-is-written-in-a-procedural-style.md) | Rust code is written in a procedural style | Accepted |
 | [0018](0018-panics-in-handler-code-and-the-reload-loader-are-caught.md) | Panics in handler code and the reload loader are caught | Accepted |
+| [0019](0019-a-connection-counts-what-it-holds-until-each-command-ends.md) | A connection counts what it holds until each command ends | Accepted |
 
 Conventions:
 - One file per decision, named `NNNN-short-title.md`, numbered in order.

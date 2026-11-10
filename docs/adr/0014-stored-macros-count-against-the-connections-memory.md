@@ -1,6 +1,6 @@
 # ADR 0014: Stored macros count against the connection's memory
 
-- Status: Accepted
+- Status: Superseded by ADR 0019
 - Date: 2026-11-09
 - Affects: the protocol engine's macro store, the connection's `max_memory` reservation, `ResourceKind`, the TCP server, configuration, and API references
 
