@@ -72,9 +72,13 @@ docker run --rm --name milter \
   -p 127.0.0.1:8891:8891 \
   -e RUST_MILTER_BIND_ADDRESSES=0.0.0.0:8891 \
   -e RUST_MILTER_MAX_CONNECTIONS=2000 \
+  -e RUST_MILTER_RESOURCE_LIMITS__MAX_MEMORY=268435456 \
+  --memory 512m \
   --stop-timeout 45 \
   my-milter:latest
 ```
+
+`RUST_MILTER_RESOURCE_LIMITS__MAX_MEMORY` caps the memory rust-milter's connections use at 256 MiB, about 128 KB for each of the 2,000 connections. Past the cap, rust-milter closes new connections at once instead of letting a flood of large frames exhaust the container's memory. Keep `--memory` above it, with room for your handler and the runtime. [Deploy a milter in production](deploy-a-milter-in-production.md#cap-the-buffer-memory) explains how to size it.
 
 `docker stop` waits 10 seconds by default before it kills the process. rust-milter's default shutdown takes up to 35 seconds (`shutdown.grace_period` 5 s plus `shutdown.drain_timeout` 30 s), so `--stop-timeout 45` gives it room to drain open sessions.
 
@@ -87,6 +91,8 @@ services:
     environment:
       RUST_MILTER_BIND_ADDRESSES: "0.0.0.0:8891"
       RUST_MILTER_MAX_CONNECTIONS: "2000"
+      RUST_MILTER_RESOURCE_LIMITS__MAX_MEMORY: "268435456"
+    mem_limit: 512m
     stop_grace_period: 45s
   postfix:
     image: my-postfix:latest
@@ -131,6 +137,13 @@ spec:
               value: "0.0.0.0:8891"
             - name: RUST_MILTER_MAX_CONNECTIONS
               value: "2000"
+            - name: RUST_MILTER_RESOURCE_LIMITS__MAX_MEMORY
+              value: "268435456"
+          resources:
+            requests:
+              memory: 256Mi
+            limits:
+              memory: 512Mi
           readinessProbe:
             tcpSocket:
               port: 8891
@@ -147,11 +160,17 @@ spec:
             runAsNonRoot: true
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
 ```
 
 Notes on these settings:
 - The probes are TCP checks, because the milter protocol has no HTTP endpoint. Each probe opens and closes one connection, which rust-milter logs at DEBUG level and counts in its connection metrics.
 - rust-milter stops accepting as soon as it receives `SIGTERM`, but Kubernetes removes the pod from the Service with a short delay. Kubernetes runs the `preStop` hook before it sends `SIGTERM`, so the sleep keeps the pod accepting during that delay. The `sleep` action needs Kubernetes 1.30 or later; on older clusters, use an `exec` hook in an image that has a `sleep` command.
+- `RUST_MILTER_RESOURCE_LIMITS__MAX_MEMORY` keeps rust-milter's connection memory under the container's memory limit, as in the Docker example. Without it, a peer that sends large frames on many connections can push the pod into an out-of-memory kill.
+- The `securityContext` meets the Kubernetes "restricted" Pod Security Standard. The milter listens on 8891, above 1024, so it needs no capabilities. The runtime's default seccomp profile blocks system calls that a network server has no use for.
 - `terminationGracePeriodSeconds` must cover the pre-stop sleep plus rust-milter's shutdown: 5 + 5 + 30 = 40 seconds, so 45 leaves a margin. Kubernetes kills the container when this time runs out.
 
 Expose the Deployment with a Service:
