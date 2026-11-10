@@ -145,19 +145,19 @@ impl Observed {
         let mut values = Vec::new();
         match self {
             Observed::Accepted => {
-                for listener in counters.snapshot(0).listeners {
+                for listener in counters.listeners() {
                     let attributes = listener_attributes(listener.address).to_vec();
                     values.push((listener.connections_accepted, attributes));
                 }
             }
             Observed::Rejected => {
-                for listener in counters.snapshot(0).listeners {
+                for listener in counters.listeners() {
                     let attributes = listener_attributes(listener.address).to_vec();
                     values.push((listener.connections_rejected, attributes));
                 }
             }
             Observed::Closed => {
-                for (reason, error, count) in counters.snapshot(0).connections_closed {
+                for (reason, error, count) in counters.connections_closed() {
                     let mut attributes = vec![KeyValue::new("milter.close_reason", reason)];
                     if let Some(error) = error {
                         attributes.push(KeyValue::new("error.type", error));
@@ -197,7 +197,7 @@ impl Observed {
                 }
             }
             Observed::Reload => {
-                for (result, source, count) in counters.snapshot(0).reloads {
+                for (result, source, count) in counters.reload_counts() {
                     let attributes = vec![
                         KeyValue::new("milter.reload_result", result),
                         KeyValue::new("milter.reload_source", source),
@@ -277,7 +277,7 @@ pub(crate) fn register<A: Send + Sync + 'static>(
             .with_unit("{connection}")
             .with_description("Open connections, per listener")
             .with_callback(move |observer| {
-                for listener in counters.snapshot(0).listeners {
+                for listener in counters.listeners() {
                     let active = i64::try_from(listener.connections_active).unwrap_or(i64::MAX);
                     observer.observe(active, &listener_attributes(listener.address));
                 }
@@ -300,7 +300,7 @@ pub(crate) fn register<A: Send + Sync + 'static>(
             .with_unit("s")
             .with_description("Unix time of the last applied reload")
             .with_callback(move |observer| {
-                if let Some(last) = counters.snapshot(0).last_reload {
+                if let Some(last) = counters.last_reload() {
                     if let Ok(time) = last.duration_since(UNIX_EPOCH) {
                         observer.observe(time.as_secs_f64(), &[]);
                     }

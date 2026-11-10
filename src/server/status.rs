@@ -316,19 +316,7 @@ impl Counters {
     }
 
     pub(crate) fn snapshot(&self, config_generation: u64) -> Status {
-        let mut listeners = lock(&self.listeners).clone();
-        {
-            let counts = lock(&self.listener_counts);
-            for listener in &mut listeners {
-                for (address, count) in counts.iter() {
-                    if *address == listener.address {
-                        listener.connections_accepted = count.accepted.load(Ordering::Relaxed);
-                        listener.connections_active = count.active.load(Ordering::SeqCst);
-                        listener.connections_rejected = count.rejected.load(Ordering::Relaxed);
-                    }
-                }
-            }
-        }
+        let listeners = self.listeners();
         let shutting_down = self.shutting_down.load(Ordering::SeqCst);
         let mut any_accepting = false;
         for listener in &listeners {
@@ -353,11 +341,32 @@ impl Counters {
             commands: self.traffic.commands(),
             replies: self.traffic.replies(),
             reloads: self.reload_counts(),
-            last_reload: *lock(&self.last_reload),
+            last_reload: self.last_reload(),
         }
     }
 
-    fn connections_closed(&self) -> Vec<(&'static str, Option<&'static str>, u64)> {
+    /// The listeners with their connection counts.
+    pub(crate) fn listeners(&self) -> Vec<ListenerStatus> {
+        let mut listeners = lock(&self.listeners).clone();
+        let counts = lock(&self.listener_counts);
+        for listener in &mut listeners {
+            for (address, count) in counts.iter() {
+                if *address == listener.address {
+                    listener.connections_accepted = count.accepted.load(Ordering::Relaxed);
+                    listener.connections_active = count.active.load(Ordering::SeqCst);
+                    listener.connections_rejected = count.rejected.load(Ordering::Relaxed);
+                }
+            }
+        }
+        listeners
+    }
+
+    /// When the last reload was applied.
+    pub(crate) fn last_reload(&self) -> Option<SystemTime> {
+        *lock(&self.last_reload)
+    }
+
+    pub(crate) fn connections_closed(&self) -> Vec<(&'static str, Option<&'static str>, u64)> {
         let mut closed = Vec::new();
         for (reason, count) in CLOSE_REASONS.iter().zip(&self.closed) {
             if *reason == "error" {
@@ -377,7 +386,7 @@ impl Counters {
         closed
     }
 
-    fn reload_counts(&self) -> Vec<(&'static str, &'static str, u64)> {
+    pub(crate) fn reload_counts(&self) -> Vec<(&'static str, &'static str, u64)> {
         let mut reloads = Vec::new();
         for (result, counts) in RELOAD_RESULTS.iter().zip(&self.reloads) {
             for (source, count) in RELOAD_SOURCES.iter().zip(counts) {
