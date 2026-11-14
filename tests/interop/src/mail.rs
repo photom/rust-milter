@@ -15,6 +15,7 @@ pub struct Mail {
     pub from: String,
     /// The envelope recipients.
     pub to: Vec<String>,
+    /// The added header fields: each name, and the bytes after its colon.
     headers: Vec<(String, Vec<u8>)>,
     body: Vec<u8>,
 }
@@ -49,9 +50,19 @@ impl Mail {
         self
     }
 
-    /// Adds a header after the standard ones. The value may hold any bytes.
-    pub fn header(mut self, name: &str, value: impl Into<Vec<u8>>) -> Mail {
-        self.headers.push((name.to_owned(), value.into()));
+    /// Adds a header after the standard ones, written as `name: value`. The
+    /// value may hold any bytes.
+    pub fn header(self, name: &str, value: impl Into<Vec<u8>>) -> Mail {
+        let mut body = b" ".to_vec();
+        body.extend_from_slice(&value.into());
+        self.field(name, body)
+    }
+
+    /// Adds a header after the standard ones, written as `name:` and `body`
+    /// with nothing between them, so the test chooses the whitespace after
+    /// the colon.
+    pub fn field(mut self, name: &str, body: impl Into<Vec<u8>>) -> Mail {
+        self.headers.push((name.to_owned(), body.into()));
         self
     }
 
@@ -73,7 +84,7 @@ impl Mail {
         .into_bytes();
         for (name, value) in &self.headers {
             content.extend_from_slice(name.as_bytes());
-            content.extend_from_slice(b": ");
+            content.extend_from_slice(b":");
             content.extend_from_slice(value);
             content.extend_from_slice(b"\r\n");
         }

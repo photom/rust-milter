@@ -1,6 +1,6 @@
 //! The library's error types.
 
-use crate::Actions;
+use crate::{Actions, ProtocolOptions};
 
 /// The library's error type.
 #[derive(Debug, thiserror::Error)]
@@ -263,6 +263,12 @@ pub enum ProtocolError {
     /// The MTA did not offer every action in `Handler::actions()`.
     #[error("the MTA did not offer the actions {0:?}")]
     ActionsNotOffered(Actions),
+
+    /// The MTA did not offer every option in `Handler::protocol_options()`,
+    /// or the negotiated protocol version is below 6. Holds the missing
+    /// options.
+    #[error("the MTA did not offer the options {0:?} at protocol version 6")]
+    OptionsNotOffered(ProtocolOptions),
 }
 
 /// Why a configuration is invalid.

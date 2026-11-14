@@ -1,4 +1,4 @@
-//! Panics in the handler (ENG-110 to ENG-115) from
+//! Panics in the handler (ENG-110 to ENG-115, and ENG-117) from
 //! `docs/testing/protocol-engine.md`.
 
 mod support;
@@ -8,7 +8,7 @@ use std::time::Instant;
 use rust_milter::protocol::*;
 use rust_milter::{
     Bytes, ConnectDecision, ConnectInfo, Decision, EomContext, Events, Handler, MessageContext,
-    MilterText, Result, ServerHandle, SessionContext, SessionEnd,
+    MilterText, ProtocolOptions, Result, ServerHandle, SessionContext, SessionEnd,
 };
 use support::mta::{Reach, connect_data, strings};
 use support::{Log, TestServer};
@@ -22,6 +22,7 @@ enum Panics {
     Abort,
     SessionEnd,
     Events,
+    ProtocolOptions,
 }
 
 /// Records the callbacks it sees, and panics in one of them.
@@ -49,6 +50,13 @@ impl Handler for Panicking {
             panic!("the test handler panics in events");
         }
         Events::ALL
+    }
+
+    fn protocol_options(&self) -> ProtocolOptions {
+        if self.panics == Panics::ProtocolOptions {
+            panic!("the test handler panics in protocol_options");
+        }
+        ProtocolOptions::NONE
     }
 
     async fn connect(
@@ -215,6 +223,23 @@ async fn eng_114_a_panic_in_session_end_closes_with_handler_panic() {
 #[tokio::test]
 async fn eng_115_a_panic_in_events_closes_the_connection_without_a_reply() {
     let (server, log) = start(Panics::Events).await;
+    let mut mta = server.mta().await;
+
+    assert!(
+        mta.optneg(6, SMFI_CURR_ACTS, SMFI_CURR_PROT)
+            .await
+            .is_none()
+    );
+
+    assert!(closed_by_panic(&server.handle).await);
+    assert!(log.events().is_empty());
+    assert!(server.handle.is_running());
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn eng_117_a_panic_in_protocol_options_closes_the_connection_without_a_reply() {
+    let (server, log) = start(Panics::ProtocolOptions).await;
     let mut mta = server.mta().await;
 
     assert!(

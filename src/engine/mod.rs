@@ -29,7 +29,7 @@ use state::{State, Transitions};
 
 use crate::handler::{
     Actions, BodyDecision, ConnectDecision, ConnectInfo, Decision, EomContext, Events, Handler,
-    MessageContext, Negotiated, SessionContext, SessionEnd,
+    MessageContext, Negotiated, ProtocolOptions, SessionContext, SessionEnd,
 };
 use crate::protocol::*;
 use crate::server::{ConnectionInfo, Reservation};
@@ -487,15 +487,26 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
         if !missing.is_empty() {
             return Err(ProtocolError::ActionsNotOffered(missing).into());
         }
+        let options = guarded(async move { Ok(handler.protocol_options()) }).await?;
+        let offered = if version >= 6 {
+            ProtocolOptions::from_bits_truncate(mta_protocol)
+        } else {
+            ProtocolOptions::NONE
+        };
+        let missing = options.difference(offered);
+        if !missing.is_empty() {
+            return Err(ProtocolError::OptionsNotOffered(missing).into());
+        }
         let events = guarded(async move { Ok(handler.events()) }).await?;
         let switched_off = Events::ALL.difference(events).no_flags() & mta_protocol;
+        let protocol = switched_off | options.bits();
 
         self.ctx
             .outbound
             .send(&Reply::OptNeg {
                 version,
                 actions: wanted.bits(),
-                protocol: switched_off,
+                protocol,
                 macros: Vec::new(),
             })
             .await?;
@@ -512,7 +523,8 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
         self.ctx.message.session.negotiated = Negotiated {
             version,
             actions: wanted,
-            protocol: switched_off,
+            options,
+            protocol,
             mta_protocol,
         };
         self.state = State::Opts;
