@@ -23,6 +23,7 @@ Decisions that shape rust-milter's design and specification, with their context 
 | [0017](0017-rust-code-is-written-in-a-procedural-style.md) | Rust code is written in a procedural style | Accepted |
 | [0018](0018-panics-in-handler-code-and-the-reload-loader-are-caught.md) | Panics in handler code and the reload loader are caught | Accepted |
 | [0019](0019-a-connection-counts-what-it-holds-until-each-command-ends.md) | A connection counts what it holds until each command ends | Accepted |
+| [0020](0020-protocol-options-are-a-fixed-handler-method-and-close-when-missing.md) | Handlers request protocol options with a fixed method, and a missing option closes the connection | Accepted |
 
 Conventions:
 - One file per decision, named `NNNN-short-title.md`, numbered in order.
