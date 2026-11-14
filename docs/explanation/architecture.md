@@ -116,7 +116,7 @@ Dependencies: the Frame component and the protocol constants.
 The protocol engine runs the Milter conversation for each connection, as libmilter's `mi_engine` does.
 
 Responsibilities:
-- negotiate options: protocol version (2 to 6), action flags from `Handler::actions()`, protocol flags from `Handler::events()`
+- negotiate options: protocol version (2 to 6), action flags from `Handler::actions()`, protocol flags from `Handler::events()` and `Handler::protocol_options()`
 - track the protocol state with libmilter's transition rules, recover from a command in a wrong state where libmilter recovers, and close the connection where libmilter would leave the MTA waiting ([ADR 0015](../adr/0015-commands-in-wrong-state-follow-libmilter-or-close.md))
 - store macros per stage, drop the later stages' macros when a stage's command arrives, and clear them all when the session ends
 - create the handler's `Session` value when a callback first asks for it in a session, and its `Message` value at `SMFIC_MAIL` (or at the first command of a message when the handler leaves `MAIL` out of `events()`), and drop them when the session or message ends
