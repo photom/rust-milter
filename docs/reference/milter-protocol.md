@@ -72,6 +72,7 @@ rust-milter supports Milter protocol versions 2 through 6. The minimum is 2, the
 - If the MTA offers a version below 2 in `SMFIC_OPTNEG`, rust-milter closes the connection without replying.
 - Otherwise rust-milter answers with the lower of the MTA's version and 6, as libmilter does.
 - rust-milter uses only the commands, replies, and flags that the negotiated version and the MTA's offered flags allow. See [Protocol version](#protocol-version) for what each version adds.
+- rust-milter requests `SMFIP_HDR_LEADSPC` only for a handler that asks for it. If the MTA did not offer the flag, rust-milter closes the connection without replying, as libmilter does. It does the same when the negotiated version is below 6, which libmilter does not check ([ADR 0020](../adr/0020-protocol-options-are-a-fixed-handler-method-and-close-when-missing.md)).
 - There is no protocol version 5. Neither MTA sends it, and Postfix rejects it in `milter_protocol`.
 - `SMFIC_QUIT_NC` is accepted only where libmilter accepts it: in `ST_ENDM` (after the final reply at end of message, if that reply did not reset the state) and in `ST_UNKN`. In any other state rust-milter treats it as a protocol error and closes the connection, where libmilter would ignore it, then ignore the next `SMFIC_CONNECT` too, and leave the MTA waiting for a reply. The decision is recorded in [ADR 0015](../adr/0015-commands-in-wrong-state-follow-libmilter-or-close.md), and [Connection reuse and session isolation](../explanation/connection-reuse.md) explains it.
 - Any other command in a wrong state recovers as in libmilter if it fits from `ST_HELO` (`SMFIC_HELO`, `SMFIC_MAIL`, `SMFIC_UNKNOWN`); `SMFIC_ABORT` is ignored as in libmilter; every other command closes the connection, where libmilter would ignore it without a reply ([ADR 0015](../adr/0015-commands-in-wrong-state-follow-libmilter-or-close.md)).
@@ -165,7 +166,9 @@ Postfix sends `SMFIC_ABORT` whenever the session state allows envelope commands.
 
 Both MTAs:
 - hide their own first `Received:` header from the milter
-- remove one leading space from each header value unless `SMFIP_HDR_LEADSPC` was negotiated
+- send a header name without the whitespace that can stand between the name and the colon in the obsolete syntax (RFC 5322 §4.5)
+- remove one leading space, not a tab, from each header value unless `SMFIP_HDR_LEADSPC` was negotiated. With the flag, the value is everything after the colon, unchanged
+- put one space in front of the value of each header a milter adds, inserts, or changes, unless `SMFIP_HDR_LEADSPC` was negotiated. With the flag, they store the value as the milter sent it
 - send a folded header value as one string, with LF (`\n`) between the lines
 - send the body with CRLF line endings, in chunks of at most 65535 bytes
 - send `SMFIC_BODYEOB` without data. libmilter would also accept trailing body data in it.
@@ -541,7 +544,7 @@ How libmilter builds its response:
 - It drops `SMFIP_NODATA` and `SMFIP_NOUNKNOWN` from its answer when the MTA did not offer them, because an older MTA never sends those commands anyway.
 - It drops the no-reply flags (`SMFIP_NR_*`) that the MTA did not offer, and sends `SMFIR_CONTINUE` for those stages in their place.
 
-Sendmail closes the connection when the milter's protocol flags are not a subset of the flags Sendmail offered. A milter must therefore answer with a subset of the MTA's offer.
+Sendmail closes the connection when the milter's protocol flags are not a subset of the flags Sendmail offered. A milter must therefore answer with a subset of the MTA's offer. Postfix does not check: it uses the protocol flags of the answer as given, `SMFIP_HDR_LEADSPC` included, and logs flags it did not offer only in verbose mode.
 
 ### Protocol version
 
@@ -1004,3 +1007,4 @@ Sendmail ships a complete libmilter example in `libmilter/example.c` of its sour
 - [Make a milter work with both Sendmail and Postfix](../how-to/make-a-milter-work-with-sendmail-and-postfix.md) (how-to guide)
 - [Deploy a milter in production](../how-to/deploy-a-milter-in-production.md) (how-to guide)
 - [Connection reuse and session isolation](../explanation/connection-reuse.md) (explanation)
+- [Whitespace in header values](../explanation/header-whitespace.md) (explanation)
