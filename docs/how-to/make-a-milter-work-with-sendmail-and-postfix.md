@@ -26,6 +26,7 @@ The steps below cover what is left to the handler.
 2. Do not rely on `data` being called; it needs protocol version 4 or later.
 3. Check `negotiated().version` in a callback if your logic depends on the version.
 4. Keep Postfix's `milter_protocol` at 6, its default since Postfix 2.6. Sendmail always offers version 6.
+5. If your handler needs header values with their leading space, request it as [Keep the leading space of header values](keep-the-leading-space-of-header-values.md) shows. Both MTAs remove one space by default.
 
 ## Read the SMTP client's address from ConnectInfo
 

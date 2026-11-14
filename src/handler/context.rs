@@ -104,6 +104,11 @@ impl<H: Handler> DerefMut for MessageContext<H> {
 /// Each modification sends its reply to the MTA at once. It fails with
 /// [`Error::ActionNotNegotiated`] when its action was not negotiated, and
 /// with [`Error::InvalidReply`] when the MTA would refuse the values.
+///
+/// The header methods send each value unchanged. The MTA puts a space
+/// between the colon and the value unless
+/// [`ProtocolOptions::HEADER_LEADING_SPACE`](crate::ProtocolOptions::HEADER_LEADING_SPACE)
+/// is in force. With the option, pass `" value"` to get `Name: value`.
 pub struct EomContext<H: Handler> {
     pub(crate) message: MessageContext<H>,
     pub(crate) outbound: Outbound,

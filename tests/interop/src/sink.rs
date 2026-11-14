@@ -33,25 +33,54 @@ pub struct Delivered {
 
 impl Delivered {
     /// The header fields in order. The line breaks of a folded field are
-    /// removed, so a value is one line with its original spacing.
+    /// removed, so a value is one line with its original spacing, less the
+    /// one space after the colon.
     pub fn headers(&self) -> Vec<(String, Vec<u8>)> {
         let mut fields: Vec<(String, Vec<u8>)> = Vec::new();
-        for line in text::lines(self.header_section()) {
-            let line = line.strip_suffix(b"\r").unwrap_or(line);
-            let folded = matches!(line.first(), Some(b' ' | b'\t'));
-            if folded {
-                if let Some((_, value)) = fields.last_mut() {
-                    value.extend_from_slice(line);
-                }
-                continue;
-            }
-            let Some(colon) = text::find_byte(line, b':') else {
+        for line in self.field_lines() {
+            let Some(colon) = text::find_byte(&line, b':') else {
                 continue;
             };
             let name = String::from_utf8_lossy(&line[..colon]).into_owned();
             let after_colon = &line[colon + 1..];
             let value = after_colon.strip_prefix(b" ").unwrap_or(after_colon);
             fields.push((name, value.to_vec()));
+        }
+        fields
+    }
+
+    /// The header fields named `name`, compared without case, each as the
+    /// message holds it: the name, the colon, and every byte after it, with
+    /// the line breaks of a folded field removed.
+    pub fn fields_named(&self, name: &str) -> Vec<Vec<u8>> {
+        let mut named = Vec::new();
+        for line in self.field_lines() {
+            let Some(colon) = text::find_byte(&line, b':') else {
+                continue;
+            };
+            if line[..colon].eq_ignore_ascii_case(name.as_bytes()) {
+                named.push(line);
+            }
+        }
+        named
+    }
+
+    /// The header fields in order, each as one line without CRLF: a folded
+    /// field is joined into one line, and a line without a colon is skipped.
+    fn field_lines(&self) -> Vec<Vec<u8>> {
+        let mut fields: Vec<Vec<u8>> = Vec::new();
+        for line in text::lines(self.header_section()) {
+            let line = line.strip_suffix(b"\r").unwrap_or(line);
+            let folded = matches!(line.first(), Some(b' ' | b'\t'));
+            if folded {
+                if let Some(field) = fields.last_mut() {
+                    field.extend_from_slice(line);
+                }
+                continue;
+            }
+            if text::find_byte(line, b':').is_some() {
+                fields.push(line.to_vec());
+            }
         }
         fields
     }

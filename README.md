@@ -42,6 +42,7 @@ Practical steps for solving a specific problem. Use them when you have a particu
 - [Export traces with OpenTelemetry](docs/how-to/export-traces-with-opentelemetry.md)
 - [Record the SMTP client's address](docs/how-to/record-the-smtp-client-address.md)
 - [Make a milter work with both Sendmail and Postfix](docs/how-to/make-a-milter-work-with-sendmail-and-postfix.md)
+- [Keep the leading space of header values](docs/how-to/keep-the-leading-space-of-header-values.md)
 - [Deploy a milter in production](docs/how-to/deploy-a-milter-in-production.md)
 - [Run a milter in Docker or Kubernetes](docs/how-to/run-a-milter-in-docker-or-kubernetes.md)
 - [Run the tests](docs/how-to/run-the-tests.md)
@@ -67,6 +68,7 @@ Background on the concepts, design decisions, and architecture.
 
 - [Library architecture](docs/explanation/architecture.md)
 - [Connection reuse and session isolation](docs/explanation/connection-reuse.md)
+- [Whitespace in header values](docs/explanation/header-whitespace.md)
 - [Configuration snapshots and reload](docs/explanation/configuration-and-reload.md)
 - [Telemetry principles](docs/explanation/telemetry-principles.md)
 - [Test ports](docs/explanation/test-ports.md)
