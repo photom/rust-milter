@@ -25,7 +25,7 @@ pub use error::{
 pub use frame::Frame;
 pub use handler::{
     Actions, BodyDecision, ConnectDecision, ConnectInfo, Decision, EomContext, Events, Handler,
-    MessageContext, Negotiated, SessionContext, SessionEnd,
+    MessageContext, Negotiated, ProtocolOptions, SessionContext, SessionEnd,
 };
 pub use message::{AddressFamily, Command, MilterText, Reply, ReplyCode};
 #[cfg(feature = "test-support")]
