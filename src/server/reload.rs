@@ -4,9 +4,11 @@
 
 use std::future::Future;
 use std::net::SocketAddr;
+use std::panic::AssertUnwindSafe;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use futures_util::FutureExt;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
@@ -51,6 +53,11 @@ pub struct ReloadReport {
 pub trait ReloadLoader<A>: Send + Sync + 'static {
     /// Why a load failed. The reload then fails with
     /// [`ReloadError::Load`], which keeps this error as its source.
+    ///
+    /// rust-milter writes this error and its source chain into the ERROR
+    /// "Reload failed" log. A configuration can hold secrets, so keep
+    /// setting values and file contents out of its message and out of the
+    /// errors it wraps.
     type Error: std::error::Error + Send + Sync + 'static;
 
     /// Reads the new configurations. Implement it as an `async fn`.
@@ -73,13 +80,31 @@ impl<A: Send + 'static, L: ReloadLoader<A>> DynLoader<A> for L {
     }
 }
 
-/// Runs `loader` and boxes its error.
+/// Runs `loader` and boxes its error. A panic in the loader becomes a
+/// [`LoaderPanicked`] error, so the coordinator keeps running (ADR 0018).
 async fn load_boxed<A, L: ReloadLoader<A>>(loader: &L) -> Loaded<A> {
-    match ReloadLoader::load(loader).await {
-        Ok(reloaded) => Ok(reloaded),
-        Err(error) => Err(Box::new(error)),
+    match AssertUnwindSafe(ReloadLoader::load(loader))
+        .catch_unwind()
+        .await
+    {
+        Ok(Ok(reloaded)) => Ok(reloaded),
+        Ok(Err(error)) => Err(Box::new(error)),
+        Err(_panic) => Err(Box::new(LoaderPanicked)),
     }
 }
+
+/// The source of `ReloadError::Load` when the loader panicked. The panic's
+/// message is not kept.
+#[derive(Debug)]
+struct LoaderPanicked;
+
+impl std::fmt::Display for LoaderPanicked {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the reload loader panicked")
+    }
+}
+
+impl std::error::Error for LoaderPanicked {}
 
 /// The application's reload loader, as the server keeps it.
 pub(crate) type Loader<A> = Box<dyn DynLoader<A>>;
@@ -148,31 +173,41 @@ impl<A: Send + 'static, T: Target<A>> Coordinator<A, T> {
             while let Ok(request) = requests.try_recv() {
                 batch.push(request);
             }
+            // Loader requests that arrive one after another fold into one
+            // reload. An explicit configuration between them runs in its
+            // place, so every request takes effect in the order it arrived.
             let mut loads = Vec::new();
             for request in batch {
                 match request {
+                    Request::Load(reply) => loads.push(reply),
                     Request::Apply(new, reply) => {
+                        self.fold(std::mem::take(&mut loads)).await;
                         let outcome = self.apply(*new).await;
                         let _ = reply.send(outcome);
                     }
-                    Request::Load(reply) => loads.push(reply),
                 }
             }
-            if loads.is_empty() {
-                continue;
-            }
-            if loads.len() > 1 {
-                tracing::debug!(pending_requests = loads.len(), "Reload coalesced");
-            }
-            let outcome = self.load().await;
-            // `reload()` counts its own requests; `SIGHUP` waits for none.
-            for reply in &loads {
-                if reply.is_none() {
-                    self.counters.reloaded(outcome.is_ok(), Source::Sighup);
-                }
-            }
-            answer(loads, outcome);
+            self.fold(loads).await;
         }
+    }
+
+    /// Runs one reload through the loader for all of `loads`, and answers
+    /// each of them with its result.
+    async fn fold(&mut self, loads: Vec<Option<oneshot::Sender<Outcome>>>) {
+        if loads.is_empty() {
+            return;
+        }
+        if loads.len() > 1 {
+            tracing::debug!(pending_requests = loads.len(), "Reload coalesced");
+        }
+        let outcome = self.load().await;
+        // `reload()` counts its own requests; `SIGHUP` waits for none.
+        for reply in &loads {
+            if reply.is_none() {
+                self.counters.reloaded(outcome.is_ok(), Source::Sighup);
+            }
+        }
+        answer(loads, outcome);
     }
 
     /// Runs the loader, then applies what it returned.
@@ -262,9 +297,11 @@ fn copy(outcome: &Outcome) -> Outcome {
 
 /// The text of an error and of its `source()` chain, for the copies of a
 /// shared error.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{message}")]
 struct Copied {
     message: String,
+    #[source]
     source: Option<Box<Copied>>,
 }
 
@@ -278,21 +315,6 @@ impl Copied {
             copied.source = Some(Box::new(Copied::of(source)));
         }
         copied
-    }
-}
-
-impl std::fmt::Display for Copied {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.message)
-    }
-}
-
-impl std::error::Error for Copied {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match &self.source {
-            Some(source) => Some(source.as_ref()),
-            None => None,
-        }
     }
 }
 
@@ -351,14 +373,21 @@ mod tests {
     struct Recording {
         gate: Option<Arc<Semaphore>>,
         published: Arc<Mutex<Vec<u64>>>,
+        /// The `max_connections` of each published configuration, which
+        /// tells the configurations apart.
+        connections: Arc<Mutex<Vec<usize>>>,
     }
 
     impl Target<()> for Recording {
-        async fn apply(&mut self, generation: u64, _new: Reloaded<()>) -> Outcome {
+        async fn apply(&mut self, generation: u64, new: Reloaded<()>) -> Outcome {
             if let Some(gate) = &self.gate {
                 gate.acquire().await.unwrap().forget();
             }
             self.published.lock().unwrap().push(generation);
+            self.connections
+                .lock()
+                .unwrap()
+                .push(new.server.max_connections);
             Ok(ReloadReport {
                 generation,
                 ..ReloadReport::default()
@@ -492,5 +521,83 @@ mod tests {
         assert_eq!(outcome.await.unwrap().unwrap().generation, 2);
         running.task.await.unwrap();
         assert_eq!(*target.published.lock().unwrap(), [2]);
+    }
+
+    /// A valid configuration that `max_connections` tells apart.
+    fn numbered(max_connections: usize) -> ServerConfig {
+        ServerConfig {
+            max_connections,
+            ..valid()
+        }
+    }
+
+    #[tokio::test]
+    async fn rld_008_requests_take_effect_in_the_order_they_arrived() {
+        let gated = Gated::new(vec![numbered(101), numbered(102), numbered(103)]);
+        let target = Recording::default();
+        let running = start(Some(gated.loader()), target.clone());
+
+        let first = running.load();
+        settle().await;
+        let before = running.load();
+        let (reply, explicit) = oneshot::channel();
+        let new = Reloaded {
+            server: numbered(900),
+            app: (),
+        };
+        running
+            .requests
+            .send(Request::Apply(Box::new(new), reply))
+            .unwrap();
+        let after = running.load();
+        settle().await;
+        gated.gate.add_permits(3);
+
+        assert_eq!(first.await.unwrap().unwrap().generation, 2);
+        assert_eq!(before.await.unwrap().unwrap().generation, 3);
+        assert_eq!(explicit.await.unwrap().unwrap().generation, 4);
+        assert_eq!(after.await.unwrap().unwrap().generation, 5);
+        assert_eq!(*target.connections.lock().unwrap(), [101, 102, 900, 103]);
+    }
+
+    /// An error with a source of its own, as a loader or a bind can return.
+    #[derive(Debug, thiserror::Error)]
+    #[error("cannot read milter.toml")]
+    struct Unreadable(#[source] std::io::Error);
+
+    /// The message of `error`, then the message of each error in its
+    /// `source()` chain.
+    fn messages(error: &(dyn std::error::Error + 'static)) -> Vec<String> {
+        let mut messages = vec![error.to_string()];
+        let mut next = error.source();
+        while let Some(source) = next {
+            messages.push(source.to_string());
+            next = source.source();
+        }
+        messages
+    }
+
+    #[test]
+    fn rld_007_a_copied_error_keeps_the_messages_of_its_source_chain() {
+        let not_found = std::io::Error::new(std::io::ErrorKind::NotFound, "no such file");
+        let loaded: Outcome = Err(ReloadError::Load(Box::new(Unreadable(not_found))));
+        let taken = Unreadable(std::io::Error::other("port 8891 is taken"));
+        let bound: Outcome = Err(ReloadError::Bind {
+            addr: "127.0.0.1:8891".parse().unwrap(),
+            source: std::io::Error::new(std::io::ErrorKind::AddrInUse, taken),
+        });
+
+        for original in [loaded, bound] {
+            let copied = copy(&original);
+
+            let (Err(original), Err(copied)) = (&original, &copied) else {
+                panic!("both outcomes are errors");
+            };
+            assert_eq!(messages(copied), messages(original));
+            assert!(messages(original).len() >= 3, "{original:?}");
+            if let ReloadError::Bind { source, .. } = copied {
+                assert_eq!(source.kind(), std::io::ErrorKind::AddrInUse);
+            }
+        }
     }
 }

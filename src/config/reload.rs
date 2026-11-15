@@ -50,14 +50,13 @@ pub(crate) enum Setting {
     KeepaliveRetries,
     GracePeriod,
     DrainTimeout,
-    MaxFds,
     MaxMemory,
     PerConnectionBuffer,
     TraceCommands,
 }
 
 /// Every setting of [`ServerConfig`], in the order of configuration.md.
-pub(crate) const SETTINGS: [Setting; 24] = [
+pub(crate) const SETTINGS: [Setting; 23] = [
     Setting::BindAddresses,
     Setting::BindMode,
     Setting::Backlog,
@@ -78,7 +77,6 @@ pub(crate) const SETTINGS: [Setting; 24] = [
     Setting::KeepaliveRetries,
     Setting::GracePeriod,
     Setting::DrainTimeout,
-    Setting::MaxFds,
     Setting::MaxMemory,
     Setting::PerConnectionBuffer,
     Setting::TraceCommands,
@@ -108,7 +106,6 @@ impl Setting {
             Setting::KeepaliveRetries => "socket_options.keepalive.retries",
             Setting::GracePeriod => "shutdown.grace_period",
             Setting::DrainTimeout => "shutdown.drain_timeout",
-            Setting::MaxFds => "resource_limits.max_fds",
             Setting::MaxMemory => "resource_limits.max_memory",
             Setting::PerConnectionBuffer => "resource_limits.per_connection_buffer",
             Setting::TraceCommands => "telemetry.trace_commands",
@@ -123,7 +120,6 @@ impl Setting {
             | Setting::MaxConnections
             | Setting::GracePeriod
             | Setting::DrainTimeout
-            | Setting::MaxFds
             | Setting::MaxMemory => ReloadClass::Immediate,
             Setting::TimeoutsConnect
             | Setting::TimeoutsRead
@@ -184,7 +180,6 @@ impl Setting {
             },
             Setting::GracePeriod => old.shutdown.grace_period != new.shutdown.grace_period,
             Setting::DrainTimeout => old.shutdown.drain_timeout != new.shutdown.drain_timeout,
-            Setting::MaxFds => old.resource_limits.max_fds != new.resource_limits.max_fds,
             Setting::MaxMemory => old.resource_limits.max_memory != new.resource_limits.max_memory,
             Setting::PerConnectionBuffer => {
                 old.resource_limits.per_connection_buffer

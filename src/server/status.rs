@@ -81,11 +81,12 @@ pub(crate) const CLOSE_REASONS: [&str; 6] = [
 ];
 
 /// The `error.type` values: the variant names of `Error`.
-const ERROR_TYPES: [&str; 13] = [
+const ERROR_TYPES: [&str; 14] = [
     "Io",
     "Protocol",
     "ActionNotNegotiated",
     "Handler",
+    "HandlerPanic",
     "Timeout",
     "ConnectionClosed",
     "ConnectionReset",
@@ -183,6 +184,27 @@ impl Counters {
             last_error: Mutex::new(None),
             listeners: Mutex::new(listeners),
             listener_counts: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Counts a new open connection if fewer than `max` are open. The check
+    /// and the count are one atomic step, so accept loops on several
+    /// listeners never open more than `max` together.
+    pub(crate) fn try_open(&self, max: usize) -> bool {
+        let mut open = self.connections.load(Ordering::SeqCst);
+        loop {
+            if open >= max {
+                return false;
+            }
+            match self.connections.compare_exchange_weak(
+                open,
+                open + 1,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => return true,
+                Err(current) => open = current,
+            }
         }
     }
 
@@ -294,19 +316,7 @@ impl Counters {
     }
 
     pub(crate) fn snapshot(&self, config_generation: u64) -> Status {
-        let mut listeners = lock(&self.listeners).clone();
-        {
-            let counts = lock(&self.listener_counts);
-            for listener in &mut listeners {
-                for (address, count) in counts.iter() {
-                    if *address == listener.address {
-                        listener.connections_accepted = count.accepted.load(Ordering::Relaxed);
-                        listener.connections_active = count.active.load(Ordering::SeqCst);
-                        listener.connections_rejected = count.rejected.load(Ordering::Relaxed);
-                    }
-                }
-            }
-        }
+        let listeners = self.listeners();
         let shutting_down = self.shutting_down.load(Ordering::SeqCst);
         let mut any_accepting = false;
         for listener in &listeners {
@@ -331,11 +341,32 @@ impl Counters {
             commands: self.traffic.commands(),
             replies: self.traffic.replies(),
             reloads: self.reload_counts(),
-            last_reload: *lock(&self.last_reload),
+            last_reload: self.last_reload(),
         }
     }
 
-    fn connections_closed(&self) -> Vec<(&'static str, Option<&'static str>, u64)> {
+    /// The listeners with their connection counts.
+    pub(crate) fn listeners(&self) -> Vec<ListenerStatus> {
+        let mut listeners = lock(&self.listeners).clone();
+        let counts = lock(&self.listener_counts);
+        for listener in &mut listeners {
+            for (address, count) in counts.iter() {
+                if *address == listener.address {
+                    listener.connections_accepted = count.accepted.load(Ordering::Relaxed);
+                    listener.connections_active = count.active.load(Ordering::SeqCst);
+                    listener.connections_rejected = count.rejected.load(Ordering::Relaxed);
+                }
+            }
+        }
+        listeners
+    }
+
+    /// When the last reload was applied.
+    pub(crate) fn last_reload(&self) -> Option<SystemTime> {
+        *lock(&self.last_reload)
+    }
+
+    pub(crate) fn connections_closed(&self) -> Vec<(&'static str, Option<&'static str>, u64)> {
         let mut closed = Vec::new();
         for (reason, count) in CLOSE_REASONS.iter().zip(&self.closed) {
             if *reason == "error" {
@@ -355,7 +386,7 @@ impl Counters {
         closed
     }
 
-    fn reload_counts(&self) -> Vec<(&'static str, &'static str, u64)> {
+    pub(crate) fn reload_counts(&self) -> Vec<(&'static str, &'static str, u64)> {
         let mut reloads = Vec::new();
         for (result, counts) in RELOAD_RESULTS.iter().zip(&self.reloads) {
             for (source, count) in RELOAD_SOURCES.iter().zip(counts) {
@@ -376,5 +407,37 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     match mutex.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::Counters;
+
+    #[test]
+    fn srv_059_opening_a_connection_checks_and_counts_in_one_step() {
+        let counters = Arc::new(Counters::new(&[]));
+        let opened = Arc::new(AtomicUsize::new(0));
+        let mut threads = Vec::new();
+        for _ in 0..8 {
+            let counters = Arc::clone(&counters);
+            let opened = Arc::clone(&opened);
+            threads.push(std::thread::spawn(move || {
+                for _ in 0..100 {
+                    if counters.try_open(10) {
+                        opened.fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+            }));
+        }
+        for thread in threads {
+            thread.join().unwrap();
+        }
+
+        assert_eq!(opened.load(Ordering::SeqCst), 10);
+        assert_eq!(counters.connections.load(Ordering::SeqCst), 10);
     }
 }

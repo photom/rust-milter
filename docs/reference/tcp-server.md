@@ -107,11 +107,11 @@ Each listener accepts TCP connections from its own address. The server spawns on
 
 ### Async runtime
 
-The server runs on a Tokio multi-threaded runtime. The application creates the runtime, for example with `#[tokio::main]`, and chooses its settings; rust-milter does not build one.
+The server runs on the Tokio runtime that the application creates, for example with `#[tokio::main]`; rust-milter does not build one. It works on the multi-threaded and on the current-thread runtime. The multi-threaded one spreads the connections over the CPU cores and suits production.
 
 | Setting | Tokio default | Set by |
 |---------|---------------|--------|
-| Runtime type | multi-threaded with `#[tokio::main]` | the application; rust-milter requires the multi-threaded runtime |
+| Runtime type | multi-threaded with `#[tokio::main]` | the application; both types work, and production should use the multi-threaded one |
 | Worker threads | number of CPU cores | the application |
 | I/O driver | epoll (Linux), kqueue (macOS, BSD) | Tokio |
 | Thread stack size | 2 MiB | the application |
@@ -262,19 +262,16 @@ rust-milter is a library and never exits the process itself. These are the exit 
 
 ### Shutdown coordination
 
-The shutdown coordinator manages these parts:
+The shutdown coordinator works with three cancellation tokens and a task tracker:
 
-| Component | Description |
-|-----------|-------------|
-| Cancellation token | Coordinated shutdown signal propagation |
-| Broadcast channel | Shutdown notifications with reason |
-| Active connection counter | Track connections for drain completion |
-| Completion notifier | Signal when all connections are closed |
+| Part | What it does |
+|------|--------------|
+| Stop token | Cancelled when the shutdown starts (step 3): the accept loops end and the reload coordinator stops |
+| Shutdown token | Cancelled when the grace period ends (step 5); handlers see it as `shutdown()` in their context |
+| Force token | Cancelled when the drain timeout expires, by `force_shutdown()`, or by a second shutdown signal: every connection closes at once |
+| Connection task tracker | Tracks the open connections, so the grace period and the drain end early when the last one closes |
 
-Shutdown reasons:
-- signal, with the signal number
-- manual, from a programmatic shutdown
-- error, with the error description
+A shutdown starts for one of two reasons, which the "Shutdown signal received" and "Shutdown requested" logs record: a signal, with its number and name, or a call to `ServerHandle::shutdown()` or `force_shutdown()` (`manual`). No error starts a shutdown: once `run()` has bound the listeners and registered the signal handlers, it returns only after a shutdown.
 
 ### Shutdown timeline
 
@@ -322,18 +319,32 @@ To support 10,000 or more concurrent connections:
 
 | Limit | Description |
 |-------|-------------|
-| `max_fds` | Maximum file descriptors (connections + internal) |
 | `max_memory` | Memory limit for buffers (approximate) |
-| `per_connection_buffer` | Per-connection buffer limit |
+| `per_connection_buffer` | Per-connection buffer limit, and the limit on what one command and a connection's stored macros cost |
 
 ### Backpressure
 
 As the server approaches its resource limits:
 
-1. When `max_connections` is reached, the server accepts each new connection and closes it at once. The MTA sees the connection close during option negotiation and applies its own failure policy (Sendmail `F=` flags, Postfix `milter_default_action`). A TCP server cannot answer an incoming connection with `ECONNREFUSED`; only a port with no listener does that.
-2. When `max_memory` is set and the connection buffers would exceed it, the server closes new connections at once, as at `max_connections`, and closes a connection whose buffer would have to grow past the limit (`Error::ResourceLimit`).
+1. When `max_connections` is reached, the server accepts each new connection and closes it at once. The MTA sees the connection close during option negotiation and applies its own failure policy (Sendmail `F=` flags, Postfix `milter_default_action`). A TCP server cannot answer an incoming connection with `ECONNREFUSED`; only a port with no listener does that. The server checks the limit and counts the new connection in one atomic step, so the listeners together never pass it.
+2. When `max_memory` is set and the connection buffers would exceed it, the server closes new connections at once, as at `max_connections`, and closes a connection whose reservation would have to grow past the limit (`Error::ResourceLimit`).
 
-`max_memory` counts the read buffers of the open connections. Each connection reserves 4 KB when it is accepted, and grows its reservation to the length of a frame as soon as the frame's length field arrives, before the data. The reservation falls back to 4 KB once the frame is complete. Replies and the values a handler keeps are not counted.
+`max_memory` counts everything the library allocates for the open connections: their read buffers, the commands they are processing, and their stored macros ([ADR 0019](../adr/0019-a-connection-counts-what-it-holds-until-each-command-ends.md)). Replies and the values a handler keeps are not counted.
+
+A connection's reservation follows what it holds:
+
+1. It reserves 4 KB when it is accepted.
+2. As soon as a frame's length field arrives, before the data, the reservation grows to the stored macros' cost plus the frame's length.
+3. Before the frame is decoded, the reservation grows to the stored macros' cost plus the command's cost: the packet's length plus 32 bytes per NUL byte in the data of a command that decodes to text (MAIL, RCPT, macros, CONNECT, HELO, a header, and an unknown command). Each string ends with a NUL byte, so this bounds the strings the command decodes to. The 32 bytes are one `MilterText` on a 64-bit target, 16 on a 32-bit one. A command may cost at most `per_connection_buffer`; a frame whose command would cost more closes the connection with `Error::ResourceLimit(ResourceKind::PerConnectionBuffer)` before it is decoded, with or without `max_memory`.
+4. When the command has finished, its callback returned and its reply written, the reservation falls back to what the stored macros cost, and at least 4 KB.
+
+The read buffer grows to fit a large frame. After a frame larger than 4 KB, the connection gives the buffer up with the frame and reads on into a new 4 KB buffer, so an idle connection holds no more than 4 KB plus its stored macros.
+
+The protocol engine keeps the macros of up to ten stages between commands. It stores a copy of each stage, so a stored macro does not keep the read buffer it arrived in. Stored macros cost their text plus 64 bytes per name and value pair. That cost may not pass `per_connection_buffer`, with or without `max_memory`: a macro frame that would pass it closes the connection with `Error::ResourceLimit(ResourceKind::PerConnectionBuffer)`.
+
+Sendmail and Postfix send a few hundred bytes of macros per stage, and MAIL and RCPT frames of one address and a few ESMTP arguments, so only a hostile peer reaches these limits. Without `max_memory`, a connection holds at most twice `per_connection_buffer`: one frame or command, and its stored macros.
+
+Until its first packet has arrived, a connection accepts a packet of at most 1,024 bytes, or `per_connection_buffer` if that is smaller. Only `SMFIC_OPTNEG` is valid there, and Sendmail and Postfix send it as a 17-byte packet. A longer first packet fails with `Error::FrameTooLarge` as soon as its length field arrives, so a connection that has not negotiated holds only its 4 KB reservation ([ADR 0013](../adr/0013-the-first-packet-is-limited-to-1-kb.md)).
 
 ## Error handling
 
@@ -345,6 +356,7 @@ The error types and their variants are specified in [api-specification.md](api-s
 |-------|-------|-----------------|
 | `EMFILE` (too many open files) | `accept()` | Log, then back off: stop accepting on that listener for 100 ms, doubling after each consecutive error up to 1 s. A successful accept resets the back-off |
 | `ENFILE` (system file table full) | `accept()` | Same back-off as `EMFILE` |
+| `EINVAL`, `EBADF`, `ENOTSOCK` | `accept()` | The listener socket is broken, and waiting does not fix it. Log "Accept error (fatal)" at ERROR, record the error as `last_error` in `ServerHandle::status()`, and keep retrying with the same back-off as `EMFILE` |
 | any other `accept()` error | `accept()` | Same back-off as `EMFILE`, so a failing listener never spins |
 | `ECONNABORTED` | `accept()` | The client gave up before `accept()` returned. Log at debug level and keep accepting |
 | `ECONNRESET` | connection | Log at debug level, close connection |
@@ -377,7 +389,7 @@ In `BestEffort` mode the server:
 
 | Level | Usage |
 |-------|-------|
-| ERROR | Fatal errors, server cannot continue |
+| ERROR | Failures an operator has to act on: a rejected configuration, a failed reload or bind, a broken listener |
 | WARN | Recoverable errors, degraded operation |
 | INFO | Significant events (start, stop, config) |
 | DEBUG | Connection events, detailed flow |
@@ -390,14 +402,18 @@ In `BestEffort` mode the server:
 | Connection accepted | DEBUG | `conn_id`, `remote_addr`, `local_addr` |
 | First command received | DEBUG | `conn_id`, `remote_addr`, `local_addr`, `duration_ms` (time since accept) |
 | Connection active | TRACE | `conn_id`, `state` |
-| Connection idle | TRACE | `conn_id`, `idle_since` |
+| Connection idle | TRACE | `conn_id`, `state` |
 | Connection draining | DEBUG | `conn_id`, `reason` |
 | Connection closed (normal) | DEBUG | `conn_id`, `remote_addr`, `duration_ms`, `bytes_read`, `bytes_written`, `reason` |
 | Connection closed (error) | WARN | `conn_id`, `remote_addr`, `duration_ms`, `bytes_read`, `bytes_written`, `error`, `reason` |
 | Connection timeout | DEBUG | `conn_id`, `timeout_type`, `timeout_value` |
-| Connection rejected (limit) | WARN | `conn_id`, `remote_addr`, `max_connections` |
+| Connection rejected (limit) | WARN for the first rejection of a run, DEBUG for the rest | `conn_id`, `remote_addr`, `max_connections` |
 
-The close log is the error form, at WARN, only for the reason `error`: a protocol error, a failed callback, an end of file in the middle of a frame, a frame longer than `per_connection_buffer`, or a socket error other than a reset. A close for the reasons `client_closed`, `server_shutdown`, `timeout`, `reset`, and `limit_reached` (a buffer that would pass `max_memory`) is the normal form at DEBUG, with `error` added for a timeout, a reset, and a limit. MTAs close idle milter connections and reset connections in normal operation, so neither is a warning.
+Each command that arrives logs "Connection active" with `state`, the protocol state it arrives in, named as in libmilter (such as `ST_HELO`); the first one also logs "First command received". When the connection waits for the next command again, it logs "Connection idle" with the state the command left it in. A connection that sees the shutdown token logs "Connection draining" with `reason` = `server_shutdown` before it closes. A forced close logs no "Connection draining".
+
+A connection turned away at `max_connections` logs "Connection rejected (limit)", and one turned away at accept because its 4 KB reservation would pass `max_memory` logs "Resource limit reached". A run of rejections at one limit lasts until the server takes on a connection again. Only the first rejection of a run logs at WARN; the rest log at DEBUG, so a peer that keeps reconnecting at a limit adds no WARN lines. `milter.server.connection.rejected` and `status()` count every rejection.
+
+The close log is the error form, at WARN, only for the reason `error`: a protocol error, a failed callback, an end of file in the middle of a frame, a frame longer than `per_connection_buffer` or a first packet longer than 1,024 bytes, or a socket error other than a reset. A close for the reasons `client_closed`, `server_shutdown`, `timeout`, `reset`, and `limit_reached` (a reservation that would pass `max_memory`, or a command or stored macros that would pass `per_connection_buffer`) is the normal form at DEBUG, with `error` added for a timeout, a reset, and a limit. MTAs close idle milter connections and reset connections in normal operation, so neither is a warning.
 
 Fields of the "connection accepted" log:
 
@@ -418,7 +434,7 @@ Fields of the "connection closed" log:
 | `bytes_read` | u64 | Total bytes read |
 | `bytes_written` | u64 | Total bytes written |
 | `reason` | String | Close reason: one of the `milter.close_reason` values in [telemetry.md](telemetry.md#attribute-values) |
-| `error` | String | Error message (if applicable) |
+| `error` | String | Error message and its source chain (if applicable). For `Error::Handler` this includes the handler's own error text |
 | `commands` | u64 | Number of commands received |
 
 ### Server lifecycle logs
@@ -438,15 +454,19 @@ Fields of the "connection closed" log:
 | Configuration loaded | INFO | `generation` |
 | Configuration error | ERROR | `error`, `field` |
 
+`build()` logs "Configuration loaded" with `generation` 1 when it accepts the configuration, and "Configuration error" when validation rejects it. `field` names the setting or rule that failed, such as `backlog` or `max_memory`. A reload logs "Reload applied" or "Reload failed" instead ([hot-reload.md](hot-reload.md#logging-and-metrics)).
+
 ### Error logs
 
 | Event | Level | Required fields |
 |-------|-------|-----------------|
 | Accept error | WARN | `listener`, `error`, `consecutive_errors` |
 | Accept error (fatal) | ERROR | `listener`, `error` |
-| Resource limit reached | WARN | `limit_type`, `current`, `max` |
+| Resource limit reached | WARN for the first rejection of a run, DEBUG for the rest | `limit_type`, `current`, `max` |
 | I/O error | DEBUG | `conn_id`, `operation`, `error` |
 | Protocol error | WARN | `conn_id`, `error`, `details` |
+
+"Accept error (fatal)" replaces "Accept error" for an error that waiting cannot fix (see [Error recovery](#error-recovery)). "I/O error" has `operation` = `read` or `write`; a reset logs one too. "Protocol error" has `details` = the protocol state the connection was in; the connection then closes with the WARN form of "Connection closed".
 
 ### Log fields
 

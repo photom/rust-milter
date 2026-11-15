@@ -61,7 +61,7 @@ Every setting belongs to one of three classes.
 
 With Sendmail and Postfix one milter connection lasts one SMTP session, so a `new_connections` change reaches all traffic within one SMTP session of the reload.
 
-The four `ServerConfig` settings of class `restart` are read only when a listener is created, and a running listener cannot take a new value. A reload that changes one of them fails even if it also adds or removes addresses, and `RestartRequired` names every such setting that changed ([ADR 0007](../adr/0007-a-reload-that-changes-a-restart-setting-fails.md)). To apply the file, restart the process, or revert those settings and reload.
+The four `ServerConfig` settings of class `restart` are read only when a listener is created, and a running listener cannot take a new value. A reload that changes one of them fails even if it also adds or removes addresses, and `RestartRequired` names every such setting that changed ([ADR 0016](../adr/0016-a-reload-closes-no-connection-and-fails-on-a-restart-setting.md)). To apply the file, restart the process, or revert those settings and reload.
 
 ## Settings that need a restart
 
@@ -84,12 +84,12 @@ The reasons behind the reload classes are explained in [Configuration snapshots 
 | `timeouts.connect`, `timeouts.read`, `timeouts.write`, `timeouts.idle` | `new_connections` |
 | `socket_options.tcp_nodelay`, `keepalive`, `recv_buffer_size`, `send_buffer_size` | `new_connections` |
 | `shutdown.grace_period`, `shutdown.drain_timeout` | `immediate` (read when a shutdown starts) |
-| `resource_limits.max_fds`, `resource_limits.max_memory` | `immediate` (checked at accept and allocation time) |
+| `resource_limits.max_memory` | `immediate` (checked at accept and allocation time) |
 | `resource_limits.per_connection_buffer` | `new_connections` |
 | `telemetry.trace_commands` | `new_connections` |
 | Application configuration | `immediate` publication; handlers choose when to read it |
 
-Lowering `max_connections` below the current count closes no open connection. New connections are closed at once until the count drops below the new limit ([ADR 0005](../adr/0005-reload-closes-no-connection-and-rebinds-no-listener.md)).
+Lowering `max_connections` below the current count closes no open connection. New connections are closed at once until the count drops below the new limit ([ADR 0016](../adr/0016-a-reload-closes-no-connection-and-fails-on-a-restart-setting.md)).
 
 ## ServerConfig reference
 
@@ -159,11 +159,10 @@ Time a handler spends in a callback counts against none of them; the MTA's own m
 
 | Field | Type | Default | Valid values | Reload class |
 |-------|------|---------|--------------|--------------|
-| `max_fds` | `Option<usize>` | `None` (system limit) | at least `max_connections` + listeners + 10 | `immediate` |
 | `max_memory` | `Option<usize>` | `None` (unlimited) | at least `per_connection_buffer` | `immediate` |
 | `per_connection_buffer` | `usize` | 128 KB | 65,540 bytes to 16 MB | `new_connections` |
 
-`per_connection_buffer` is also the largest milter packet the server accepts. Its lower bound is one full default-size packet: 4 length bytes, 1 command byte, and 65,535 data bytes. Neither MTA sends a larger packet in its default build: both send the body in chunks of at most 65,535 bytes, Postfix cuts each header to 60,000 bytes when a milter is configured, and Sendmail limits all headers together to 32,768 bytes ([protocol: Headers and body](milter-protocol.md#headers-and-body)). Raise the value only for an MTA that sends larger packets.
+`per_connection_buffer` is also the largest milter packet the server accepts. Its lower bound is one full default-size packet: 4 length bytes, 1 command byte, and 65,535 data bytes. Neither MTA sends a larger packet in its default build: both send the body in chunks of at most 65,535 bytes, Postfix cuts each header to 60,000 bytes when a milter is configured, and Sendmail limits all headers together to 32,768 bytes ([protocol: Headers and body](milter-protocol.md#headers-and-body)). Raise the value only for an MTA that sends larger packets. It also caps what one command may cost, its packet plus 32 bytes per NUL byte in a command that decodes to text, and what the macros a connection stores may cost. Real MTAs stay far below both ([ADR 0019](../adr/0019-a-connection-counts-what-it-holds-until-each-command-ends.md)).
 
 ### TelemetryConfig
 
@@ -202,15 +201,14 @@ The same rules run at startup and on every reload, and `ServerConfig::validate()
 1. Every field is within the range in the reference tables.
 2. `bind_addresses` is not empty and has no duplicates.
 3. `per_connection_buffer` is at least 65,540 bytes.
-4. If `max_fds` is set, it is at least `max_connections` + the number of listeners + 10, so the server can always accept, log, and close.
-5. If `max_memory` is set, it is at least `per_connection_buffer`.
-6. If `reuse_port` is true, the platform supports `SO_REUSEPORT`.
-7. If `ipv6_only` is false, `bind_addresses` does not hold `[::]` and an IPv4 address on the same port. A dual-stack `[::]` listener already receives the IPv4 connections on its port, so the second bind fails on Linux and behaves differently on other systems. Set `ipv6_only` to true to listen on both, or keep only `[::]`.
+4. If `max_memory` is set, it is at least `per_connection_buffer`.
+5. If `reuse_port` is true, the platform supports `SO_REUSEPORT`.
+6. If `ipv6_only` is false, `bind_addresses` does not hold `[::]` and an IPv4 address on the same port. A dual-stack `[::]` listener already receives the IPv4 connections on its port, so the second bind fails on Linux and behaves differently on other systems. Set `ipv6_only` to true to listen on both, or keep only `[::]`.
 
 On reload only:
 
-8. The new configuration must leave at least one listener (see [hot-reload.md](hot-reload.md)).
-9. No `restart` setting differs from the running configuration. Otherwise the reload fails with `RestartRequired`, which names each one that does.
+7. The new configuration must leave at least one listener (see [hot-reload.md](hot-reload.md)).
+8. No `restart` setting differs from the running configuration. Otherwise the reload fails with `RestartRequired`, which names each one that does.
 
 ## File format (serde feature)
 

@@ -113,6 +113,18 @@ flag_set! {
     }
 }
 
+flag_set! {
+    /// The protocol options a handler requests during option negotiation.
+    /// Each flag's value is the matching `SMFIP_*` flag. The connection
+    /// closes if the MTA does not offer all of them at protocol version 6.
+    ProtocolOptions {
+        /// `header` receives each value with its leading whitespace, and the
+        /// MTA stores the values of `add_header`, `insert_header`, and
+        /// `change_header` with no space added.
+        HEADER_LEADING_SPACE = SMFIP_HDR_LEADSPC,
+    }
+}
+
 impl Events {
     /// The `SMFIP_NO*` flags for the stages in `self`.
     pub(crate) const fn no_flags(self) -> u32 {
@@ -132,5 +144,20 @@ impl Actions {
     /// The actions among the given `SMFIF_*` flags; other bits are dropped.
     pub const fn from_bits_truncate(bits: u32) -> Actions {
         Actions(bits & Actions::ALL.0)
+    }
+}
+
+impl ProtocolOptions {
+    /// No option.
+    pub const NONE: ProtocolOptions = ProtocolOptions(0);
+
+    /// The `SMFIP_*` flags.
+    pub const fn bits(self) -> u32 {
+        self.0
+    }
+
+    /// The options among the given `SMFIP_*` flags; other bits are dropped.
+    pub(crate) const fn from_bits_truncate(bits: u32) -> ProtocolOptions {
+        ProtocolOptions(bits & ProtocolOptions::ALL.0)
     }
 }

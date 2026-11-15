@@ -8,7 +8,7 @@ Scenarios that run rust-milter behind real MTAs: the Postfix and Sendmail packag
 |----|-------|-------|------|------|------|
 | INT-001 | interop | Both MTAs, each with a milter that adds `X-Filtered-By: rust-milter` at end of message | a client sends one message | the delivered message has the header, and the milter log shows no WARN or ERROR | [api: EomContext](../reference/api-specification.md#eomcontext) |
 | INT-002 | interop | Postfix with `milter_protocol` = 2, 3, 4, and 6 (ports 2602, 2603, 2604, and 25), in four runs | a client sends one message with an unknown SMTP command before MAIL | the negotiated version equals the setting; `unknown` is called only for 3 and later, `data` only for 4 and later; the message is delivered | [protocol: Protocol version configuration](../reference/milter-protocol.md#protocol-version-configuration) |
-| INT-003 | interop | Both MTAs | a client opens a session and quits without mail | the handler's `session_end` gets `Quit` or `ConnectionClosed`, and the milter log shows no WARN or ERROR | [protocol: Connection lifecycle](../reference/milter-protocol.md#connection-lifecycle) |
+| INT-003 | interop | Both MTAs | a client opens a session and quits without mail | the handler's `session_end` gets `Quit`, and the milter log shows no WARN or ERROR | [protocol: Connection lifecycle](../reference/milter-protocol.md#connection-lifecycle) |
 | INT-004 | interop | Both MTAs and a client that sends two messages in one SMTP session | the session runs | the milter sees two messages on one connection, each with a fresh `Message` value | [api: Associated types](../reference/api-specification.md#associated-types) |
 
 ## Decisions and replies
@@ -47,8 +47,8 @@ Scenarios that run rust-milter behind real MTAs: the Postfix and Sendmail packag
 
 | ID | Level | Given | When | Then | Spec |
 |----|-------|-------|------|------|------|
-| INT-040 | interop | Postfix on port 2625, with `milter_content_timeout = 2s`, and a handler whose `end_of_message` takes 5 s and calls `progress()` every second | a client sends one message | the message is delivered: each `SMFIR_PROGRESS` restarts Postfix's timeout | [protocol: Timeouts](../reference/milter-protocol.md#timeouts) |
-| INT-041 | interop | `sendmail-short`, with `T=E:3s;R:2s`, and the same handler | a client sends one message | Sendmail times out at end of message after about 3 s and applies the filter's `F=` flags: `progress()` does not extend the `E` timeout | [protocol: Timeouts](../reference/milter-protocol.md#timeouts) |
+| INT-040 | interop | Postfix on port 2625, with `milter_content_timeout = 2s`, and a handler whose `end_of_message` takes 7 s and calls `progress()` every second | a client sends one message | the message is delivered: each `SMFIR_PROGRESS` restarts Postfix's timeout | [protocol: Timeouts](../reference/milter-protocol.md#timeouts) |
+| INT-041 | interop | `sendmail-short`, with `T=E:4s;R:3s`, and the same handler | a client sends one message | Sendmail times out at end of message between 3 and 5 s, before the handler finishes, and applies the filter's `F=` flags: `progress()` does not extend the `E` timeout | [protocol: Timeouts](../reference/milter-protocol.md#timeouts) |
 | INT-042 | interop | Both MTAs, `timeouts.idle` = 3 s, and a client that pauses 5 s between `RCPT` and `DATA` | the session runs | the milter closes the idle connection, and the MTA applies its failure policy to the session | [configuration: TimeoutConfig](../reference/configuration.md#timeoutconfig) |
 
 ## Server lifecycle
@@ -58,3 +58,12 @@ Scenarios that run rust-milter behind real MTAs: the Postfix and Sendmail packag
 | INT-050 | interop | Both MTAs, the milter running as a child process of the test, and a client that sends 50 messages in a loop | the milter receives `SIGTERM` during the loop | every message is either delivered or answered with the MTA's failure reply; none is lost without a reply; the milter exits with code 0 | [tcp-server: Shutdown sequence](../reference/tcp-server.md#shutdown-sequence) |
 | INT-051 | interop | Both MTAs, the milter as a child process with a registered reload loader, and the same loop | the milter receives `SIGHUP` three times during the loop | every message is delivered, and the client sees no error reply | [hot-reload: Reload sequence](../reference/hot-reload.md#reload-sequence) |
 | INT-052 | interop | Both MTAs and a stopped milter | a client sends one message | Postfix follows `milter_default_action`, and Sendmail follows the filter's `F=` flags | [protocol: Connection errors](../reference/milter-protocol.md#connection-errors) |
+
+## Header values
+
+| ID | Level | Given | When | Then | Spec |
+|----|-------|-------|------|------|------|
+| INT-060 | interop | Both MTAs and a handler with `protocol_options()` = `HEADER_LEADING_SPACE` that records header values | a client sends a message with the header fields `X-None:none`, `X-One: one`, `X-Two:  two`, and `X-Tab:` TAB `tab` | the handler receives `none`, ` one` (one space first), `  two` (two spaces first), and TAB `tab`: each value as the message has it after the colon | [protocol: Headers and body](../reference/milter-protocol.md#headers-and-body) |
+| INT-061 | interop | Both MTAs and a handler without protocol options, with `ADD_HEADERS`, that records header values and adds `X-Added` with the value `added` | a client sends the message of INT-060 | the handler receives `none`, `one`, ` two` (one space first), and TAB `tab`, and the delivered message holds the line `X-Added: added` | [protocol: Headers and body](../reference/milter-protocol.md#headers-and-body) |
+| INT-062 | interop | Both MTAs and a handler with `HEADER_LEADING_SPACE`, `ADD_HEADERS`, and `CHANGE_HEADERS` that adds `X-Added` with the value ` added` (one space first), adds `X-Bare` with `bare`, and changes `X-None` to ` changed` (one space first) | a client sends the message of INT-060 | the delivered message holds the lines `X-Added: added`, `X-Bare:bare`, and `X-None: changed`, byte for byte | [api: EomContext](../reference/api-specification.md#eomcontext) |
+| INT-063 | interop | Postfix with `milter_protocol` = 4 (port 2604), `milter_default_action = tempfail`, and a handler with `HEADER_LEADING_SPACE` | a client sends one message | the milter closes the connection during negotiation and logs a protocol error with `OptionsNotOffered`; the client gets a 4xx reply, and nothing is delivered | [api: Protocol engine behavior](../reference/api-specification.md#protocol-engine-behavior) |

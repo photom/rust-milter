@@ -39,7 +39,7 @@ pub struct ServerConfig {
     pub socket_options: SocketOptions,
     /// Graceful shutdown limits.
     pub shutdown: ShutdownConfig,
-    /// Limits on file descriptors and memory.
+    /// Limits on the memory of the connection buffers.
     pub resource_limits: ResourceLimitsConfig,
     /// What the server records for telemetry.
     pub telemetry: TelemetryConfig,
@@ -187,10 +187,13 @@ impl Default for KeepaliveConfig {
     serde(default, deny_unknown_fields)
 )]
 pub struct ShutdownConfig {
-    /// How long new connections are still accepted after a shutdown starts.
+    /// How long open connections are served as usual after a shutdown
+    /// starts. The listeners close at once; the grace period ends early when
+    /// no connection is open.
     #[cfg_attr(feature = "serde", serde(with = "file_format::duration"))]
     pub grace_period: Duration,
-    /// How long open sessions may take to finish.
+    /// How long open connections may take to finish after the grace period,
+    /// before the rest are closed by force.
     #[cfg_attr(feature = "serde", serde(with = "file_format::duration"))]
     pub drain_timeout: Duration,
 }
@@ -204,7 +207,7 @@ impl Default for ShutdownConfig {
     }
 }
 
-/// Limits on file descriptors and memory.
+/// Limits on the memory of the connection buffers, and the largest packet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(
     feature = "serde",
@@ -212,10 +215,6 @@ impl Default for ShutdownConfig {
     serde(default, deny_unknown_fields)
 )]
 pub struct ResourceLimitsConfig {
-    /// The most file descriptors the server uses; `None` for the system
-    /// limit.
-    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
-    pub max_fds: Option<usize>,
     /// The most memory for connection buffers; `None` for no limit.
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub max_memory: Option<usize>,
@@ -226,7 +225,6 @@ pub struct ResourceLimitsConfig {
 impl Default for ResourceLimitsConfig {
     fn default() -> ResourceLimitsConfig {
         ResourceLimitsConfig {
-            max_fds: None,
             max_memory: None,
             per_connection_buffer: 128 * 1024,
         }

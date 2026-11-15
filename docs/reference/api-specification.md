@@ -46,12 +46,13 @@ The public API of the rust-milter server library: its types, traits, errors, and
 | `MilterText` | Handler | Text from the MTA: raw bytes, readable as UTF-8 when valid |
 | `Events` | Handler | The protocol stages a handler wants to receive |
 | `Actions` | Handler | The message modifications a handler may perform |
-| `Negotiated` | Handler | The result of option negotiation: `version()`, `actions()`, `protocol()` for the flags in the milter's answer, and `mta_protocol()` for the flags the MTA offered |
+| `ProtocolOptions` | Handler | The protocol options a handler requests, such as receiving header values with their leading space |
+| `Negotiated` | Handler | The result of option negotiation: `version()`, `actions()`, `options()`, `protocol()` for the flags in the milter's answer, and `mta_protocol()` for the flags the MTA offered |
 | `ConnectDecision`, `Decision`, `BodyDecision` | Handler | The decisions a callback returns, per stage |
 | `ReplyCode` | Handler | A validated custom SMTP reply |
 | `SessionEnd` | Handler | Why an SMTP session ended |
 | `ConnectionInfo` | I/O | Read-only facts about an MTA connection: ID, addresses, accept time |
-| `Frame` | Protocol | Milter protocol frame (used by the milter client sample in `examples/` and by tests) |
+| `Frame` | Protocol | Milter protocol frame (used by tests, and by the planned milter client sample) |
 | `Command` | Protocol | Commands from MTA to milter (`SMFIC_*`) |
 | `AddressFamily` | Protocol | The SMTP client's address family in `Command::Connect` (`SMFIA_*`) |
 | `Reply` | Protocol | Replies from milter to MTA (`SMFIR_*`) |
@@ -100,7 +101,7 @@ The public API of the rust-milter server library: its types, traits, errors, and
 Lifecycle:
 1. `build()` validates the configuration. A validation error is returned here, before any socket is opened.
 2. `run()` binds the listeners according to `bind_mode`, registers the `SIGTERM`, `SIGINT`, `SIGQUIT`, and `SIGHUP` handlers, and starts accepting.
-3. A shutdown signal, `ServerHandle::shutdown()`, or a fatal error ends `run()`.
+3. A shutdown signal, `ServerHandle::shutdown()`, or `ServerHandle::force_shutdown()` ends `run()`. Once the listeners are bound and the signal handlers registered, no error ends it: accept errors back off, and a connection error closes only that connection.
 
 ### ServerHandle
 
@@ -164,21 +165,22 @@ A listener's counts continue when a reload keeps its address, and start at zero 
 
 | Type | Bounds | Lifetime |
 |------|--------|----------|
-| `Session` | `Default + Send + 'static` | Created by the library with `Default` when an SMTP session starts (`SMFIC_CONNECT`), dropped when it ends (`SMFIC_QUIT`, `SMFIC_QUIT_NC`, or connection close) |
+| `Session` | `Default + Send + 'static` | Created by the library with `Default` the first time a callback calls `session()` in an SMTP session, and dropped when the session ends (`SMFIC_QUIT`, `SMFIC_QUIT_NC`, or connection close) |
 | `Message` | `Default + Send + 'static` | Created by the library with `Default` at `SMFIC_MAIL`, or at the first command of a message when the handler left `MAIL` out of `events()`; dropped after the final reply at end of message, after a decision that ends the message earlier (`Accept` from any message callback, or `Reject`, `TempFail`, `Reply`, or `Discard` from one other than `rcpt`, which reset the protocol state to `ST_HELO` as in libmilter), on `SMFIC_ABORT`, or when the session ends |
 
 All per-session and per-message data belongs in these types. The library drops them at the end of each session and message, which enforces the session isolation rule.
 
 ### Negotiation methods
 
-Called once per connection, during option negotiation. Both are synchronous and have defaults.
+Called once per connection, during option negotiation. All three are synchronous and have defaults ([ADR 0020](../adr/0020-protocol-options-are-a-fixed-handler-method-and-close-when-missing.md)).
 
 | Method | Returns | Default | libmilter equivalent |
 |--------|---------|---------|----------------------|
 | `events(&self)` | `Events` | all stages | the set of registered `xxfi_*` callbacks |
 | `actions(&self)` | `Actions` | none | `xxfi_flags` |
+| `protocol_options(&self)` | `ProtocolOptions` | none | the protocol flags a milter sets in `xxfi_negotiate` |
 
-The library asks the MTA not to send the stages missing from `events()` (`SMFIP_NO*` flags), and requests the actions in `actions()` (`SMFIF_*` flags). If the MTA does not offer every requested action, the library closes the connection, as libmilter does.
+The library asks the MTA not to send the stages missing from `events()` (`SMFIP_NO*` flags), and requests the actions in `actions()` (`SMFIF_*` flags) and the options in `protocol_options()` (`SMFIP_*` flags). If the MTA does not offer every requested action, the library closes the connection, as libmilter does. After the actions, it checks the options the same way. An option counts as offered when the MTA's protocol flags hold it and the negotiated version is 6.
 
 `Events` has one flag per optional stage. `end_of_message`, `abort`, and `session_end` are always delivered.
 
@@ -194,6 +196,14 @@ The library asks the MTA not to send the stages missing from `events()` (`SMFIP_
 | `BODY` | `body` | `SMFIP_NOBODY` |
 | `UNKNOWN` | `unknown` | `SMFIP_NOUNKNOWN` |
 
+`ProtocolOptions` has one flag per option. `ProtocolOptions::NONE` requests none.
+
+| Flag | Protocol flag | Effect while in force |
+|------|---------------|-----------------------|
+| `HEADER_LEADING_SPACE` | `SMFIP_HDR_LEADSPC` | `header` receives each value as the message has it after the colon, leading whitespace included. `add_header`, `insert_header`, and `change_header` send each value as given, and the MTA stores it with no space added, so a value without a leading space produces `Name:value` in the message |
+
+Without `HEADER_LEADING_SPACE`, both MTAs remove one leading space (not a tab) from each value they send, and put one space in front of each value they store for `add_header`, `insert_header`, and `change_header` ([protocol: Headers and body](milter-protocol.md#headers-and-body)). [Whitespace in header values](../explanation/header-whitespace.md) shows examples of both directions.
+
 ### Callbacks
 
 Every callback returns a `Send` future that resolves to `Result<T>`, where `T` is the type in the Returns column (`()` for "nothing"). Each has a default that returns `Ok` with `Continue`, or does nothing. Implementations can write them as `async fn`.
@@ -205,7 +215,7 @@ Every callback returns a `Send` future that resolves to `Result<T>`, where `T` i
 | `mail` | `xxfi_envfrom` | `&mut MessageContext<Self>`, sender (`&MilterText`), ESMTP arguments (`&[MilterText]`) | `Decision` |
 | `rcpt` | `xxfi_envrcpt` | `&mut MessageContext<Self>`, recipient (`&MilterText`), ESMTP arguments (`&[MilterText]`) | `Decision`; a reject applies to this recipient only |
 | `data` | `xxfi_data` | `&mut MessageContext<Self>` | `Decision` |
-| `header` | `xxfi_header` | `&mut MessageContext<Self>`, name and value (`&MilterText`) | `Decision` |
+| `header` | `xxfi_header` | `&mut MessageContext<Self>`, name and value (`&MilterText`); the value keeps its leading space only with `HEADER_LEADING_SPACE` in force | `Decision` |
 | `end_of_headers` | `xxfi_eoh` | `&mut MessageContext<Self>` | `Decision` |
 | `body` | `xxfi_body` | `&mut MessageContext<Self>`, chunk (`Bytes`) | `BodyDecision` |
 | `end_of_message` | `xxfi_eom` | `&mut EomContext<Self>` | `Decision` |
@@ -217,7 +227,8 @@ The library calls a callback only for the stages in `events()`, and only if the 
 
 Contract:
 - Callbacks for one connection run one at a time, in protocol order. Callbacks for different connections run concurrently.
-- A callback that returns an error closes the connection; the library calls `session_end` with `SessionEnd::Error` first. A handler turns its own error into `Error::Handler` with `Error::handler(err)`, which accepts any `std::error::Error + Send + Sync + 'static`.
+- A callback that returns an error closes the connection; the library calls `session_end` with `SessionEnd::Error` first. A handler turns its own error into `Error::Handler` with `Error::handler(err)`, which accepts any `std::error::Error + Send + Sync + 'static`. The library writes that error and its source chain into the WARN "Connection closed" log, so its text must not hold SMTP data ([telemetry: Data that must never be recorded](telemetry.md#data-that-must-never-be-recorded)).
+- A callback that panics closes the connection with `Error::HandlerPanic`. No further callback runs for that session, not even `abort` or `session_end`, and the library drops its `Session` and `Message` values. The same holds for a panic in `events()`, `actions()`, or `protocol_options()`, and in `abort` or `session_end` while a session ends ([ADR 0018](../adr/0018-panics-in-handler-code-and-the-reload-loader-are-caught.md)).
 - A callback should finish promptly when the shutdown token from its context is cancelled.
 - Settings come from the `ConfigWatch<A>` the handler holds. Read the application configuration once per session (in `connect`) or once per message (in `mail`), and keep the value in `Session` or `Message`.
 
@@ -228,7 +239,7 @@ Contract:
 | Method | Returns |
 |--------|---------|
 | `session()` | `&mut H::Session` |
-| `macro_value(name)` | `Option<&MilterText>`: the value of a macro the MTA sent in this session, at this stage or an earlier one |
+| `macro_value(name)` | `Option<&MilterText>`: the value of a macro the MTA sent in this session, at this stage or an earlier one. A one-letter name matches with or without braces, as in libmilter: `i` and `{i}` name the same macro |
 | `connection()` | `&ConnectionInfo` of the MTA connection |
 | `negotiated()` | `&Negotiated` |
 | `shutdown()` | the server's `CancellationToken`, cancelled when the shutdown grace period ends |
@@ -260,6 +271,8 @@ Everything in `MessageContext`, plus the modification methods. They exist only o
 | `progress()` | none | `SMFIR_PROGRESS` |
 
 `Actions` has one flag for each action in the table, matching the `SMFIF_*` flags in [milter-protocol.md](milter-protocol.md#action-flags-smfif_).
+
+The header methods send `value` unchanged, and the MTA puts a space between the colon and the value unless `HEADER_LEADING_SPACE` is in force ([Negotiation methods](#negotiation-methods)). With the option in force, a handler that wants `Name: value` passes ` value`.
 
 ## Decisions and reply codes
 
@@ -293,15 +306,15 @@ The library performs these protocol duties for every handler:
 | Duty | Behavior |
 |------|----------|
 | Version negotiation | Closes the connection if the MTA offers a version below 2; otherwise answers with the lower of the MTA's version and 6 |
-| Flags | Treats zero action or protocol flags from the MTA as the version 1 defaults; requests only flags the MTA offered |
+| Flags | Treats zero action or protocol flags from the MTA as the version 1 defaults; requests only flags the MTA offered. Closes the connection without a reply when the MTA did not offer every action in `actions()` (`ActionsNotOffered`). Then closes it the same way when the MTA did not offer every option in `protocol_options()`, or the version is below 6 (`OptionsNotOffered`) |
 | Stage filtering | Requests `SMFIP_NO*` for the stages missing from `events()` |
-| Macros | Stores the macros of the stage bytes `C`, `H`, `M`, `R`, `T`, `L`, `N`, `B`, `E`, and `U`, including `L`, `B`, and `U` from Postfix, and drops those of any other byte, which no lookup reaches; never replies to `SMFIC_MACRO`; clears them when the session ends. Macros sent again for a stage replace that stage's earlier ones. `macro_value` looks in the current command's stage first, then in the earlier stages in protocol order (`C`, `H`, `M`, `R`, `T`, `L`, `N`, `B`, `E`). In `unknown`, `abort`, and `session_end`, it looks in every stage, the latest first, starting with `U` |
+| Macros | Stores the macros of the stage bytes `C`, `H`, `M`, `R`, `T`, `L`, `N`, `B`, `E`, and `U`, including `L`, `B`, and `U` from Postfix, and drops those of any other byte, which no lookup reaches; never replies to `SMFIC_MACRO`. Macros sent again for a stage replace that stage's earlier ones. Each command of a stage drops the macros of the later stages, as libmilter does, so a message never sees an earlier message's RCPT, DATA, header, body, or end-of-message macros. It also drops the `U` macros, which belong to the unknown command they came with. All macros are cleared when the session ends. `macro_value` looks in the current command's stage first, then in the earlier stages in protocol order (`C`, `H`, `M`, `R`, `T`, `L`, `N`, `B`, `E`). In `unknown`, `abort`, and `session_end`, it looks in every stage, the latest first, starting with `U`. The stored macros are copies that count against the connection's memory ([ADR 0019](../adr/0019-a-connection-counts-what-it-holds-until-each-command-ends.md)) |
 | Session start | A session starts with `SMFIC_CONNECT`. When the MTA leaves `SMFIC_CONNECT` out, the session starts with the first command after option negotiation, or after `SMFIC_QUIT_NC`, that is not `SMFIC_MACRO`, `SMFIC_ABORT`, or `SMFIC_QUIT` |
-| State machine | Tracks the protocol state with libmilter's transition rules; closes the connection on `SMFIC_QUIT_NC` outside `ST_ENDM` and `ST_UNKN` ([ADR 0001](../adr/0001-commands-in-wrong-state-recover-like-libmilter-or-close.md)) |
-| Commands in a wrong state | Recovers like libmilter for a command that fits from `ST_HELO` (`SMFIC_HELO`, `SMFIC_MAIL`, `SMFIC_UNKNOWN`, and later stages the handler switched off): calls `abort` if a message is open, then processes the command. Ignores `SMFIC_ABORT` and `SMFIC_QUIT`. Closes the connection with a protocol error on any other command ([ADR 0001](../adr/0001-commands-in-wrong-state-recover-like-libmilter-or-close.md)) |
+| State machine | Tracks the protocol state with libmilter's transition rules; closes the connection on `SMFIC_QUIT_NC` outside `ST_ENDM` and `ST_UNKN` ([ADR 0015](../adr/0015-commands-in-wrong-state-follow-libmilter-or-close.md)) |
+| Commands in a wrong state | Recovers like libmilter for a command that fits from `ST_HELO` (`SMFIC_HELO`, `SMFIC_MAIL`, `SMFIC_UNKNOWN`, and later stages the handler switched off): calls `abort` if a message is open, then processes the command. Ignores `SMFIC_ABORT`. Ends the session on `SMFIC_QUIT`, as libmilter does. Closes the connection with a protocol error on any other command ([ADR 0015](../adr/0015-commands-in-wrong-state-follow-libmilter-or-close.md)) |
 | Replies | Encodes each decision as the matching `SMFIR_*` reply; sends no reply to `SMFIC_MACRO`, `SMFIC_ABORT`, `SMFIC_QUIT`, or `SMFIC_QUIT_NC` |
 | Abort | Calls `abort` and drops the message state when a message is open; ignores `SMFIC_ABORT` outside a message. A message that ends without its final reply or a decision that ends it also gets `abort`: on recovery from a wrong state, on an `SMFIC_MAIL` that starts a new message while one is open, and before `session_end` when the session ends with a message open |
-| Session end | Calls `session_end` and drops the session state on `SMFIC_QUIT` (`Quit`), on `SMFIC_QUIT_NC` (`QuitNewConnection`), on end of file between frames without `SMFIC_QUIT` (`ConnectionClosed`), before closing the connection for an error, a reset, an end of file in the middle of a frame, or a timeout (`Error`), and when shutdown closes the connection (`ServerShutdown`). A forced shutdown closes the connection without calling `abort` or `session_end`. A connection that closes before a session starts, or between `SMFIC_QUIT_NC` and the next session, calls no callback |
+| Session end | Calls `session_end` and drops the session state on `SMFIC_QUIT` in any state, after `abort` if a message is open, then closes the connection (`Quit`); on `SMFIC_QUIT_NC` (`QuitNewConnection`), on end of file between frames without `SMFIC_QUIT` (`ConnectionClosed`), before closing the connection for an error, a reset, an end of file in the middle of a frame, or a timeout (`Error`), and when shutdown closes the connection (`ServerShutdown`). A forced shutdown closes the connection without calling `abort` or `session_end`. A connection that closes before a session starts, or between `SMFIC_QUIT_NC` and the next session, calls no callback. A panic in a callback ends the session without `abort` or `session_end` ([ADR 0018](../adr/0018-panics-in-handler-code-and-the-reload-loader-are-caught.md)) |
 
 `SessionEnd`: `Quit`, `QuitNewConnection`, `ConnectionClosed`, `Error`, `ServerShutdown`.
 
@@ -322,7 +335,7 @@ The library performs these protocol duties for every handler:
 | `as_str()` | `Option<&str>`: the text when it is valid UTF-8 |
 | `to_string_lossy()` | `Cow<str>`: the text with invalid bytes replaced by U+FFFD, for logging and display |
 
-`MilterText` shares the frame's buffer (`bytes::Bytes`), so creating one copies nothing.
+`MilterText` shares the frame's buffer (`bytes::Bytes`), so creating one copies nothing. The macros the library stores are the exception: it copies them, so they do not keep the frame's buffer.
 
 ## Connection information
 
@@ -350,7 +363,7 @@ A Milter protocol frame.
 
 On the wire a frame is a 4-byte length (network byte order), the command byte, and the data. The length counts the command byte and the data.
 
-Size: the whole packet (4 + 1 + data length) must fit in the connection's `per_connection_buffer`, 128 KB by default. A longer packet fails with `Error::FrameTooLarge` before any memory is allocated for it. The default holds the largest default-size milter packet, 65,540 bytes.
+Size: the whole packet (4 + 1 + data length) must fit in the connection's `per_connection_buffer`, 128 KB by default, and the first packet of a connection, the option negotiation, in 1,024 bytes ([ADR 0013](../adr/0013-the-first-packet-is-limited-to-1-kb.md)). A longer packet fails with `Error::FrameTooLarge` before any memory is allocated for it. The default holds the largest default-size milter packet, 65,540 bytes.
 
 | Method | Description |
 |--------|-------------|
@@ -359,7 +372,7 @@ Size: the whole packet (4 + 1 + data length) must fit in the connection's `per_c
 | `parse(&mut BytesMut, max)` | Remove and return one frame from the buffer |
 | `write_to(&mut BytesMut)` | Serialize the frame |
 
-Fields are public and the type is immutable. Thread safety: `Send + Sync`.
+Both fields are public. Thread safety: `Send + Sync`.
 
 ## Command
 
@@ -416,7 +429,7 @@ The enum has no variants for `SMFIR_SHUTDOWN`, `SMFIR_CONN_FAIL`, or `SMFIR_SETS
 
 Text fields are `String`: the milter writes them, so they are always valid UTF-8.
 
-`Reply` is the wire-level type, used by the milter client sample in `examples/` and by tests; handlers use the decision types and `ReplyCode` instead. `Reply::to_frame()` validates before encoding, and returns `Error::InvalidReply` on a failed check:
+`Reply` is the wire-level type, used by tests and by the planned milter client sample; handlers use the decision types and `ReplyCode` instead. `Reply::to_frame()` validates before encoding, and returns `Error::InvalidReply` on a failed check:
 - `ReplyCode` text: a 4xx or 5xx code, the multi-line rules from [milter-protocol.md](milter-protocol.md#multi-line-reply-handling), and every literal `%` already written as `%%`
 - header names in `AddHeader` and `InsertHeader`: not empty, printable ASCII (33 to 126), and no colon, as RFC 5322 defines a field name. `ChangeHeader` names a header the MTA delivered, which can hold non-ASCII bytes, so its name only must not be empty or hold a colon, whitespace, or control characters
 - header values: no CR, and LF only to fold the value, followed by a space or tab and more than whitespace; any other line break would start another header or end the header block
@@ -465,8 +478,8 @@ Environment variable helpers on `ServerConfig` ([configuration.md](configuration
 
 | Item | Description |
 |------|-------------|
-| `type Error` | Why a load failed. It implements `std::error::Error` and is `Send + Sync + 'static`. The reload then fails with `ReloadError::Load`, which keeps the error as its source |
-| `load(&self)` | Reads the new configurations: an `async fn` that returns `Result<Reloaded<A>, Self::Error>`, whose future is `Send` |
+| `type Error` | Why a load failed. It implements `std::error::Error` and is `Send + Sync + 'static`. The reload then fails with `ReloadError::Load`, which keeps the error as its source. The ERROR "Reload failed" log carries the error and its source chain, so its text must not hold setting values ([hot-reload: Logging and metrics](hot-reload.md#logging-and-metrics)) |
+| `load(&self)` | Reads the new configurations: an `async fn` that returns `Result<Reloaded<A>, Self::Error>`, whose future is `Send`. A panic in it fails the reload with `ReloadError::Load` ([ADR 0018](../adr/0018-panics-in-handler-code-and-the-reload-loader-are-caught.md)) |
 
 An example loader is in [Reload the configuration without a restart](../how-to/reload-the-configuration.md#write-a-loader).
 
@@ -492,16 +505,18 @@ Errors are `thiserror` enums. Every error type implements `std::error::Error`, `
 | `Protocol(ProtocolError)` | Malformed frame, unknown command, invalid state | connection closed |
 | `ActionNotNegotiated(Actions)` | A modification method was called without its action negotiated | the method fails; the connection stays open |
 | `Handler(Box<dyn std::error::Error + Send + Sync>)` | A callback returned an error | connection closed |
+| `HandlerPanic` | A `Handler` method panicked. The panic's message is not kept | connection closed, with no further callback |
 | `Timeout(TimeoutKind)` | `Connect`, `Read`, `Write`, or `Idle` timeout expired | connection closed |
 | `ConnectionClosed` | The MTA closed the connection in the middle of a frame | connection closed |
 | `ConnectionReset` | The MTA reset the connection | connection closed |
-| `FrameTooLarge { length, max }` | Packet longer than `per_connection_buffer` | connection closed |
+| `FrameTooLarge { length, max }` | Packet longer than `per_connection_buffer`, or a first packet longer than 1,024 bytes | connection closed |
 | `InvalidReply(ReplyError)` | `Reply::to_frame()` refused a reply that breaks a protocol or MTA rule | the reply is not sent |
 | `Config(ConfigError)` | Invalid configuration at build time | `build()` fails |
-| `Bind { addr, source }` | A listener could not bind | `run()` fails in `FailFast` mode |
+| `Bind { addr, source }` | A listener could not bind | `run()` fails in `FailFast` mode, and in `BestEffort` mode when no address binds |
 | `Signals(std::io::Error)` | `run()` could not register the handlers for `SIGTERM`, `SIGINT`, `SIGQUIT`, and `SIGHUP` | `run()` fails |
-| `ResourceLimit(ResourceKind)` | `MaxConnections`, `MaxFds`, or `MaxMemory` reached | connection rejected or closed |
-| `ShuttingDown` | The operation is not allowed during shutdown | none |
+| `ResourceLimit(ResourceKind)` | `MaxMemory`: a reservation would pass `max_memory`; `PerConnectionBuffer`: a command (its frame plus the strings decoded from it) or a connection's stored macros would cost more than `per_connection_buffer` | connection closed |
+
+A reload during shutdown fails with `ReloadError::ShuttingDown`, not with an `Error`.
 
 ### ConfigError
 
@@ -510,11 +525,12 @@ Errors are `thiserror` enums. Every error type implements `std::error::Error`, `
 | `OutOfRange { field, value, allowed }` | A value outside its range in [configuration.md](configuration.md); `field` is the setting's path, such as `timeouts.connect`, `value` the value as text, and `allowed` the range |
 | `MissingBindAddress` | `bind_addresses` is empty |
 | `DuplicateBindAddress(SocketAddr)` | The same address appears twice |
-| `Address(AddressError)` | An address string could not be parsed |
-| `Inconsistent { rule, detail }` | A cross-field rule failed, such as `max_fds` too small for `max_connections` |
+| `Inconsistent { rule, detail }` | A cross-field rule failed, such as `max_memory` smaller than `per_connection_buffer` |
 | `Unsupported { field, reason }` | The platform does not support a setting, such as `reuse_port` |
 | `UnknownEnvVariable(String)` | An environment variable with the configured prefix names no setting |
 | `InvalidEnvValue { variable, reason }` | An environment variable's value cannot be parsed; the value itself is not included |
+
+`ServerConfig::parse_bind_address` returns an `AddressError` of its own. The file format and the environment variables report an address that does not parse as their own error, which names the address's position or text: a serde error, or `ConfigError::InvalidEnvValue`.
 
 `AddressError`: `InvalidFormat` (including `unix:` and `local:` addresses and Postfix's `inet:host:port`), `InvalidHost` (not an IP address of the form's family, or a scope ID that is not a number), `InvalidPort` (not 1 to 65535).
 
@@ -523,7 +539,7 @@ Errors are `thiserror` enums. Every error type implements `std::error::Error`, `
 | Variant | Meaning |
 |---------|---------|
 | `NoLoader` | `reload()` was called without a registered loader |
-| `Load(Box<dyn std::error::Error + Send + Sync>)` | The application's loader failed; its error is kept as the source |
+| `Load(Box<dyn std::error::Error + Send + Sync>)` | The application's loader failed or panicked; its error, or one that says it panicked, is kept as the source |
 | `Validation(ConfigError)` | The new configuration is invalid |
 | `RestartRequired { settings }` | The new configuration changes settings that require a restart; `settings` (`Vec<&'static str>`) names them, in the order of [configuration.md](configuration.md#serverconfig-reference), and the message lists them. Nothing was applied |
 | `Bind { addr, source }` | A new listener failed to bind in `FailFast` mode; the reload was rolled back |
@@ -537,9 +553,10 @@ Errors are `thiserror` enums. Every error type implements `std::error::Error`, `
 | `ZeroLength` | A packet announced a length of 0 |
 | `Malformed { command }` | A command's data does not match its format, such as a missing null terminator or a short option negotiation |
 | `UnknownCommand(u8)` | An unknown command code |
-| `WrongState { command }` | A command in a state where it closes the connection ([ADR 0001](../adr/0001-commands-in-wrong-state-recover-like-libmilter-or-close.md)) |
+| `WrongState { command }` | A command in a state where it closes the connection ([ADR 0015](../adr/0015-commands-in-wrong-state-follow-libmilter-or-close.md)) |
 | `VersionTooOld(u32)` | The MTA offered a protocol version below 2 |
 | `ActionsNotOffered(Actions)` | The MTA did not offer every action in `Handler::actions()` |
+| `OptionsNotOffered(ProtocolOptions)` | The MTA did not offer every option in `Handler::protocol_options()`, or the negotiated version is below 6; holds the missing options |
 
 ### ReplyError
 
@@ -559,7 +576,7 @@ Errors are `thiserror` enums. Every error type implements `std::error::Error`, `
 | `EmptyField` | An address or quarantine reason is empty |
 | `BodyChunkTooLarge { length }` | A `ReplaceBody` chunk is longer than 65,535 bytes |
 
-`ReloadError::Load` and `Error::Handler` box errors whose types belong to the application. They are the only boxed errors in the public API.
+`ReloadError::Load` and `Error::Handler` box errors whose types belong to the application, except the one `Load` holds for a loader that panicked. They are the only boxed errors in the public API.
 
 A failed reload leaves the server running with the previous generation.
 
@@ -573,7 +590,7 @@ Async:
 - `ConfigWatch::changed()`
 
 Sync:
-- `Handler::events()`, `Handler::actions()`
+- `Handler::events()`, `Handler::actions()`, `Handler::protocol_options()`
 - `Frame::parse()`, `Command::from_frame()`, `Reply::to_frame()`, `ReplyCode::new()`
 - `ServerConfig` construction and `ServerBuilder` setters
 - `ConfigWatch::current()`, `ServerHandle::status()`, `config()`
@@ -613,7 +630,7 @@ Deprecation:
 Zero copy: frame data, body chunks, and `MilterText` values share `bytes::Bytes` buffers. Text is copied only when a handler converts it, for example with `to_string_lossy()`.
 
 Allocation:
-- per connection: one read buffer and one write buffer, growing up to `per_connection_buffer`
+- per connection: one read buffer of 4 KB, which grows to fit a larger frame and goes back to 4 KB after it; the command being processed, that is its frame and the strings decoded from it, which costs at most `per_connection_buffer` and stays counted until the command finishes; the stored macros, which cost at most `per_connection_buffer`; and one write buffer, which holds one reply at a time. All but the write buffer count against `max_memory`. The largest reply the library builds is a 65,540-byte body chunk; a header or address that a handler sends can make a reply longer
 - shared: the published configuration (`Arc`), the status counters
 
 Latency targets per frame: P50 < 100 µs, P99 < 1 ms, P99.9 < 10 ms.
@@ -622,19 +639,20 @@ Reading the configuration costs one `Arc` clone at accept. Handlers reading `Con
 
 ## Usage constraints
 
-Runtime: Tokio, multi-threaded. The application creates the runtime. Other runtimes are not supported.
+Runtime: Tokio, created by the application. Both the multi-threaded and the current-thread runtime work; use the multi-threaded one in production, so that connections run on every core. Other async runtimes are not supported.
 
 Toolchain and platforms:
 - Rust 1.85 or later, edition 2024; the crate declares `rust-version`
 - Linux, macOS, or BSD
 - file descriptors: at least `max_connections` + listeners + 10
 
-Recommended for production: 4 or more CPU cores; memory for up to two buffers of `per_connection_buffer` per connection (about 2.5 GB for 10,000 connections at the default 128 KB), or `max_memory` set to cap the total; and `ulimit -n` of at least `max_connections` plus the listeners plus 10 (10,011 for the defaults with one listener).
+Recommended for production: 4 or more CPU cores; memory for one `per_connection_buffer` and one 65,540-byte reply per connection (about 2 GB for 10,000 connections at the default 128 KB), or `max_memory` set to cap the read buffers, the commands being processed, and the stored macros; and `ulimit -n` of at least `max_connections` plus the listeners plus 10 (10,011 for the defaults with one listener).
 
 ## Possible future additions
 
 - TLS support
 - authentication
 - a low-level frame API for applications that need raw protocol access; this needs a new ADR ([ADR 0002](../adr/0002-library-runs-the-protocol-handlers-decide.md))
+- a way for a handler to request the macros it needs for each stage, as libmilter's `smfi_setsymlist` does. The engine sends no macro list in its `SMFIC_OPTNEG` response, so the MTA sends the macros its own configuration lists ([protocol: Symbol list in option negotiation](milter-protocol.md#symbol-list-in-option-negotiation-optional)). The request would be one more negotiation method next to `protocol_options()` ([ADR 0020](../adr/0020-protocol-options-are-a-fixed-handler-method-and-close-when-missing.md))
 
 New traits will come with default method implementations where possible, and optional functionality will sit behind Cargo features.

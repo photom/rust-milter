@@ -2,16 +2,19 @@
 //! calls the handler, as libmilter's `mi_engine` does.
 //!
 //! The rules it follows are in "Protocol engine behavior" in
-//! `docs/reference/api-specification.md` and in ADR 0001.
+//! `docs/reference/api-specification.md` and in ADR 0015.
 
 mod io;
 mod macros;
 mod state;
 mod trace;
 
+use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
+use futures_util::FutureExt;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::sync::CancellationToken;
 use tracing::field::Empty;
@@ -26,12 +29,12 @@ use state::{State, Transitions};
 
 use crate::handler::{
     Actions, BodyDecision, ConnectDecision, ConnectInfo, Decision, EomContext, Events, Handler,
-    MessageContext, Negotiated, SessionContext, SessionEnd,
+    MessageContext, Negotiated, ProtocolOptions, SessionContext, SessionEnd,
 };
 use crate::protocol::*;
 use crate::server::{ConnectionInfo, Reservation};
 use crate::{
-    AddressFamily, Command, Frame, MilterText, ProtocolError, Reply, Result, TimeoutConfig,
+    AddressFamily, Command, Error, Frame, MilterText, ProtocolError, Reply, Result, TimeoutConfig,
 };
 
 /// How a connection ended, when no error ended it.
@@ -91,11 +94,13 @@ where
     W: AsyncWrite + Send + Unpin + 'static,
 {
     let accepted_at = tokio::time::Instant::from_std(connection.accepted_at);
+    let conn_id = connection.id;
     let timeouts = limits.timeouts;
     let mut engine = Engine {
         handler,
         inbound: Inbound::new(
             reader,
+            conn_id,
             limits.max_packet,
             timeouts.clone(),
             accepted_at,
@@ -107,7 +112,7 @@ where
                 session: SessionContext::new(connection, stop.shutdown.clone()),
                 message: None,
             },
-            outbound: Outbound::new(writer, timeouts.write, Arc::clone(&trace.traffic)),
+            outbound: Outbound::new(writer, conn_id, timeouts.write, Arc::clone(&trace.traffic)),
         },
         state: State::Init,
         rules: Transitions::new(),
@@ -189,7 +194,12 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
                         if self.inbound.in_frame() {
                             continue;
                         }
-                        self.end(SessionEnd::ServerShutdown).await;
+                        tracing::debug!(
+                            conn_id = self.conn_id(),
+                            reason = "server_shutdown",
+                            "Connection draining"
+                        );
+                        self.end(SessionEnd::ServerShutdown).await?;
                         return Ok(Closed::ByShutdown);
                     }
                     frame = self.inbound.next_frame() => frame,
@@ -198,24 +208,72 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
             let outcome = match frame {
                 Ok(Some(frame)) => self.process(frame).await,
                 Ok(None) => {
-                    self.end(SessionEnd::ConnectionClosed).await;
+                    self.end(SessionEnd::ConnectionClosed).await?;
                     return Ok(Closed::ByClient);
                 }
                 Err(error) => Err(error),
             };
             match outcome {
-                Ok(Flow::Open) => {}
+                Ok(Flow::Open) => {
+                    if !self.inbound.in_frame() {
+                        tracing::trace!(
+                            conn_id = self.conn_id(),
+                            state = self.state.name(),
+                            "Connection idle"
+                        );
+                    }
+                }
                 Ok(Flow::Close) => return Ok(Closed::ByClient),
                 Err(error) => {
-                    self.end(SessionEnd::Error).await;
+                    if let Error::Protocol(_) = &error {
+                        tracing::warn!(
+                            conn_id = self.conn_id(),
+                            error = %crate::server::error_chain(&error),
+                            details = self.state.name(),
+                            "Protocol error"
+                        );
+                    }
+                    if let Error::HandlerPanic = &error {
+                        // No callback runs after a panic (ADR 0018).
+                        self.discard();
+                    } else {
+                        let _ = self.end(SessionEnd::Error).await;
+                    }
                     return Err(error);
                 }
             }
         }
     }
 
+    /// The connection's ID, for its logs.
+    fn conn_id(&self) -> u64 {
+        self.ctx.message.session.connection().id
+    }
+
+    /// Logs the arrival of a command: "First command received" for the
+    /// first, and "Connection active" for each.
+    fn log_arrival(&self) {
+        let info = self.ctx.message.session.connection();
+        if self.inbound.frames == 1 {
+            let waited = info.accepted_at.elapsed().as_millis();
+            tracing::debug!(
+                conn_id = info.id,
+                remote_addr = %info.peer_addr,
+                local_addr = %info.local_addr,
+                duration_ms = u64::try_from(waited).unwrap_or(u64::MAX),
+                "First command received"
+            );
+        }
+        tracing::trace!(
+            conn_id = info.id,
+            state = self.state.name(),
+            "Connection active"
+        );
+    }
+
     /// Processes one command, then records its `milter.command` event.
     async fn process(&mut self, frame: Frame) -> Result<Flow> {
+        self.log_arrival();
         let code = frame.command;
         let started = std::time::Instant::now();
         self.ctx.outbound.last_reply = None;
@@ -225,6 +283,9 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
         }
         self.command_span = self.span();
         let flow = self.handle(frame).await?;
+        // The stored macros count against the connection's memory, and the
+        // finished command no longer does (ADR 0019).
+        self.inbound.hold(self.ctx.message.session.macros.cost())?;
         if trace::traced(self.trace.commands, code) {
             let reply = self.ctx.outbound.last_reply.unwrap_or("noreply");
             // Entered, not only named as the parent, so that a log bridge
@@ -243,8 +304,16 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
 
     async fn handle(&mut self, frame: Frame) -> Result<Flow> {
         let code = frame.command;
+        // Reserved before decoding, until `process` calls `hold` (ADR 0019).
+        self.inbound.reserve_command(crate::message::cost(&frame))?;
         let command = Command::from_frame(frame)?;
 
+        // `SMFIC_QUIT` ends the session in any state, as in libmilter, where
+        // it ends the command loop even when it does not fit (ADR 0015).
+        if let Command::Quit = command {
+            self.end(SessionEnd::Quit).await?;
+            return Ok(Flow::Close);
+        }
         if self.state == State::Init {
             let Command::OptNeg {
                 version,
@@ -264,7 +333,7 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
 
         let target = target_state(&command);
         if !self.rules.allows(self.state, target) {
-            if matches!(command, Command::Abort | Command::Quit) {
+            if let Command::Abort = command {
                 return Ok(Flow::Open);
             }
             if !self.rules.allows(State::Helo, target) {
@@ -273,9 +342,10 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
             self.abort().await?;
             self.state = State::Helo;
         }
-        if !self.in_session && !matches!(command, Command::Abort | Command::Quit) {
+        if !self.in_session && !matches!(command, Command::Abort) {
             self.open_session();
         }
+        self.ctx.message.session.macros.drop_after(code);
         self.state = target;
         self.dispatch(command).await
     }
@@ -293,7 +363,7 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
                 let decision = if self.events.contains(Events::CONNECT) {
                     let span = self.span();
                     let ctx = self.session_ctx(Some(SMFIC_CONNECT));
-                    handler.connect(ctx, &info).instrument(span).await?
+                    guarded(handler.connect(ctx, &info).instrument(span)).await?
                 } else {
                     ConnectDecision::Continue
                 };
@@ -303,7 +373,7 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
                 let decision = if self.events.contains(Events::HELO) {
                     let span = self.span();
                     let ctx = self.session_ctx(Some(SMFIC_HELO));
-                    handler.helo(ctx, &name).instrument(span).await?
+                    guarded(handler.helo(ctx, &name).instrument(span)).await?
                 } else {
                     ConnectDecision::Continue
                 };
@@ -315,10 +385,7 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
                 let decision = if self.events.contains(Events::MAIL) {
                     let span = self.span();
                     let ctx = self.message_ctx(SMFIC_MAIL);
-                    handler
-                        .mail(ctx, &args[0], &args[1..])
-                        .instrument(span)
-                        .await?
+                    guarded(handler.mail(ctx, &args[0], &args[1..]).instrument(span)).await?
                 } else {
                     Decision::Continue
                 };
@@ -329,10 +396,7 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
                     self.ensure_message();
                     let span = self.span();
                     let ctx = self.message_ctx(SMFIC_RCPT);
-                    handler
-                        .rcpt(ctx, &args[0], &args[1..])
-                        .instrument(span)
-                        .await?
+                    guarded(handler.rcpt(ctx, &args[0], &args[1..]).instrument(span)).await?
                 } else {
                     Decision::Continue
                 };
@@ -342,10 +406,7 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
                 let decision = if self.events.contains(Events::DATA) {
                     self.ensure_message();
                     let span = self.span();
-                    handler
-                        .data(self.message_ctx(SMFIC_DATA))
-                        .instrument(span)
-                        .await?
+                    guarded(handler.data(self.message_ctx(SMFIC_DATA)).instrument(span)).await?
                 } else {
                     Decision::Continue
                 };
@@ -356,7 +417,7 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
                     self.ensure_message();
                     let span = self.span();
                     let ctx = self.message_ctx(SMFIC_HEADER);
-                    handler.header(ctx, &name, &value).instrument(span).await?
+                    guarded(handler.header(ctx, &name, &value).instrument(span)).await?
                 } else {
                     Decision::Continue
                 };
@@ -366,10 +427,12 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
                 let decision = if self.events.contains(Events::END_OF_HEADERS) {
                     self.ensure_message();
                     let span = self.span();
-                    handler
-                        .end_of_headers(self.message_ctx(SMFIC_EOH))
-                        .instrument(span)
-                        .await?
+                    guarded(
+                        handler
+                            .end_of_headers(self.message_ctx(SMFIC_EOH))
+                            .instrument(span),
+                    )
+                    .await?
                 } else {
                     Decision::Continue
                 };
@@ -387,21 +450,19 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
             Command::Unknown(text) => {
                 let decision = if self.events.contains(Events::UNKNOWN) {
                     let span = self.span();
-                    handler
-                        .unknown(self.session_ctx(None), &text)
-                        .instrument(span)
-                        .await?
+                    guarded(
+                        handler
+                            .unknown(self.session_ctx(None), &text)
+                            .instrument(span),
+                    )
+                    .await?
                 } else {
                     Decision::Continue
                 };
                 self.decide(decision, Origin::Unknown).await?;
             }
-            Command::Quit => {
-                self.end(SessionEnd::Quit).await;
-                return Ok(Flow::Close);
-            }
-            Command::QuitNewConnection => self.end(SessionEnd::QuitNewConnection).await,
-            Command::OptNeg { .. } | Command::Macro { .. } => {
+            Command::QuitNewConnection => self.end(SessionEnd::QuitNewConnection).await?,
+            Command::OptNeg { .. } | Command::Macro { .. } | Command::Quit => {
                 unreachable!("handled before the state check")
             }
         }
@@ -420,20 +481,32 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
             protocol
         };
 
-        let wanted = self.handler.actions();
+        let handler = self.handler;
+        let wanted = guarded(async move { Ok(handler.actions()) }).await?;
         let missing = wanted.difference(Actions::from_bits_truncate(mta_actions));
         if !missing.is_empty() {
             return Err(ProtocolError::ActionsNotOffered(missing).into());
         }
-        let events = self.handler.events();
+        let options = guarded(async move { Ok(handler.protocol_options()) }).await?;
+        let offered = if version >= 6 {
+            ProtocolOptions::from_bits_truncate(mta_protocol)
+        } else {
+            ProtocolOptions::NONE
+        };
+        let missing = options.difference(offered);
+        if !missing.is_empty() {
+            return Err(ProtocolError::OptionsNotOffered(missing).into());
+        }
+        let events = guarded(async move { Ok(handler.events()) }).await?;
         let switched_off = Events::ALL.difference(events).no_flags() & mta_protocol;
+        let protocol = switched_off | options.bits();
 
         self.ctx
             .outbound
             .send(&Reply::OptNeg {
                 version,
                 actions: wanted.bits(),
-                protocol: switched_off,
+                protocol,
                 macros: Vec::new(),
             })
             .await?;
@@ -450,7 +523,8 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
         self.ctx.message.session.negotiated = Negotiated {
             version,
             actions: wanted,
-            protocol: switched_off,
+            options,
+            protocol,
             mta_protocol,
         };
         self.state = State::Opts;
@@ -472,10 +546,12 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
         let handler = self.handler;
         self.ensure_message();
         let span = self.span();
-        handler
-            .body(self.message_ctx(SMFIC_BODY), chunk)
-            .instrument(span)
-            .await
+        guarded(
+            handler
+                .body(self.message_ctx(SMFIC_BODY), chunk)
+                .instrument(span),
+        )
+        .await
     }
 
     async fn decide_body(&mut self, decision: BodyDecision) -> Result<()> {
@@ -513,11 +589,7 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
         #[cfg(feature = "otel")]
         let eom_started = std::time::Instant::now();
         let span = self.span();
-        let decision = self
-            .handler
-            .end_of_message(&mut self.ctx)
-            .instrument(span)
-            .await?;
+        let decision = guarded(self.handler.end_of_message(&mut self.ctx).instrument(span)).await?;
         let continues = decision == Decision::Continue;
         let reply = reply_for(decision);
         self.ctx.outbound.send(&reply).await?;
@@ -571,30 +643,41 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
         }
         self.ctx.message.session.stage = None;
         let span = self.span();
-        let result = self
-            .handler
-            .abort(&mut self.ctx.message)
-            .instrument(span)
-            .await;
+        let result = guarded(self.handler.abort(&mut self.ctx.message).instrument(span)).await;
         self.close_message();
         result
     }
 
     /// Ends the session, if one is open: `abort` for an open message, then
     /// `session_end`. Errors from these callbacks are dropped, because the
-    /// session ends either way.
-    async fn end(&mut self, reason: SessionEnd) {
+    /// session ends either way. A panic in one stops the callbacks there and
+    /// is returned as `Error::HandlerPanic` (ADR 0018).
+    async fn end(&mut self, reason: SessionEnd) -> Result<()> {
         if !self.in_session {
-            return;
+            return Ok(());
         }
-        let _ = self.abort().await;
+        if let Err(Error::HandlerPanic) = self.abort().await {
+            self.discard();
+            return Err(Error::HandlerPanic);
+        }
         self.ctx.message.session.stage = None;
         let span = self.span();
-        let _ = self
-            .handler
-            .session_end(&mut self.ctx.message.session, reason)
-            .instrument(span)
-            .await;
+        let ended = guarded(
+            self.handler
+                .session_end(&mut self.ctx.message.session, reason)
+                .instrument(span),
+        )
+        .await;
+        self.discard();
+        match ended {
+            Err(Error::HandlerPanic) => Err(Error::HandlerPanic),
+            _ => Ok(()),
+        }
+    }
+
+    /// Drops the open message and the session without calling the handler.
+    fn discard(&mut self) {
+        self.close_message();
         self.ctx.message.session.reset();
         self.in_session = false;
         self.session_span = None;
@@ -679,6 +762,16 @@ impl<H: Handler, R: AsyncRead + Unpin + Send> Engine<'_, H, R> {
         self.ensure_message();
         self.ctx.message.session.stage = Some(stage);
         &mut self.ctx.message
+    }
+}
+
+/// Runs a call of a `Handler` method, and turns a panic in it into
+/// `Error::HandlerPanic`, so that the connection closes like any other
+/// failed connection (ADR 0018). The panic's message is dropped.
+async fn guarded<T, F: Future<Output = Result<T>>>(call: F) -> Result<T> {
+    match AssertUnwindSafe(call).catch_unwind().await {
+        Ok(result) => result,
+        Err(_panic) => Err(Error::HandlerPanic),
     }
 }
 

@@ -1,6 +1,6 @@
 //! The library's error types.
 
-use crate::Actions;
+use crate::{Actions, ProtocolOptions};
 
 /// The library's error type.
 #[derive(Debug, thiserror::Error)]
@@ -20,8 +20,14 @@ pub enum Error {
     ActionNotNegotiated(Actions),
 
     /// A callback returned an error. Build it with [`Error::handler`].
+    /// rust-milter logs it with its source chain.
     #[error("the handler failed")]
     Handler(#[source] Box<dyn std::error::Error + Send + Sync>),
+
+    /// A `Handler` method panicked. The panic's message is not kept, because
+    /// it can hold data from an SMTP session (ADR 0018).
+    #[error("a handler method panicked")]
+    HandlerPanic,
 
     /// A connection timeout expired.
     #[error("the {0} timeout expired")]
@@ -35,12 +41,13 @@ pub enum Error {
     #[error("the connection was reset")]
     ConnectionReset,
 
-    /// A packet is longer than `per_connection_buffer`.
+    /// A packet is longer than `per_connection_buffer`, or the first packet
+    /// of a connection is longer than 1,024 bytes.
     #[error("a {length}-byte packet exceeds the {max}-byte limit")]
     FrameTooLarge {
         /// Length of the whole packet, length field included.
         length: usize,
-        /// The limit, `per_connection_buffer`.
+        /// The limit: `per_connection_buffer`, or 1,024 for the first packet.
         max: usize,
     },
 
@@ -75,6 +82,11 @@ pub enum Error {
 
 impl Error {
     /// Wraps a handler's own error as [`Error::Handler`].
+    ///
+    /// rust-milter writes the error and its source chain into the WARN
+    /// "Connection closed" log. Keep SMTP data, such as addresses, header
+    /// values, and macro values, out of its message and out of the errors
+    /// it wraps.
     pub fn handler(error: impl std::error::Error + Send + Sync + 'static) -> Error {
         Error::Handler(Box::new(error))
     }
@@ -86,6 +98,7 @@ impl Error {
             Error::Protocol(_) => "Protocol",
             Error::ActionNotNegotiated(_) => "ActionNotNegotiated",
             Error::Handler(_) => "Handler",
+            Error::HandlerPanic => "HandlerPanic",
             Error::Timeout(_) => "Timeout",
             Error::ConnectionClosed => "ConnectionClosed",
             Error::ConnectionReset => "ConnectionReset",
@@ -128,20 +141,18 @@ impl std::fmt::Display for TimeoutKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ResourceKind {
-    /// `max_connections`.
-    MaxConnections,
-    /// `resource_limits.max_fds`.
-    MaxFds,
     /// `resource_limits.max_memory`.
     MaxMemory,
+    /// `resource_limits.per_connection_buffer`, which also caps what one
+    /// command and the macros a connection stores may cost.
+    PerConnectionBuffer,
 }
 
 impl std::fmt::Display for ResourceKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            ResourceKind::MaxConnections => "max_connections",
-            ResourceKind::MaxFds => "max_fds",
             ResourceKind::MaxMemory => "max_memory",
+            ResourceKind::PerConnectionBuffer => "per_connection_buffer",
         })
     }
 }
@@ -238,7 +249,7 @@ pub enum ProtocolError {
     #[error("unknown command code 0x{0:02x}")]
     UnknownCommand(u8),
 
-    /// A command in a state where it closes the connection (ADR 0001).
+    /// A command in a state where it closes the connection (ADR 0015).
     #[error("command {} in a wrong state", char::from(*.command))]
     WrongState {
         /// The command code.
@@ -252,6 +263,12 @@ pub enum ProtocolError {
     /// The MTA did not offer every action in `Handler::actions()`.
     #[error("the MTA did not offer the actions {0:?}")]
     ActionsNotOffered(Actions),
+
+    /// The MTA did not offer every option in `Handler::protocol_options()`,
+    /// or the negotiated protocol version is below 6. Holds the missing
+    /// options.
+    #[error("the MTA did not offer the options {0:?} at protocol version 6")]
+    OptionsNotOffered(ProtocolOptions),
 }
 
 /// Why a configuration is invalid.
@@ -280,7 +297,7 @@ pub enum ConfigError {
     /// A rule across several settings failed.
     #[error("{rule}: {detail}")]
     Inconsistent {
-        /// The rule, such as `max_fds`.
+        /// The rule, such as `max_memory`.
         rule: &'static str,
         /// What the values are and what the rule needs.
         detail: String,
@@ -308,6 +325,22 @@ pub enum ConfigError {
         /// Why the value was rejected.
         reason: String,
     },
+}
+
+impl ConfigError {
+    /// The setting, rule, or variable the error is about, for the
+    /// "Configuration error" log.
+    pub(crate) fn setting(&self) -> &str {
+        match self {
+            ConfigError::MissingBindAddress | ConfigError::DuplicateBindAddress(_) => {
+                "bind_addresses"
+            }
+            ConfigError::OutOfRange { field, .. } | ConfigError::Unsupported { field, .. } => field,
+            ConfigError::Inconsistent { rule, .. } => rule,
+            ConfigError::UnknownEnvVariable(variable)
+            | ConfigError::InvalidEnvValue { variable, .. } => variable,
+        }
+    }
 }
 
 /// Why a reload failed. Every variant leaves the server running with the

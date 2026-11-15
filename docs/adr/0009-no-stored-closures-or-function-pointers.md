@@ -1,6 +1,6 @@
 # ADR 0009: No stored closures or function pointers
 
-- Status: Accepted; the exceptions are extended by [ADR 0010](0010-builder-factory-type-parameter-and-loader-trait.md)
+- Status: Superseded by [ADR 0017](0017-rust-code-is-written-in-a-procedural-style.md)
 - Date: 2026-11-08
 - Affects: all Rust code in the repository, and the builder of `src/server`
 - Supersedes: the exception of [ADR 0008](0008-rust-code-is-written-in-a-procedural-style.md) for the type aliases `Factory` and `Loader`

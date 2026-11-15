@@ -612,6 +612,7 @@ name = "rust-milter"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "futures-util",
  "opentelemetry",
  "opentelemetry-appender-tracing",
  "opentelemetry_sdk",

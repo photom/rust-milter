@@ -111,7 +111,7 @@ fn cmd_010_decodes_macros_in_order() {
 
 #[test]
 fn cmd_011_keeps_postfix_stage_bytes() {
-    for stage_byte in [b'L', b'B', b'U'] {
+    for stage_byte in *b"LBU" {
         let data = [&[stage_byte][..], b"{i}\0ABC123\0"].concat();
 
         let command = Command::from_frame(frame(SMFIC_MACRO, &data)).unwrap();

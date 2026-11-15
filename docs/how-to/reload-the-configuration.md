@@ -12,7 +12,7 @@ Add the `serde` feature to rust-milter, plus the crates for your file format and
 [dependencies]
 rust-milter = { git = "https://github.com/photom/rust-milter", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
-toml = "0.9"
+toml = "1.1"
 thiserror = "2"
 ```
 
@@ -58,17 +58,37 @@ struct TaggerConfig {
 enum LoadError {
     #[error("cannot read the configuration file")]
     Read(#[from] std::io::Error),
-    #[error("cannot parse the configuration file")]
-    Parse(#[from] toml::de::Error),
+    // Only the line number: rust-milter logs this error, and toml's own
+    // error quotes the line, which can hold a secret.
+    #[error("cannot parse the configuration file at line {line}")]
+    Parse { line: usize },
 }
 
 async fn load(path: PathBuf) -> Result<Reloaded<TaggerConfig>, LoadError> {
     let text = tokio::fs::read_to_string(&path).await?;
-    let file: FileConfig = toml::from_str(&text)?;
+    let file: FileConfig = match toml::from_str(&text) {
+        Ok(file) => file,
+        Err(error) => return Err(LoadError::Parse { line: line_of(&text, &error) }),
+    };
     Ok(Reloaded {
         server: file.server,
         app: file.tagger,
     })
+}
+
+/// The line, counted from 1, where `error` points in `text`.
+fn line_of(text: &str, error: &toml::de::Error) -> usize {
+    let end = match error.span() {
+        Some(span) => span.start.min(text.len()),
+        None => 0,
+    };
+    let mut line = 1;
+    for byte in &text.as_bytes()[..end] {
+        if *byte == b'\n' {
+            line += 1;
+        }
+    }
+    line
 }
 
 struct FileLoader {
@@ -85,6 +105,8 @@ impl ReloadLoader<TaggerConfig> for FileLoader {
 ```
 
 The `Error` type must implement `std::error::Error` and be `Send + Sync + 'static`. The startup code calls the plain `load` function too, so it reads the file the same way.
+
+rust-milter writes the loader's error, with every error it wraps, into the "Reload failed" log. That's why `LoadError` keeps only the line number. The message of `toml::de::Error` quotes the line that failed to parse, and serde's messages can include the value it rejected. Wrapping either one would copy a password or API key from the file into your logs.
 
 Keep the loader to reading and checking. rust-milter runs its own checks after the loader returns and can still reject the reload, for example when `backlog` changed. It cannot undo anything the loader did, so the loader must not replace values that other code reads, close connections, or start work based on the new settings. Return an error to reject settings your application cannot use; the reload then fails and nothing changes.
 
@@ -273,10 +295,10 @@ Changes to your own `[tagger]` table are not listed; rust-milter does not inspec
 The milter keeps running with the previous generation and logs the reason:
 
 ```text
-ERROR Reload failed generation=3 error="cannot parse the configuration file: unknown field `max_conections`"
+ERROR Reload failed generation=3 error="cannot parse the configuration file at line 4"
 ```
 
-Fix the file and send `SIGHUP` again. Common causes:
+Open the file at that line, fix it, and send `SIGHUP` again. Common causes:
 - a misspelled key, rejected because unknown keys are errors
 - a value outside its range, such as `max_connections = 0`
 - a new listen address that cannot be bound, with `bind_mode = "fail_fast"`

@@ -295,6 +295,27 @@ async fn tel_021_a_message_span_carries_the_queue_id() {
 }
 
 #[tokio::test]
+async fn tel_033_an_aborted_message_has_no_earlier_queue_id() {
+    let server = TestServer::start(ContinueAll).await;
+    let window = Window::open(&server);
+    let mut mta = server.mta().await;
+    mta.reach(Reach::Body).await;
+    mta.send(SMFIC_MACRO, macro_data(SMFIC_BODYEOB, &[("i", "4XyZ12")]))
+        .await;
+    mta.ask_continue(SMFIC_BODYEOB, Bytes::new()).await;
+    mta.ask_continue(SMFIC_MAIL, strings(&["<two@void.invalid>"]))
+        .await;
+    mta.ask_continue(SMFIC_RCPT, strings(&["<rcpt@void.invalid>"]))
+        .await;
+    mta.send(SMFIC_ABORT, Bytes::new()).await;
+    mta.close().await;
+    let traces = window.close(server).await;
+    let messages = traces.named("milter.message");
+    let ids = span_texts(&messages, "milter.queue_id");
+    assert_eq!(ids, [Some("4XyZ12".to_owned()), None]);
+}
+
+#[tokio::test]
 async fn tel_022_the_connection_span_names_both_ends() {
     let server = TestServer::start(ContinueAll).await;
     let window = Window::open(&server);
@@ -771,6 +792,97 @@ async fn tel_030_no_smtp_data_reaches_spans_events_or_logs() {
         span_text(message, "milter.queue_id").as_deref(),
         Some("MARKERQID")
     );
+}
+
+/// Panics in `connect`, with a marker in the panic's message.
+struct PanicsInConnect;
+
+impl Handler for PanicsInConnect {
+    type Session = ();
+    type Message = ();
+
+    async fn connect(
+        &self,
+        _ctx: &mut SessionContext<Self>,
+        _info: &ConnectInfo,
+    ) -> Result<ConnectDecision> {
+        panic!("panic-marker");
+    }
+}
+
+/// Whether the log record has the attribute `key` with a value that
+/// contains `value`.
+fn has_attribute(
+    log: &opentelemetry_sdk::logs::in_memory_exporter::LogDataWithResource,
+    key: &str,
+    value: &str,
+) -> bool {
+    for (name, attribute) in log.record.attributes_iter() {
+        if name.as_str() == key && format!("{attribute:?}").contains(value) {
+            return true;
+        }
+    }
+    false
+}
+
+#[tokio::test]
+async fn tel_034_a_panic_in_a_callback_is_recorded_without_its_message() {
+    let server = TestServer::start(PanicsInConnect).await;
+    let window = Window::open(&server);
+    let mut mta = server.mta().await;
+    mta.negotiate().await;
+
+    mta.send(
+        SMFIC_CONNECT,
+        connect_data("[192.0.2.1]", "192.0.2.1", 4711),
+    )
+    .await;
+    assert!(mta.closes().await);
+    let mut counted = false;
+    let started = std::time::Instant::now();
+    while !counted && started.elapsed() < support::mta::WAIT {
+        for (reason, error, count) in server.handle.status().connections_closed {
+            if reason == "error" && error == Some("HandlerPanic") && count == 1 {
+                counted = true;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let traces = window.close(server).await;
+
+    assert!(counted, "the close is counted under error and HandlerPanic");
+    let connection = traces.named("milter.connection")[0];
+    assert_eq!(
+        span_text(connection, "error.type").as_deref(),
+        Some("HandlerPanic")
+    );
+    let mut ids = Vec::new();
+    for span in &traces.spans {
+        ids.push(span.span_context.trace_id());
+    }
+    let logs = logs_of(&ids);
+    let mut closed = false;
+    for log in &logs {
+        let body = format!("{:?}", log.record.body());
+        if body.contains("Connection closed") && has_attribute(log, "reason", "error") {
+            closed = true;
+        }
+    }
+    assert!(closed, "a \"Connection closed\" log with the reason error");
+    let mut found = Vec::new();
+    for span in &traces.spans {
+        let text = format!("{:?}", span.attributes);
+        if text.contains("panic-marker") {
+            found.push(text);
+        }
+    }
+    for log in &logs {
+        let text = format!("{:?}", log.record);
+        if text.contains("panic-marker") {
+            found.push(text);
+        }
+    }
+    assert!(found.is_empty(), "{found:?}");
 }
 
 fn markers_in(text: &str, place: &str) -> Vec<String> {

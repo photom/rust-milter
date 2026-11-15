@@ -86,7 +86,7 @@ Telemetry follows the session isolation rule (see [Connection reuse and session 
 
 No setting makes rust-milter record any of this data ([ADR 0003](../adr/0003-never-record-the-smtp-client-address.md)).
 
-A handler can add its own attributes to the current span. The rules above cover only what rust-milter records; what a handler records is the application's responsibility. [Record the SMTP client's address](../how-to/record-the-smtp-client-address.md) shows how a handler records the client's address.
+A handler can add its own attributes to the current span. The rules above cover only what rust-milter records; what a handler records is the application's responsibility. That includes the text of two application errors, which rust-milter logs as written, with their source chains. The error a callback returns through `Error::handler` goes into the `error` field of the WARN "Connection closed" log. The error a reload loader returns goes into the `error` field of the ERROR "Reload failed" log. [Record the SMTP client's address](../how-to/record-the-smtp-client-address.md) shows how a handler records the client's address.
 
 ## Metrics
 
@@ -158,7 +158,7 @@ What each one counts:
 | `milter.reload_result` | `applied`, `failed` |
 | `milter.reload_source` | `sighup`, `api` |
 
-Every attribute is an enum in the code, so a new value needs a code change and an update to this table.
+The code keeps each attribute's values in a fixed table, so a new value needs a code change and an update to this table.
 
 ## Traces
 
@@ -265,7 +265,7 @@ When OpenTelemetry metrics are converted to Prometheus, dots become underscores,
 ## Performance
 
 - Counters and gauges are observable instruments that read the status atomics at collection time. Recording a connection or a command costs one atomic increment, with or without the `otel` feature.
-- Each counter attribute has a fixed set of values, so the status counters are fixed arrays of atomics indexed by the attribute enums. No map or lock sits on the hot path.
+- Each counter attribute has a fixed set of values, so the status counters are fixed arrays of atomics indexed by position in those tables. No map or lock sits on the hot path.
 - Histograms are synchronous and record once per connection, message, or end of message, never per header or body chunk.
 - Span creation follows the application's sampler. With `trace_commands` set to `all`, a message with many headers produces many events; keep it for debugging.
 

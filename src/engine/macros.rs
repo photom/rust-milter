@@ -17,6 +17,10 @@ const ORDER: [u8; 9] = [
     SMFIC_BODYEOB,
 ];
 
+/// What a stored name and value pair costs besides its text: the two
+/// `MilterText` values (ADR 0019).
+const PAIR_COST: usize = std::mem::size_of::<(MilterText, MilterText)>();
+
 /// Macro values per stage byte.
 #[derive(Debug, Default)]
 pub(crate) struct Macros {
@@ -27,11 +31,13 @@ impl Macros {
     /// Stores the macros of one stage, replacing that stage's earlier ones.
     /// Macros of a byte that is no stage are dropped: no lookup reaches
     /// them, and keeping them would let an MTA fill memory with up to 256
-    /// stages.
+    /// stages. The stored macros are copies, so they do not keep the frame's
+    /// buffer.
     pub(crate) fn set(&mut self, stage: u8, macros: Vec<(MilterText, MilterText)>) {
         if stage != SMFIC_UNKNOWN && !ORDER.contains(&stage) {
             return;
         }
+        let macros = MilterText::copy_pairs(&macros);
         for (stored, old) in &mut self.stages {
             if *stored == stage {
                 *old = macros;
@@ -39,6 +45,39 @@ impl Macros {
             }
         }
         self.stages.push((stage, macros));
+    }
+
+    /// Drops the macros of the stages after `stage` when the command of
+    /// `stage` arrives, as libmilter's `mi_clr_macros` does, so a message
+    /// never sees an earlier message's later-stage macros. Also drops those
+    /// of `U`, which belong to the unknown command they came with; libmilter
+    /// has no `U` stage. A byte that is no stage in [`ORDER`] drops nothing.
+    pub(crate) fn drop_after(&mut self, stage: u8) {
+        let Some(position) = order_position(stage) else {
+            return;
+        };
+        let later = &ORDER[position + 1..];
+        let mut index = 0;
+        while index < self.stages.len() {
+            let stored = self.stages[index].0;
+            if stored == SMFIC_UNKNOWN || later.contains(&stored) {
+                self.stages.swap_remove(index);
+            } else {
+                index += 1;
+            }
+        }
+    }
+
+    /// What the stored macros cost: their text, plus [`PAIR_COST`] per pair.
+    /// It counts against the connection's memory (ADR 0019).
+    pub(crate) fn cost(&self) -> usize {
+        let mut cost = 0;
+        for (_, macros) in &self.stages {
+            for (name, value) in macros {
+                cost += name.as_bytes().len() + value.as_bytes().len() + PAIR_COST;
+            }
+        }
+        cost
     }
 
     /// Looks `name` up in `stage` and the earlier stages, the latest first.
@@ -107,7 +146,11 @@ fn same_macro(stored: &[u8], name: &str, bare: Option<&str>) -> bool {
             return true;
         }
     }
-    name.len() == 1 && stored == format!("{{{name}}}").as_bytes()
+    // `name` is one letter `x`, and `stored` is `{x}`.
+    if let [b'{', letter, b'}'] = stored {
+        return name.as_bytes() == [*letter];
+    }
+    false
 }
 
 /// The position of a stage byte in [`ORDER`].
@@ -139,5 +182,51 @@ mod tests {
 
         assert_eq!(macros.stages.len(), 1);
         assert_eq!(macros.get("{x}", None).unwrap().as_bytes(), b"2");
+    }
+
+    #[test]
+    fn eng_116_a_one_letter_macro_matches_with_or_without_braces() {
+        let mut macros = Macros::default();
+
+        macros.set(
+            SMFIC_BODYEOB,
+            vec![pair("{i}", "Q1"), pair("j", "host.void.invalid")],
+        );
+
+        for name in ["i", "{i}"] {
+            assert_eq!(macros.get(name, None).unwrap().as_bytes(), b"Q1", "{name}");
+        }
+        for name in ["j", "{j}"] {
+            let value = macros.get(name, None).unwrap();
+            assert_eq!(value.as_bytes(), b"host.void.invalid", "{name}");
+        }
+        assert!(macros.get("{ij}", None).is_none());
+    }
+
+    #[test]
+    fn srv_084_stored_macros_are_copied_and_costed() {
+        let mut frame = bytes::Bytes::from_static(b"{x}\0value\0{y}\0\0");
+        let start = frame.as_ptr() as usize;
+        let end = start + frame.len();
+        let x = (
+            MilterText::take(&mut frame).unwrap(),
+            MilterText::take(&mut frame).unwrap(),
+        );
+        let y = (
+            MilterText::take(&mut frame).unwrap(),
+            MilterText::take(&mut frame).unwrap(),
+        );
+        let mut macros = Macros::default();
+
+        macros.set(SMFIC_CONNECT, vec![x, y]);
+
+        for name in ["{x}", "{y}"] {
+            let value = macros.get(name, None).unwrap().as_bytes().as_ptr() as usize;
+            assert!(
+                value < start || value >= end,
+                "{name} points into the frame"
+            );
+        }
+        assert_eq!(macros.cost(), 3 + 5 + 3 + 2 * PAIR_COST);
     }
 }

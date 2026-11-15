@@ -122,7 +122,7 @@ stateDiagram-v2
     Stopped --> [*]
 ```
 
-A request that arrives while a reload is running is not lost. The coordinator records it, and when the current reload ends it runs one more reload. Any number of requests that arrive in the meantime cause one extra reload only, which then picks up the latest configuration. Every caller whose request was folded into that reload gets its result. Only requests for the loader are folded: a `reload_with_config()` request carries its own configuration and runs on its own, in the order it arrived.
+A request that arrives while a reload is running is not lost. The coordinator records it and runs it when the current reload ends. Loader requests that arrive one after another in the meantime cause one extra reload only, which picks up the latest configuration, and every caller whose request was folded into it gets its result. A `reload_with_config()` request carries its own configuration and runs on its own, where it arrived: loader requests from before it run first, and those after it fold into a reload that runs after it. Every request takes effect in the order it arrived.
 
 The coordinator starts when `run()` has bound the listeners. A request made before that waits, and runs then.
 
@@ -134,9 +134,9 @@ Every connection keeps the configuration snapshot it was accepted with until it 
 
 Which settings apply at once, which apply to new connections, and which require a restart is specified per setting in [configuration.md](configuration.md#reload-classes).
 
-A reload closes no open connection and rebinds no listener ([ADR 0005](../adr/0005-reload-closes-no-connection-and-rebinds-no-listener.md)). A lowered `max_connections` closes no open connection. New connections are closed at once until the count falls below the new limit.
+A reload closes no open connection and rebinds no listener ([ADR 0016](../adr/0016-a-reload-closes-no-connection-and-fails-on-a-restart-setting.md)). A lowered `max_connections` closes no open connection. New connections are closed at once until the count falls below the new limit.
 
-A reload that changes a setting that requires a restart fails with `RestartRequired` and applies nothing, even if it changes other settings too ([ADR 0007](../adr/0007-a-reload-that-changes-a-restart-setting-fails.md)). The error names every such setting that changed, and the server keeps running with the previous generation. After every applied reload, the server runs exactly the configuration the loader returned.
+A reload that changes a setting that requires a restart fails with `RestartRequired` and applies nothing, even if it changes other settings too ([ADR 0016](../adr/0016-a-reload-closes-no-connection-and-fails-on-a-restart-setting.md)). The error names every such setting that changed, and the server keeps running with the previous generation. After every applied reload, the server runs exactly the configuration the loader returned.
 
 ## Listener changes
 
@@ -173,7 +173,7 @@ The application configuration follows the same isolation rule as the rest of rus
 3. A published configuration is immutable. A reload publishes a new `Arc`; it never changes the old one in place.
 4. The generation number grows by one per published configuration and never goes back. A failed reload does not change it.
 5. Once shutdown has started, `reload()` returns `ShuttingDown` and `SIGHUP` is logged and ignored.
-6. Without a registered loader, `SIGHUP` is logged at WARN level and ignored. `reload()` with an explicit configuration still works.
+6. Without a registered loader, `SIGHUP` is logged at WARN level and ignored, and `reload()` fails with `NoLoader`. `reload_with_config()`, which takes the configuration from the caller, still works.
 
 ## API
 
@@ -182,6 +182,8 @@ The reload API (`ServerBuilder::reload_with`, `ServerHandle::reload`, `reload_wi
 ## Errors
 
 The reload errors are the variants of `ReloadError` in [api-specification.md](api-specification.md#reloaderror). Every one of them leaves the server running with the previous generation; none ends `Server::run()`.
+
+A loader that panics fails the reload with `ReloadError::Load`, as a loader that returns an error does. The coordinator keeps running, and later reloads run as usual ([ADR 0018](../adr/0018-panics-in-handler-code-and-the-reload-loader-are-caught.md)).
 
 ## Logging and metrics
 
@@ -195,6 +197,8 @@ The reload errors are the variants of `ReloadError` in [api-specification.md](ap
 
 Logs carry the names of changed settings, never their values. A configuration can contain secrets, and the application configuration is opaque to the library.
 
+The `error` field of "Reload failed" holds the error and its source chain. For `ReloadError::Load` that includes the loader's own error, which the library writes as the loader formatted it. A loader must keep setting values and file contents out of its errors. Parser errors often quote the line they failed on, so wrap the position instead of the parser's error. [Write a loader](../how-to/reload-the-configuration.md#write-a-loader) shows one way.
+
 The reload metrics are defined under "Configuration reload metrics" in [telemetry.md](telemetry.md).
 
 `ServerHandle::status()` reports one more field next to the [health check](tcp-server.md#health-check) fields: `config_generation`, the current generation.
@@ -207,6 +211,7 @@ Unit tests:
 - the listener set comparison for added, removed, and kept addresses
 - classification of every `ServerConfig` field (at once, new connections, restart)
 - coalescing: several requests during one reload cause exactly one more reload
+- arrival order: an explicit configuration between loader requests takes effect where it arrived
 - generation numbering on success and failure
 
 Integration tests:

@@ -87,7 +87,7 @@ CI runs the tests with `--all-features`, so the tests that need the feature run 
 
 ## Style check
 
-`cargo test` checks that the Rust code keeps the procedural style of [ADR 0008](../adr/0008-rust-code-is-written-in-a-procedural-style.md), [ADR 0009](../adr/0009-no-stored-closures-or-function-pointers.md), and [ADR 0010](../adr/0010-builder-factory-type-parameter-and-loader-trait.md). A separate Clippy run in CI checks the methods ([ADR 0011](../adr/0011-the-disallowed-methods-run-stays-for-derive-code.md)). How to write code that passes is in [Write Rust in the procedural style](../how-to/write-procedural-rust.md).
+`cargo test` checks that the Rust code keeps the procedural style of [ADR 0017](../adr/0017-rust-code-is-written-in-a-procedural-style.md), and a separate Clippy run in CI checks the methods. How to write code that passes is in [Write Rust in the procedural style](../how-to/write-procedural-rust.md).
 
 | Item | Behavior |
 |------|----------|
@@ -131,7 +131,7 @@ flowchart LR
 | `runner` | The official `rust` image, at the tag in `tests/interop/runner/Dockerfile`, with the repository copied in when the image is built | Builds the `INT` tests with the toolchain from `rust-toolchain.toml` when the image is built, while the build can still reach the network, then runs them offline, one at a time. Each test starts its own milter on port 8891 with the scenario's handler, sends mail through an MTA, and stops the milter. The runner also holds an SMTP sink on port 2525 that keeps every delivered message for the test to inspect |
 | `postfix` | The pinned Debian release with the `postfix` package | MTA under test |
 | `sendmail` | The same Debian release with the `sendmail` package | MTA under test |
-| `sendmail-short` | The `sendmail` image with the filter timeouts `T=E:3s;R:2s` | MTA for the Sendmail timeout scenario |
+| `sendmail-short` | The `sendmail` image with the filter timeouts `T=E:4s;R:3s`. `R` stays more than a second above the one-second progress interval, because Sendmail counts these timeouts in whole seconds | MTA for the Sendmail timeout scenario |
 | `dns` | The same Debian release with the `unbound` package | The MTAs' only DNS resolver. It answers for the names in `void.invalid` and their addresses, and answers NXDOMAIN at once for every other name, without sending a query anywhere ([testing ADR 0003](../testing/adr/0003-interop-stack-resolves-names-with-a-local-unbound.md)) |
 
 The network has the fixed subnet `10.231.0.0/24`, and each service has a fixed address, so that `dns` can answer for each name:
@@ -181,7 +181,7 @@ How to run the stack is in [Run the tests](../how-to/run-the-tests.md#run-the-in
 
 ## CI
 
-GitHub Actions runs these jobs on every push to `main` and on every pull request. The tools are chosen in [testing ADR 0002](../testing/adr/0002-ci-scans-with-cargo-deny-clippy-and-codeql.md).
+GitHub Actions runs these jobs on every push to `main` and on every pull request, except the advisory check, which runs on a schedule. The tools are chosen in [testing ADR 0002](../testing/adr/0002-ci-scans-with-cargo-deny-clippy-and-codeql.md), and the daily advisory check in [testing ADR 0005](../testing/adr/0005-dependency-advisories-are-checked-daily.md).
 
 | Job | Workflow | Checks |
 |-----|----------|--------|
@@ -193,9 +193,10 @@ GitHub Actions runs these jobs on every push to `main` and on every pull request
 | Dependencies | `ci.yml` | cargo-deny: known vulnerabilities, yanked crates, licenses, and sources, as set in `deny.toml` |
 | Interoperability | `ci.yml` | The `INT` tests in the [interoperability environment](#interoperability-environment) |
 | CodeQL | `codeql.yml` | CodeQL's Rust analysis; also runs weekly |
+| Advisories | `advisories.yml` | cargo-deny's advisory check alone, every day at 05:23 UTC and on demand |
 
 Every action is pinned to a full commit SHA. Dependabot proposes updates to Cargo dependencies, the pinned actions, and the interop base images every week (`.github/dependabot.yml`).
 
 ## Toolchain
 
-The library's minimum supported Rust version stays 1.85. The test support code locks files with `std::fs::File::try_lock`, stable since Rust 1.89, so running the tests needs Rust 1.89 or later. `rust-toolchain.toml` is the only file that sets the toolchain version. It applies to work in the repository, to every CI job except MSRV, and to the interop runner, whatever the tag of the runner's image. The MSRV check in CI builds the library without its tests.
+The library's minimum supported Rust version stays 1.85. The test support code locks files with `std::fs::File::try_lock`, stable since Rust 1.89, so running the tests needs Rust 1.89 or later. `rust-toolchain.toml` is the only file that sets the toolchain version. It applies to work in the repository, to every CI job except MSRV, and to the interop runner, whatever the tag of the runner's image. No Dependabot job updates it: bump it by hand to the current stable release, for example when Dependabot moves the runner image to a newer Rust tag. The MSRV check in CI builds the library without its tests.

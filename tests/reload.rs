@@ -8,6 +8,7 @@ mod support;
 use std::collections::VecDeque;
 use std::io;
 use std::net::{SocketAddr, TcpListener};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -744,6 +745,71 @@ async fn rld_041_a_loader_error_is_kept_as_the_source() {
     assert_eq!(io.kind(), io::ErrorKind::NotFound);
     assert!(server.handle.is_running());
     Mta::connect(lease.v4()).await.negotiate().await;
+    server.stop().await;
+}
+
+/// A loader that panics on its first call, and returns `config` after.
+struct PanicsOnce {
+    calls: AtomicUsize,
+    config: ServerConfig,
+}
+
+impl ReloadLoader<()> for PanicsOnce {
+    type Error = io::Error;
+
+    async fn load(&self) -> std::result::Result<Reloaded<()>, io::Error> {
+        if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            panic!("the test loader panics");
+        }
+        plain(self.config.clone())
+    }
+}
+
+/// Starts a server whose loader panics once, then returns `next`.
+async fn start_panicking(config: ServerConfig, next: ServerConfig) -> Running {
+    let loader = PanicsOnce {
+        calls: AtomicUsize::new(0),
+        config: next,
+    };
+    let server = Server::builder()
+        .config(config)
+        .reload_with(loader)
+        .handler(ContinueAll::new)
+        .build()
+        .expect("a valid configuration");
+    run(server).await
+}
+
+#[tokio::test]
+async fn rld_052_a_loader_that_panics_fails_the_reload_and_later_reloads_run() {
+    let lease = PortLease::acquire().await;
+    let config = on(&[lease.v4()]);
+    let next = ServerConfig {
+        max_connections: 42,
+        ..config.clone()
+    };
+    let server = start_panicking(config, next).await;
+
+    let error = server.handle.reload().await.unwrap_err();
+
+    assert!(matches!(error, ReloadError::Load(_)), "{error:?}");
+    let source = std::error::Error::source(&error).expect("a source");
+    assert!(source.to_string().contains("panicked"), "{source}");
+    assert_eq!(server.handle.config_generation(), 1);
+    let report = server.handle.reload().await.expect("the second reload");
+    assert_eq!(report.generation, 2);
+    assert_eq!(server.handle.config().max_connections, 42);
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn rld_053_run_returns_ok_after_a_loader_panicked() {
+    let lease = PortLease::acquire().await;
+    let config = on(&[lease.v4()]);
+    let server = start_panicking(config.clone(), config).await;
+    let _ = server.handle.reload().await;
+
+    // `stop` checks that `run()` returns `Ok`.
     server.stop().await;
 }
 
