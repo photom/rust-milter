@@ -58,7 +58,7 @@ cargo nextest run
 
 ## Run the CI checks before you push
 
-Run the same checks as CI, except the interoperability tests and CodeQL:
+Run the same checks as CI, except the interoperability tests, the load and chaos tests, and CodeQL:
 
 ```sh
 cargo fmt --all --check
@@ -101,6 +101,43 @@ The interoperability tests run rust-milter behind real Postfix and Sendmail, in 
    ```
 
 The stack and its rules are described in [test-environment.md](../reference/test-environment.md#interoperability-environment).
+
+## Run the load and chaos tests
+
+The load and chaos tests run a release build of the milter under sustained load and under failures, in a Docker Compose stack of their own. You need Docker with Compose v2. A full run takes about two hours.
+
+1. Run every load and chaos scenario at full length:
+
+   ```sh
+   docker compose -f tests/load/compose.yaml run --build --rm runner
+   ```
+
+2. Run them in the short mode, as pull requests do, with the load scenarios cut to a few minutes:
+
+   ```sh
+   RUST_MILTER_LOAD_SHORT=on docker compose -f tests/load/compose.yaml run --build --rm runner
+   ```
+
+3. Run one scenario, for example LOD-002:
+
+   ```sh
+   docker compose -f tests/load/compose.yaml run --build --rm runner \
+     cargo test -p rust-milter-load --release -- --ignored --test-threads=1 --nocapture lod_002
+   ```
+
+4. Remove the stack when you are done:
+
+   ```sh
+   docker compose -f tests/load/compose.yaml down
+   ```
+
+On Linux, a scenario that needs neither a partition nor a lowered file descriptor limit also runs without Docker:
+
+```sh
+RUST_MILTER_LOAD_SHORT=on cargo test -p rust-milter-load --release -- --ignored --test-threads=1 lod_002
+```
+
+The stack and its rules are described in [test-environment.md](../reference/test-environment.md#load-and-chaos-environment).
 
 ## Skip or require the IPv6 tests
 

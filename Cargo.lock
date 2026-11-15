@@ -658,6 +658,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rust-milter-load"
+version = "0.0.0"
+dependencies = [
+ "bytes",
+ "rust-milter",
+ "tokio",
+]
+
+[[package]]
 name = "rust-milter-style"
 version = "0.0.0"
 dependencies = [

@@ -1,0 +1,17 @@
+[package]
+name = "rust-milter-load"
+version = "0.0.0"
+description = "Load and chaos tests for rust-milter, run in their own Compose stack"
+publish = false
+rust-version = "1.89"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+bytes = "1"
+rust-milter = { path = "../.." }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "time"] }
