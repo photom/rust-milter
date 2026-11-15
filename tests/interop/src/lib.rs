@@ -35,7 +35,7 @@ pub enum Mta {
     Postfix,
     /// Sendmail with the default filter timeouts.
     Sendmail,
-    /// Sendmail with the filter timeouts `T=E:3s;R:2s`.
+    /// Sendmail with the filter timeouts `T=E:4s;R:3s`.
     SendmailShort,
 }
 

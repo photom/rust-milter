@@ -23,3 +23,11 @@ target
 # Devcontainer service logs
 logs-github-mcp/
 logs-squid/
+
+# Secrets: environment files, private keys, and certificates
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx

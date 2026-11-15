@@ -1,4 +1,4 @@
-# Testing ADR 0005: Load and chaos tests run weekly, against a milter started as a child process
+# Testing ADR 0006: Load and chaos tests run weekly, against a milter started as a child process
 
 - Status: Accepted
 - Date: 2026-11-08

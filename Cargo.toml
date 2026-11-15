@@ -25,6 +25,8 @@ workspace = true
 
 [dependencies]
 bytes = "1"
+# FutureExt::catch_unwind, which takes no closure (ADR 0018).
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 opentelemetry = { version = "0.33", default-features = false, features = ["metrics"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 socket2 = { version = "0.6", features = ["all"] }
@@ -57,7 +59,7 @@ missing_docs = "warn"
 all = { level = "warn", priority = -1 }
 # These lints suggest a method that takes a closure, such as map, filter,
 # find, retain, or entry().or_insert_with(). rust-milter writes the match
-# or the loop instead (ADR 0008).
+# or the loop instead (ADR 0017).
 manual_filter = "allow"
 manual_filter_map = "allow"
 manual_find = "allow"
@@ -66,5 +68,5 @@ manual_map = "allow"
 manual_retain = "allow"
 map_entry = "allow"
 # The methods of clippy.toml are reported only by the style check's Clippy
-# run, which skips the calls a derive macro generates (ADR 0011).
+# run, which skips the calls a derive macro generates (ADR 0017).
 disallowed_methods = "allow"

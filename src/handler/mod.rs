@@ -10,7 +10,7 @@ use std::net::SocketAddr;
 use bytes::Bytes;
 
 pub use context::{EomContext, MessageContext, SessionContext};
-pub use flags::{Actions, Events};
+pub use flags::{Actions, Events, ProtocolOptions};
 
 use crate::{MilterText, ReplyCode, Result};
 
@@ -45,6 +45,13 @@ pub trait Handler: Send + Sync + Sized + 'static {
     /// closes if the MTA does not offer all of them. The default is none.
     fn actions(&self) -> Actions {
         Actions::NONE
+    }
+
+    /// The protocol options this handler requests. The connection closes if
+    /// the MTA does not offer all of them at protocol version 6. The default
+    /// is none.
+    fn protocol_options(&self) -> ProtocolOptions {
+        ProtocolOptions::NONE
     }
 
     /// `SMFIC_CONNECT`: the SMTP client connected to the MTA.
@@ -99,7 +106,8 @@ pub trait Handler: Send + Sync + Sized + 'static {
         async { Ok(Decision::Continue) }
     }
 
-    /// `SMFIC_HEADER`: one header field.
+    /// `SMFIC_HEADER`: one header field. The value keeps its leading space
+    /// only with [`ProtocolOptions::HEADER_LEADING_SPACE`] in force.
     fn header(
         &self,
         ctx: &mut MessageContext<Self>,
@@ -282,6 +290,7 @@ pub struct ConnectInfo {
 pub struct Negotiated {
     pub(crate) version: u32,
     pub(crate) actions: Actions,
+    pub(crate) options: ProtocolOptions,
     pub(crate) protocol: u32,
     pub(crate) mta_protocol: u32,
 }
@@ -297,7 +306,12 @@ impl Negotiated {
         self.actions
     }
 
-    /// The `SMFIP_*` protocol flags in the milter's answer.
+    /// The protocol options in force.
+    pub fn options(&self) -> ProtocolOptions {
+        self.options
+    }
+
+    /// The `SMFIP_*` protocol flags in the milter's answer, options included.
     pub fn protocol(&self) -> u32 {
         self.protocol
     }

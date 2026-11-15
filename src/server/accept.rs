@@ -32,6 +32,32 @@ impl Listen for TcpListener {
 /// What takes on the connections an accept loop accepts.
 pub(super) trait OnAccept<S> {
     fn accepted(&mut self, stream: S, peer: SocketAddr);
+
+    /// An accept error that a retry cannot fix, such as `EBADF`.
+    fn failed(&mut self, error: &io::Error);
+}
+
+/// `EBADF`, the same on Linux, macOS, and the BSDs.
+const EBADF: i32 = 9;
+
+/// `ENOTSOCK`.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+const ENOTSOCK: i32 = 88;
+/// `ENOTSOCK`.
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+const ENOTSOCK: i32 = 38;
+
+/// Whether an accept error means the listener socket itself is broken:
+/// `EINVAL` (it no longer listens), `EBADF`, or `ENOTSOCK`. Waiting does
+/// not fix such an error.
+fn is_fatal(error: &io::Error) -> bool {
+    if error.kind() == io::ErrorKind::InvalidInput {
+        return true;
+    }
+    match error.raw_os_error() {
+        Some(code) => code == EBADF || code == ENOTSOCK,
+        None => false,
+    }
 }
 
 /// The pause after each consecutive accept error.
@@ -59,7 +85,9 @@ impl Backoff {
 ///
 /// `ECONNABORTED`, a client that gave up before `accept()` returned, is
 /// retried at once. Every other error, such as `EMFILE` or `ENFILE`, pauses
-/// the loop with [`Backoff`], so a failing listener never spins.
+/// the loop with [`Backoff`], so a failing listener never spins. An error
+/// that waiting cannot fix is logged at ERROR and reported to `on_accept`,
+/// and the loop keeps retrying with the same pauses.
 pub(super) async fn accept_loop<L: Listen, O: OnAccept<L::Stream>>(
     mut listener: L,
     address: SocketAddr,
@@ -82,12 +110,17 @@ pub(super) async fn accept_loop<L: Listen, O: OnAccept<L::Stream>>(
             }
             Err(error) => {
                 let pause = backoff.error();
-                tracing::warn!(
-                    listener = %address,
-                    error = %error,
-                    consecutive_errors = backoff.consecutive_errors,
-                    "Accept error"
-                );
+                if is_fatal(&error) {
+                    tracing::error!(listener = %address, error = %error, "Accept error (fatal)");
+                    on_accept.failed(&error);
+                } else {
+                    tracing::warn!(
+                        listener = %address,
+                        error = %error,
+                        consecutive_errors = backoff.consecutive_errors,
+                        "Accept error"
+                    );
+                }
                 tokio::select! {
                     () = shutdown.cancelled() => return,
                     () = tokio::time::sleep(pause) => {}
@@ -127,13 +160,20 @@ mod tests {
         }
     }
 
-    /// Counts the connections handed on.
+    /// Counts the connections handed on, and the fatal errors reported.
     #[derive(Default)]
-    struct Count(usize);
+    struct Count {
+        accepted: usize,
+        fatal: usize,
+    }
 
     impl OnAccept<()> for Count {
         fn accepted(&mut self, (): (), _peer: SocketAddr) {
-            self.0 += 1;
+            self.accepted += 1;
+        }
+
+        fn failed(&mut self, _error: &io::Error) {
+            self.fatal += 1;
         }
     }
 
@@ -145,11 +185,11 @@ mod tests {
     }
 
     /// Runs the loop over `script` until it waits, and returns the pauses
-    /// between the accept calls, how many connections were handed on, and
-    /// the levels and `consecutive_errors` of the "Accept error" logs.
+    /// between the accept calls, the connections and fatal errors handed
+    /// on, and the levels and `consecutive_errors` of the error logs.
     async fn run(
         script: Vec<io::Result<()>>,
-    ) -> (Vec<Duration>, usize, Vec<(tracing::Level, String)>) {
+    ) -> (Vec<Duration>, Count, Vec<(tracing::Level, String)>) {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let length = script.len();
         let fake = Fake {
@@ -178,7 +218,7 @@ mod tests {
             pauses.push(pair[1] - pair[0]);
         }
         let logs = logs.lock().unwrap().clone();
-        (pauses, accepted.0, logs)
+        (pauses, accepted, logs)
     }
 
     type Captured = Arc<Mutex<Vec<(tracing::Level, String)>>>;
@@ -263,7 +303,8 @@ mod tests {
         let (pauses, accepted, logs) = run(script).await;
 
         assert_eq!(pauses, ms(&[100, 200, 400, 800, 0, 100]));
-        assert_eq!(accepted, 1);
+        assert_eq!(accepted.accepted, 1);
+        assert_eq!(accepted.fatal, 0);
         let mut warnings = Vec::new();
         for (level, count) in &logs {
             if *level == tracing::Level::WARN {
@@ -295,8 +336,28 @@ mod tests {
         let (pauses, accepted, logs) = run(script).await;
 
         assert_eq!(pauses, ms(&[0, 0]));
-        assert_eq!(accepted, 1);
+        assert_eq!(accepted.accepted, 1);
         assert_eq!(logs.len(), 1);
         assert_eq!(logs[0].0, tracing::Level::DEBUG);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn srv_057_a_fatal_error_logs_an_error_and_keeps_the_back_off() {
+        let script = vec![
+            Err(io::ErrorKind::InvalidInput.into()),
+            Err(io::ErrorKind::InvalidInput.into()),
+            Ok(()),
+        ];
+
+        let (pauses, accepted, logs) = run(script).await;
+
+        assert_eq!(pauses, ms(&[100, 200, 0]));
+        assert_eq!(accepted.accepted, 1);
+        assert_eq!(accepted.fatal, 2);
+        let mut levels = Vec::new();
+        for (level, _) in &logs {
+            levels.push(*level);
+        }
+        assert_eq!(levels, [tracing::Level::ERROR, tracing::Level::ERROR]);
     }
 }

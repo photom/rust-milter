@@ -156,10 +156,7 @@ async fn int_003_a_session_without_mail_ends_cleanly() {
         milter.wait_closed(1).await;
         milter.stop().await;
         let ends = ends.lock().unwrap().clone();
-        assert!(
-            matches!(ends[..], [SessionEnd::Quit | SessionEnd::ConnectionClosed]),
-            "{mta}: {ends:?}"
-        );
+        assert_eq!(ends, [SessionEnd::Quit], "{mta}: {ends:?}");
         let warnings = logs.warnings();
         assert!(warnings.is_empty(), "{mta}: {warnings:?}");
     }

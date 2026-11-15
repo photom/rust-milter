@@ -5,8 +5,10 @@ use std::time::{Duration, Instant};
 use rust_milter::{Decision, EomContext, Handler, Result};
 use rust_milter_interop::{Logs, Mail, Milter, Mta, Smtp, sink};
 
-/// How long [`SlowWithProgress`] takes at the end of each message.
-const SLOW: Duration = Duration::from_secs(5);
+/// How long [`SlowWithProgress`] takes at the end of each message. It stays
+/// above the latest moment `sendmail-short`'s 4-second `E` timeout can fire,
+/// about 5 s after end of message.
+const SLOW: Duration = Duration::from_secs(7);
 
 /// Takes [`SLOW`] at the end of each message, and calls `progress()` every
 /// second meanwhile.
@@ -41,7 +43,10 @@ async fn int_040_progress_restarts_postfix_content_timeout() {
     smtp.quit().await;
 
     assert!(sent.accepted(), "{sent:?}");
-    assert!(took >= SLOW, "the handler's 5 s were waited out: {took:?}");
+    assert!(
+        took >= SLOW,
+        "the handler's {SLOW:?} were waited out: {took:?}"
+    );
     sink::wait_for(&mail.token).await;
     milter.wait_closed(1).await;
     milter.stop().await;
@@ -65,9 +70,12 @@ async fn int_041_progress_does_not_extend_sendmail_end_of_message_timeout() {
     };
     // The filter flag F=T turns the timeout into a temporary failure.
     assert_eq!(reply.code / 100, 4, "{sent:?}");
+    // Sendmail counts milter timeouts in whole seconds and checks `E` only
+    // between replies, so `E:4s` fires between 3 and about 5 s after end of
+    // message. `R:3s` cannot fire between progress replies a second apart.
     assert!(
-        took >= Duration::from_millis(2_500) && took < SLOW,
-        "Sendmail timed out after about 3 s: {took:?}"
+        took > Duration::from_secs(3) && took < SLOW,
+        "Sendmail timed out between 3 and 5 s: {took:?}"
     );
     sink::assert_none_within(&mail.token, Duration::from_secs(1)).await;
     milter.wait_closed(1).await;

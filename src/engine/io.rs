@@ -15,9 +15,17 @@ use crate::{Error, Frame, Reply, ResourceKind, Result, TimeoutConfig, TimeoutKin
 /// Size of the length field that starts every frame.
 const LENGTH_FIELD: usize = 4;
 
+/// The longest first packet a connection accepts. Before option
+/// negotiation only `SMFIC_OPTNEG` is valid, a 17-byte packet, so a peer
+/// cannot make the server reserve `per_connection_buffer` with a 4-byte
+/// length field (ADR 0013).
+const FIRST_PACKET_MAX: usize = 1_024;
+
 /// The receiving side of a connection.
 pub(crate) struct Inbound<R> {
     reader: R,
+    /// The connection's ID, for the "I/O error" log.
+    conn_id: u64,
     buf: BytesMut,
     /// The longest packet accepted, `per_connection_buffer`.
     max: usize,
@@ -32,6 +40,9 @@ pub(crate) struct Inbound<R> {
     idle_since: Option<Instant>,
     /// This connection's share of `max_memory`.
     memory: Reservation,
+    /// What the macros the engine stores for this connection cost; they
+    /// count against `memory` and `max` (ADR 0019).
+    held: usize,
     /// The server's counts.
     traffic: Arc<Traffic>,
     /// Bytes received.
@@ -43,6 +54,7 @@ pub(crate) struct Inbound<R> {
 impl<R: AsyncRead + Unpin> Inbound<R> {
     pub(crate) fn new(
         reader: R,
+        conn_id: u64,
         max: usize,
         timeouts: TimeoutConfig,
         accepted_at: Instant,
@@ -51,7 +63,9 @@ impl<R: AsyncRead + Unpin> Inbound<R> {
     ) -> Self {
         Inbound {
             reader,
-            buf: BytesMut::with_capacity(8 * 1024),
+            conn_id,
+            // The size every connection reserves when it is accepted.
+            buf: BytesMut::with_capacity(Reservation::BASE),
             max,
             timeouts,
             accepted_at,
@@ -59,6 +73,7 @@ impl<R: AsyncRead + Unpin> Inbound<R> {
             frame_started: None,
             idle_since: None,
             memory,
+            held: 0,
             traffic,
             bytes_read: 0,
             frames: 0,
@@ -75,7 +90,8 @@ impl<R: AsyncRead + Unpin> Inbound<R> {
     /// cancelled call loses nothing.
     pub(crate) async fn next_frame(&mut self) -> Result<Option<Frame>> {
         loop {
-            if let Some(frame) = Frame::parse(&mut self.buf, self.max)? {
+            let limit = self.limit();
+            if let Some(frame) = Frame::parse(&mut self.buf, limit)? {
                 self.first = false;
                 self.frames += 1;
                 self.frame_started = if self.buf.is_empty() {
@@ -83,9 +99,11 @@ impl<R: AsyncRead + Unpin> Inbound<R> {
                 } else {
                     Some(Instant::now())
                 };
-                // The frame's data is the handler's now; only the next frame
-                // needs room in the buffer.
-                self.memory.resize(0);
+                if LENGTH_FIELD + 1 + frame.data.len() > Reservation::BASE {
+                    self.shrink_buffer();
+                }
+                // The frame stays reserved until its command has finished,
+                // when `hold` sets the reservation to the stored macros.
                 return Ok(Some(frame));
             }
             self.reserve_frame()?;
@@ -94,7 +112,7 @@ impl<R: AsyncRead + Unpin> Inbound<R> {
             let reading = self.reader.read_buf(&mut self.buf);
             let read = match tokio::time::timeout_at(deadline, reading).await {
                 Err(_) => return Err(Error::Timeout(kind)),
-                Ok(Err(error)) => return Err(io_error(error)),
+                Ok(Err(error)) => return Err(io_error(error, self.conn_id, "read")),
                 Ok(Ok(read)) => read,
             };
             self.bytes_read += read as u64;
@@ -112,10 +130,61 @@ impl<R: AsyncRead + Unpin> Inbound<R> {
         }
     }
 
+    /// The longest packet accepted now: [`FIRST_PACKET_MAX`] until the first
+    /// packet has arrived, then `per_connection_buffer`.
+    fn limit(&self) -> usize {
+        if self.first {
+            self.max.min(FIRST_PACKET_MAX)
+        } else {
+            self.max
+        }
+    }
+
     /// Bytes of a frame not yet returned have arrived: part of a frame, or
     /// a whole one sent right after the last.
     pub(crate) fn in_frame(&self) -> bool {
         !self.buf.is_empty()
+    }
+
+    /// Reserves what a command holds until it has finished: its frame and
+    /// the strings decoded from it, `cost` bytes in all, besides the stored
+    /// macros. Fails when the command would cost more than
+    /// `per_connection_buffer`, or the reservation would pass `max_memory`
+    /// (ADR 0019).
+    pub(crate) fn reserve_command(&mut self, cost: usize) -> Result<()> {
+        if cost > self.max {
+            return Err(Error::ResourceLimit(ResourceKind::PerConnectionBuffer));
+        }
+        if !self.memory.resize(self.held + cost) {
+            return Err(Error::ResourceLimit(ResourceKind::MaxMemory));
+        }
+        Ok(())
+    }
+
+    /// Sets what the macros the engine stores for this connection cost, and
+    /// resizes the reservation to match, which ends the reservation of the
+    /// command that has finished. Fails when they would pass
+    /// `per_connection_buffer`, or the reservation `max_memory` (ADR 0019).
+    pub(crate) fn hold(&mut self, cost: usize) -> Result<()> {
+        if cost > self.max {
+            return Err(Error::ResourceLimit(ResourceKind::PerConnectionBuffer));
+        }
+        if !self.memory.resize(cost) {
+            return Err(Error::ResourceLimit(ResourceKind::MaxMemory));
+        }
+        self.held = cost;
+        Ok(())
+    }
+
+    /// Replaces the read buffer with a new one of [`Reservation::BASE`]
+    /// bytes, holding the bytes of the next frame that have arrived. The
+    /// old buffer grew to fit the frame just parsed; its allocation now
+    /// belongs to that frame alone and is freed with it, instead of staying
+    /// with the connection uncounted (ADR 0019).
+    fn shrink_buffer(&mut self) {
+        let mut fresh = BytesMut::with_capacity(Reservation::BASE.max(self.buf.len()));
+        fresh.extend_from_slice(&self.buf);
+        self.buf = fresh;
     }
 
     /// Once a frame's length field has arrived, reserves the whole frame
@@ -124,9 +193,9 @@ impl<R: AsyncRead + Unpin> Inbound<R> {
         let Some(length_field) = self.buf.first_chunk::<LENGTH_FIELD>() else {
             return Ok(());
         };
-        // `Frame::parse` has checked the length against `max` already.
+        // `Frame::parse` has checked the length against the limit already.
         let packet = LENGTH_FIELD + u32::from_be_bytes(*length_field) as usize;
-        if !self.memory.resize(packet) {
+        if !self.memory.resize(self.held + packet) {
             return Err(Error::ResourceLimit(ResourceKind::MaxMemory));
         }
         self.buf.reserve(packet.saturating_sub(self.buf.len()));
@@ -160,6 +229,8 @@ impl<R: AsyncRead + Unpin> Inbound<R> {
 /// The sending side of a connection.
 pub(crate) struct Outbound {
     writer: Box<dyn AsyncWrite + Send + Unpin>,
+    /// The connection's ID, for the "I/O error" log.
+    conn_id: u64,
     buf: BytesMut,
     /// `timeouts.write`, for each reply.
     timeout: Duration,
@@ -176,11 +247,13 @@ pub(crate) struct Outbound {
 impl Outbound {
     pub(crate) fn new(
         writer: impl AsyncWrite + Send + Unpin + 'static,
+        conn_id: u64,
         timeout: Duration,
         traffic: Arc<Traffic>,
     ) -> Self {
         Outbound {
             writer: Box::new(writer),
+            conn_id,
             buf: BytesMut::new(),
             timeout,
             bytes_written: 0,
@@ -201,7 +274,7 @@ impl Outbound {
         };
         match tokio::time::timeout(self.timeout, write).await {
             Err(_) => return Err(Error::Timeout(TimeoutKind::Write)),
-            Ok(Err(error)) => return Err(io_error(error)),
+            Ok(Err(error)) => return Err(io_error(error, self.conn_id, "write")),
             Ok(Ok(())) => {}
         }
         self.bytes_written += self.buf.len() as u64;
@@ -214,9 +287,11 @@ impl Outbound {
     }
 }
 
-/// Tells a reset apart from other socket errors.
-fn io_error(error: std::io::Error) -> Error {
+/// Logs a failed socket `operation`, `read` or `write`, and tells a reset
+/// apart from other socket errors.
+fn io_error(error: std::io::Error, conn_id: u64, operation: &'static str) -> Error {
     use std::io::ErrorKind;
+    tracing::debug!(conn_id, operation, error = %error, "I/O error");
     match error.kind() {
         ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted | ErrorKind::BrokenPipe => {
             Error::ConnectionReset
@@ -234,5 +309,91 @@ fn started_now_or_before(slot: &mut Option<Instant>) -> Instant {
             *slot = Some(now);
             now
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::io::{AsyncWriteExt, DuplexStream};
+
+    use super::*;
+
+    /// A reader of `per_connection_buffer` = `max` over one end of a pipe.
+    fn inbound(reader: DuplexStream, max: usize) -> Inbound<DuplexStream> {
+        Inbound::new(
+            reader,
+            1,
+            max,
+            TimeoutConfig::default(),
+            Instant::now(),
+            Reservation::unlimited(),
+            Arc::default(),
+        )
+    }
+
+    /// A packet of `length` bytes in all: the length field, a body command,
+    /// and zeros.
+    fn packet(length: usize) -> Vec<u8> {
+        let field = u32::try_from(length - LENGTH_FIELD).unwrap();
+        let mut packet = field.to_be_bytes().to_vec();
+        packet.push(crate::protocol::SMFIC_BODY);
+        packet.resize(length, 0);
+        packet
+    }
+
+    /// Sends a first packet, which may be at most 1 KB, and reads it.
+    async fn past_first_packet(mta: &mut DuplexStream, inbound: &mut Inbound<DuplexStream>) {
+        mta.write_all(&packet(17)).await.unwrap();
+        inbound.next_frame().await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn srv_087_a_large_frame_takes_its_allocation_with_it() {
+        let (mut mta, milter) = tokio::io::duplex(256 * 1024);
+        let mut inbound = inbound(milter, 131_072);
+        past_first_packet(&mut mta, &mut inbound).await;
+        mta.write_all(&packet(131_072)).await.unwrap();
+        let large = inbound.next_frame().await.unwrap().unwrap();
+        assert_eq!(large.data.len(), 131_072 - LENGTH_FIELD - 1);
+        drop(large);
+
+        mta.write_all(&packet(17)).await.unwrap();
+        inbound.next_frame().await.unwrap().unwrap();
+
+        assert!(
+            inbound.buf.capacity() <= Reservation::BASE,
+            "{}",
+            inbound.buf.capacity()
+        );
+    }
+
+    #[tokio::test]
+    async fn srv_088_bytes_of_the_next_frame_move_to_the_new_buffer() {
+        let (mut mta, milter) = tokio::io::duplex(256 * 1024);
+        let mut inbound = inbound(milter, 131_072);
+        past_first_packet(&mut mta, &mut inbound).await;
+        let next = packet(17);
+        let mut sent = packet(5_000);
+        sent.extend_from_slice(&next[..10]);
+        mta.write_all(&sent).await.unwrap();
+
+        let first = inbound.next_frame().await.unwrap().unwrap();
+
+        assert_eq!(first.data.len(), 5_000 - LENGTH_FIELD - 1);
+        assert_eq!(&inbound.buf[..], &next[..10]);
+        let frame_end = first.data.as_ptr() as usize + first.data.len();
+        assert_ne!(
+            inbound.buf.as_ptr() as usize,
+            frame_end,
+            "the buffer still shares the frame's allocation"
+        );
+        assert!(
+            inbound.buf.capacity() <= Reservation::BASE,
+            "{}",
+            inbound.buf.capacity()
+        );
+        mta.write_all(&next[10..]).await.unwrap();
+        let second = inbound.next_frame().await.unwrap().unwrap();
+        assert_eq!(second.data.len(), 17 - LENGTH_FIELD - 1);
     }
 }

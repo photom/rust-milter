@@ -169,7 +169,11 @@ impl<H: Handler, A: Send + Sync + 'static, F> ServerBuilder<H, A, F> {
     where
         F: FnOnce(&HandlerContext<A>) -> H,
     {
-        self.config.validate()?;
+        if let Err(error) = self.config.validate() {
+            tracing::error!(field = error.setting(), error = %error, "Configuration error");
+            return Err(error.into());
+        }
+        tracing::info!(generation = FIRST_GENERATION, "Configuration loaded");
         let shutdown = CancellationToken::new();
         let counters = Arc::new(Counters::new(&self.config.bind_addresses));
         let (watch, publisher) = ConfigWatch::new(self.config, self.app);
@@ -256,6 +260,7 @@ impl<H: Handler, A: Send + Sync + 'static> Server<H, A> {
             connections: TaskTracker::new(),
             next_id: AtomicU64::new(1),
             sessions: Arc::new(AtomicU64::new(1)),
+            rejecting: Rejecting::default(),
         });
         #[cfg(unix)]
         let _signals = AbortOnDrop(tokio::spawn(signals.watch(Arc::clone(shared))));
@@ -396,6 +401,18 @@ struct Accepting<H, A> {
     next_id: AtomicU64,
     /// The next `milter.session.id`.
     sessions: Arc<AtomicU64>,
+    /// The limits that have turned a connection away since the last
+    /// connection taken on.
+    rejecting: Rejecting,
+}
+
+/// Which limits have turned connections away since the last connection the
+/// server took on. Only the first rejection of such a run logs at WARN, so a
+/// peer that keeps reconnecting at a limit cannot flood the logs.
+#[derive(Default)]
+struct Rejecting {
+    connections: AtomicBool,
+    memory: AtomicBool,
 }
 
 /// Records a connection's duration, with the `otel` feature.
@@ -442,26 +459,51 @@ impl<H: Handler, A: Send + Sync + 'static> Accepting<H, A> {
         let entered = span.enter();
 
         let max_connections = config.max_connections;
-        if counters.connections.load(Ordering::SeqCst) >= max_connections {
+        let Some(open) = Open::try_new(
+            Arc::clone(&self.shared),
+            Arc::clone(counts),
+            max_connections,
+        ) else {
             self.reject(counts, accepted_at);
-            tracing::warn!(
-                conn_id = id,
-                remote_addr = %peer_addr,
-                max_connections,
-                "Connection rejected (limit)"
-            );
-            return;
-        }
-        let Some(memory) = Reservation::new(&self.budget) else {
-            self.reject(counts, accepted_at);
-            tracing::warn!(
-                limit_type = "max_memory",
-                current = self.budget.used(),
-                max = self.budget.max(),
-                "Resource limit reached"
-            );
+            macro_rules! rejected {
+                ($level:ident) => {
+                    tracing::$level!(
+                        conn_id = id,
+                        remote_addr = %peer_addr,
+                        max_connections,
+                        "Connection rejected (limit)"
+                    )
+                };
+            }
+            if self.rejecting.connections.swap(true, Ordering::Relaxed) {
+                rejected!(debug);
+            } else {
+                rejected!(warn);
+            }
             return;
         };
+        let Some(memory) = Reservation::new(&self.budget) else {
+            drop(open);
+            self.reject(counts, accepted_at);
+            macro_rules! limit_reached {
+                ($level:ident) => {
+                    tracing::$level!(
+                        limit_type = "max_memory",
+                        current = self.budget.used(),
+                        max = self.budget.max(),
+                        "Resource limit reached"
+                    )
+                };
+            }
+            if self.rejecting.memory.swap(true, Ordering::Relaxed) {
+                limit_reached!(debug);
+            } else {
+                limit_reached!(warn);
+            }
+            return;
+        };
+        self.rejecting.connections.store(false, Ordering::Relaxed);
+        self.rejecting.memory.store(false, Ordering::Relaxed);
         let local_addr = match stream.local_addr() {
             Ok(local_addr) => local_addr,
             Err(error) => return self.setup_failed(accepted_at, error),
@@ -493,7 +535,6 @@ impl<H: Handler, A: Send + Sync + 'static> Accepting<H, A> {
             listener = %listener,
             "Connection accepted"
         );
-        let open = Open::new(Arc::clone(&self.shared), Arc::clone(counts));
         let trace = Trace {
             sessions: Arc::clone(&self.sessions),
             commands: config.telemetry.trace_commands,
@@ -542,10 +583,18 @@ struct Open<A> {
 }
 
 impl<A> Open<A> {
-    fn new(shared: Arc<Shared<A>>, listener: Arc<ListenerCounts>) -> Open<A> {
-        shared.counters.connections.fetch_add(1, Ordering::SeqCst);
+    /// Counts a new connection as open, or returns `None` when
+    /// `max_connections` are open already.
+    fn try_new(
+        shared: Arc<Shared<A>>,
+        listener: Arc<ListenerCounts>,
+        max_connections: usize,
+    ) -> Option<Open<A>> {
+        if !shared.counters.try_open(max_connections) {
+            return None;
+        }
         listener.opened();
-        Open { shared, listener }
+        Some(Open { shared, listener })
     }
 }
 
@@ -668,7 +717,7 @@ fn log_close(
 }
 
 /// An error and its `source()` chain, joined by `: `.
-fn error_chain(error: &dyn std::error::Error) -> String {
+pub(crate) fn error_chain(error: &dyn std::error::Error) -> String {
     let mut text = error.to_string();
     let mut source = error.source();
     while let Some(cause) = source {

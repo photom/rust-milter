@@ -1,6 +1,6 @@
 # ADR 0010: The builder keeps the handler factory in a type parameter and takes a loader trait
 
-- Status: Accepted
+- Status: Superseded by [ADR 0017](0017-rust-code-is-written-in-a-procedural-style.md)
 - Date: 2026-11-08
 - Affects: the builder API of `src/server`, the style check
 - Supersedes: the `reload_with` exceptions of [ADR 0008](0008-rust-code-is-written-in-a-procedural-style.md); adds to the exceptions of [ADR 0009](0009-no-stored-closures-or-function-pointers.md)

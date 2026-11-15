@@ -6,6 +6,7 @@ mod reply;
 mod reply_code;
 mod text;
 
+pub(crate) use command::cost;
 pub use command::{AddressFamily, Command};
 pub use reply::Reply;
 pub use reply_code::ReplyCode;

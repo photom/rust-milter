@@ -96,7 +96,7 @@ Concurrency: one connection per task, with exclusive ownership of the socket.
 
 Responsibilities:
 - parse Milter protocol frames: a 4-byte length, a 1-byte command, then the data
-- reject a packet longer than `per_connection_buffer` before allocating memory for it
+- reject a packet longer than its limit, `per_connection_buffer` or 1,024 bytes for the first packet, before allocating memory for it
 - handle incomplete frames by waiting for more data
 - serialize frames
 
@@ -116,10 +116,10 @@ Dependencies: the Frame component and the protocol constants.
 The protocol engine runs the Milter conversation for each connection, as libmilter's `mi_engine` does.
 
 Responsibilities:
-- negotiate options: protocol version (2 to 6), action flags from `Handler::actions()`, protocol flags from `Handler::events()`
-- track the protocol state with libmilter's transition rules, recover from a command in a wrong state where libmilter recovers, and close the connection where libmilter would leave the MTA waiting ([ADR 0001](../adr/0001-commands-in-wrong-state-recover-like-libmilter-or-close.md))
-- store macros per stage and clear them when the session ends
-- create the handler's `Session` value at `SMFIC_CONNECT` and its `Message` value at `SMFIC_MAIL` (or at the first command of a message when the handler leaves `MAIL` out of `events()`), and drop them when the session or message ends
+- negotiate options: protocol version (2 to 6), action flags from `Handler::actions()`, protocol flags from `Handler::events()` and `Handler::protocol_options()`
+- track the protocol state with libmilter's transition rules, recover from a command in a wrong state where libmilter recovers, and close the connection where libmilter would leave the MTA waiting ([ADR 0015](../adr/0015-commands-in-wrong-state-follow-libmilter-or-close.md))
+- store macros per stage, drop the later stages' macros when a stage's command arrives, and clear them all when the session ends
+- create the handler's `Session` value when a callback first asks for it in a session, and its `Message` value at `SMFIC_MAIL` (or at the first command of a message when the handler leaves `MAIL` out of `events()`), and drop them when the session or message ends
 - call the matching handler callback for each command, and turn its decision into the protocol reply, or into no reply where the protocol forbids one
 - offer the modification methods only at end of message, and check that their actions were negotiated
 
@@ -148,7 +148,7 @@ Who reads what:
 | Shutdown coordinator | `shutdown.*` | when a shutdown starts |
 | Handler | application configuration via `ConfigWatch` | once per session or per message |
 
-What a changed setting does on reload, and which settings need a restart, is specified in [configuration.md](../reference/configuration.md#reload-classes). In short: the listener set, `max_connections`, the shutdown timings, `max_fds`, and `max_memory` apply at once; timeouts, socket options, `per_connection_buffer`, and `trace_commands` apply to new connections; `backlog`, `reuse_addr`, `reuse_port`, `ipv6_only`, and everything set only on the builder require a restart, and a reload that changes one of those settings fails.
+What a changed setting does on reload, and which settings need a restart, is specified in [configuration.md](../reference/configuration.md#reload-classes). In short: the listener set, `max_connections`, the shutdown timings, and `max_memory` apply at once; timeouts, socket options, `per_connection_buffer`, and `trace_commands` apply to new connections; `backlog`, `reuse_addr`, `reuse_port`, `ipv6_only`, and everything set only on the builder require a restart, and a reload that changes one of those settings fails.
 
 ### 8. Reload coordinator
 
@@ -181,7 +181,7 @@ Telemetry never records SMTP session data. The metric names, span structure, and
 ### 11. Error types
 
 Responsibilities:
-- define typed error enums: `Error`, `ConfigError`, `ReloadError`, `ProtocolError`, `AddressError`
+- define typed error enums: `Error`, `ConfigError`, `ReloadError`, `ProtocolError`, `ReplyError`, `AddressError`
 - keep the cause of each error in `source()`
 
 The variants are listed in [api-specification.md](../reference/api-specification.md#errors).
@@ -253,7 +253,7 @@ sequenceDiagram
 ```
 
 1. Connection reads bytes from the socket.
-2. The frame parser checks the length against `per_connection_buffer` and extracts a frame.
+2. The frame parser checks the length against `per_connection_buffer`, or 1,024 bytes for the first packet, and extracts a frame.
 3. The message decoder converts it into a `Command`.
 4. The protocol engine checks the command against the protocol state and stores any macros.
 5. For an event the handler subscribed to, the engine calls the matching callback, which returns a decision.
@@ -324,8 +324,8 @@ sequenceDiagram
 
 ### Tasks
 
-The library runs on the Tokio multi-threaded runtime that the application creates:
-- one worker thread per CPU core by default; the application sets the number on its runtime
+The library runs on the Tokio runtime that the application creates. Both runtime types work, and the multi-threaded one is the usual choice:
+- on the multi-threaded runtime, one worker thread per CPU core by default; the application sets the number on its runtime
 - one accept task per listener
 - one task per connection
 - one reload coordinator task and one shutdown coordinator task
@@ -357,20 +357,21 @@ Two separate state machines track each connection:
 | Transport | `CONNECTED`, `IDLE`, `ACTIVE`, `DRAINING`, `ERROR`, `CLOSED`, driven by socket events, timeouts, and shutdown | [tcp-server.md](../reference/tcp-server.md#connection-lifecycle) |
 | Protocol | `ST_INIT` to `ST_QUIT`, driven by Milter commands, as libmilter defines them | [milter-protocol.md](../reference/milter-protocol.md#protocol-states) |
 
-The Connection component owns the transport state. The protocol engine owns the protocol state and validates every command against it. For a command in a wrong state it follows libmilter where libmilter's behavior works: it recovers for `SMFIC_HELO`, `SMFIC_MAIL`, and `SMFIC_UNKNOWN`, and ignores `SMFIC_ABORT` and `SMFIC_QUIT`. Where libmilter would ignore a command and leave the MTA waiting for a reply, including `SMFIC_QUIT_NC`, it closes the connection ([ADR 0001](../adr/0001-commands-in-wrong-state-recover-like-libmilter-or-close.md)). Handlers never see protocol state.
+The Connection component owns the transport state. The protocol engine owns the protocol state and validates every command against it. For a command in a wrong state it follows libmilter where libmilter's behavior works: it recovers for `SMFIC_HELO`, `SMFIC_MAIL`, and `SMFIC_UNKNOWN`, ignores `SMFIC_ABORT`, and ends the session on `SMFIC_QUIT` in any state. Where libmilter would ignore a command and leave the MTA waiting for a reply, including `SMFIC_QUIT_NC`, it closes the connection ([ADR 0015](../adr/0015-commands-in-wrong-state-follow-libmilter-or-close.md)). Handlers never see protocol state.
 
 ## Resource management
 
 ### Memory
 
-- each connection has one read buffer and one write buffer that grow up to `per_connection_buffer` (default 128 KB, minimum 65,540 bytes, the largest default-size milter packet)
-- frame data is shared without copying through `bytes::Bytes`
-- `max_memory` caps the total of all connection buffers
+- each connection has one 4 KB read buffer, and one write buffer that holds one reply at a time. The read buffer grows to fit a larger frame, up to `per_connection_buffer` (default 128 KB, minimum 65,540 bytes, the largest default-size milter packet), and goes back to 4 KB once that frame has been parsed, so an idle connection does not keep a large allocation
+- frame data is shared without copying through `bytes::Bytes`; only the stored macros are copied, so they do not keep a read buffer
+- a command holds its frame and the strings decoded from it until it finishes, and costs at most `per_connection_buffer`; the stored macros cost at most `per_connection_buffer` too
+- `max_memory` caps the total of the read buffers, the commands being processed, and the stored macros; the write buffers and the values handlers keep are not counted ([ADR 0019](../adr/0019-a-connection-counts-what-it-holds-until-each-command-ends.md))
 
 ### File descriptors
 
 - one FD per open connection and one per listener
-- `max_fds` must leave room for `max_connections` plus the listeners plus 10
+- the process limit (`ulimit -n`) must leave room for `max_connections` plus the listeners plus 10; rust-milter has no setting of its own for it ([ADR 0012](../adr/0012-no-file-descriptor-limit-setting.md))
 - on `EMFILE` or `ENFILE` the accept loop backs off and retries
 
 All limits and defaults are in [configuration.md](../reference/configuration.md).
@@ -379,7 +380,7 @@ All limits and defaults are in [configuration.md](../reference/configuration.md)
 
 Practices the implementation follows inside the data plane:
 - `tokio::select!` with the shutdown token wherever a task waits, so cancellation is prompt and safe.
-- Buffered I/O on each connection, with buffers reused for the life of the connection and bounded by `per_connection_buffer`.
+- Buffered I/O on each connection. The write buffer is reused for the life of the connection. The read buffer, bounded by `per_connection_buffer`, is reused between frames of up to 4 KB and replaced with a new 4 KB buffer after a larger frame.
 - `bytes::Bytes` for frame data, so body chunks and header values are shared rather than copied.
 - No blocking calls on runtime threads; CPU-heavy work, if a handler needs it, goes to `tokio::task::spawn_blocking`.
 - File descriptors released as soon as a connection closes; on exhaustion the accept loop backs off instead of failing.
@@ -390,9 +391,10 @@ Practices the implementation follows inside the data plane:
 
 Fatal for the connection, which is closed:
 - protocol violations and malformed frames
-- frames longer than `per_connection_buffer`
+- frames longer than `per_connection_buffer`, and first packets longer than 1,024 bytes
 - expired timeouts
 - I/O errors
+- a panic in a handler method, after which no further callback runs for the session ([ADR 0018](../adr/0018-panics-in-handler-code-and-the-reload-loader-are-caught.md))
 
 Recoverable within the connection:
 - incomplete frames, which need more data
@@ -403,7 +405,7 @@ Fatal for startup:
 - a bind failure in `FailFast` mode, returned by `run()`
 
 Not fatal on reload:
-- a failed load, an invalid configuration, a changed setting that requires a restart, or a bind failure leaves the running configuration in place and is reported as a `ReloadError`
+- a failed or panicking load, an invalid configuration, a changed setting that requires a restart, or a bind failure leaves the running configuration in place and is reported as a `ReloadError`
 
 ### Propagation
 
