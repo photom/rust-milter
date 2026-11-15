@@ -1,5 +1,5 @@
 //! The milter under test of the load and chaos scenarios, started by each
-//! test as a child process (testing ADR 0005).
+//! test as a child process (testing ADR 0006).
 //!
 //! It continues at every stage. Its configuration is the default one with
 //! the variables that start with `LOAD_MILTER_` applied. Each line `status`

@@ -1,4 +1,4 @@
-//! The milter under test, run as a child process: see testing ADR 0005.
+//! The milter under test, run as a child process: see testing ADR 0006.
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::SocketAddr;

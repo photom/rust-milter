@@ -1,6 +1,6 @@
 name: Load and chaos
 
-# The LOD and CHS scenarios (testing ADR 0005): at full length weekly and on
+# The LOD and CHS scenarios (testing ADR 0006): at full length weekly and on
 # demand, and in the short mode on pull requests that change the load tests.
 on:
   schedule:

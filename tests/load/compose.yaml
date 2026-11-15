@@ -1,5 +1,5 @@
 # Load and chaos stack: see docs/reference/test-environment.md
-# ("Load and chaos environment") and testing ADR 0005. Run with:
+# ("Load and chaos environment") and testing ADR 0006. Run with:
 #   docker compose -f tests/load/compose.yaml run --build --rm runner
 # Set RUST_MILTER_LOAD_SHORT=on for the short mode.
 name: rust-milter-load

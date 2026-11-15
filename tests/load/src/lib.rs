@@ -2,7 +2,7 @@
 //! scenarios).
 //!
 //! The tests run inside the Docker Compose stack in `tests/load/compose.yaml`;
-//! see `docs/reference/test-environment.md` and testing ADR 0005. Each test
+//! see `docs/reference/test-environment.md` and testing ADR 0006. Each test
 //! starts the milter under test as a child process with [`Milter::start`],
 //! drives it with [`Mta`] connections, and reads its state with
 //! [`Milter::status`] and from `/proc`.
