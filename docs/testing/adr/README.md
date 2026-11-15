@@ -9,5 +9,6 @@ Decisions about how rust-milter is tested: test environments, CI, and test tooli
 | [0003](0003-interop-stack-resolves-names-with-a-local-unbound.md) | The interoperability stack resolves names with a local Unbound | Accepted |
 | [0004](0004-test-server-takes-values-and-waits-for-named-states.md) | The test server takes values and waits for named states | Accepted |
 | [0005](0005-dependency-advisories-are-checked-daily.md) | Dependency advisories are checked every day | Accepted |
+| [0006](0006-load-and-chaos-tests-run-weekly-against-a-child-process-milter.md) | Load and chaos tests run weekly, against a milter started as a child process | Accepted |
 
 Conventions are the same as for the [product ADRs](../../adr/README.md), with their own numbering from 0001. Refer to a record here as "testing ADR NNNN", so it is not confused with a product ADR of the same number.
