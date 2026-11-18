@@ -1,4 +1,4 @@
-//! Callback and decision scenarios (ENG-020 to ENG-033) from
+//! Callback and decision scenarios (ENG-020 to ENG-033, and ENG-118) from
 //! `docs/testing/protocol-engine.md`.
 
 mod support;
@@ -234,12 +234,13 @@ impl Handler for SkipsBody {
     }
 }
 
-/// Sends three body chunks and end of message; returns the reply codes.
-async fn three_chunks(protocol: u32, log: &Log) -> Vec<u8> {
+/// Negotiates `version` with the MTA's `protocol` flags, then sends three
+/// body chunks and end of message; returns the reply codes.
+async fn three_chunks(version: u32, protocol: u32, log: &Log) -> Vec<u8> {
     let handler = SkipsBody(log.clone());
     let server = TestServer::start(handler).await;
     let mut mta = server.mta().await;
-    mta.optneg(6, SMFI_CURR_ACTS, protocol).await.unwrap();
+    mta.optneg(version, SMFI_CURR_ACTS, protocol).await.unwrap();
     mta.reach_after_negotiation(Reach::Eohs).await;
 
     let mut replies = Vec::new();
@@ -259,7 +260,7 @@ async fn three_chunks(protocol: u32, log: &Log) -> Vec<u8> {
 async fn eng_025_skip_sends_smfir_skip_when_the_mta_offered_it() {
     let log = Log::default();
 
-    let replies = three_chunks(SMFI_CURR_PROT, &log).await;
+    let replies = three_chunks(6, SMFI_CURR_PROT, &log).await;
 
     assert_eq!(replies[0], SMFIR_SKIP);
     assert_eq!(replies[3], SMFIR_CONTINUE);
@@ -270,7 +271,17 @@ async fn eng_025_skip_sends_smfir_skip_when_the_mta_offered_it() {
 async fn eng_026_skip_continues_when_the_mta_did_not_offer_it() {
     let log = Log::default();
 
-    let replies = three_chunks(SMFI_CURR_PROT & !SMFIP_SKIP, &log).await;
+    let replies = three_chunks(6, SMFI_CURR_PROT & !SMFIP_SKIP, &log).await;
+
+    assert_eq!(replies, [SMFIR_CONTINUE; 4]);
+    assert_eq!(log.events(), ["body", "end_of_message"]);
+}
+
+#[tokio::test]
+async fn eng_118_skip_continues_below_version_6_even_when_the_mta_offered_it() {
+    let log = Log::default();
+
+    let replies = three_chunks(4, SMFI_CURR_PROT, &log).await;
 
     assert_eq!(replies, [SMFIR_CONTINUE; 4]);
     assert_eq!(log.events(), ["body", "end_of_message"]);
