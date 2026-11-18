@@ -72,4 +72,4 @@ Negative:
 - [Load and chaos scenarios](../load-and-chaos.md)
 - [Testing ADR 0001](0001-interop-tests-run-on-distro-mtas-in-compose-on-every-pr.md), the interoperability stack this one follows
 - [tcp-server.md, Load tests](../../reference/tcp-server.md#load-tests)
-- [api-specification.md, Performance characteristics](../../reference/api-specification.md#performance-characteristics)
+- [API reference: Performance characteristics](https://photom.github.io/rust-milter/rust_milter/index.html#performance-characteristics)
