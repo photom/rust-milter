@@ -1,6 +1,11 @@
 //! Milter protocol constants, spelled as libmilter's `mfdef.h` spells them.
 //!
-//! The values are listed in `docs/reference/milter-protocol.md`.
+//! The module holds the `SMFIC_*` commands, `SMFIR_*` replies, `SMFIF_*`
+//! action flags, `SMFIP_*` protocol flags, `SMFIM_*` macro stages, `SMFIA_*`
+//! address families, and the `SMFI_*` versions and flag sets. The values are
+//! listed in [milter-protocol.md: Protocol constants summary].
+//!
+//! [milter-protocol.md: Protocol constants summary]: https://github.com/photom/rust-milter/blob/main/docs/reference/milter-protocol.md#protocol-constants-summary
 
 /// Abort the current message.
 pub const SMFIC_ABORT: u8 = b'A';
