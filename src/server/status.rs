@@ -52,7 +52,8 @@ pub struct Status {
     /// Bytes read from MTA connections since `run()` started, counted as they
     /// arrive.
     pub bytes_received: u64,
-    /// Bytes written to MTA connections, counted as they are written.
+    /// Bytes written to MTA connections since `run()` started, counted as
+    /// they are written.
     pub bytes_sent: u64,
     /// Closed connections by `milter.close_reason`, and for the reason
     /// `error` by `error.type`.

@@ -52,11 +52,13 @@ impl<H: Handler> SessionContext<H> {
     ///
     /// A one-letter name matches with or without braces, as in libmilter: `i`
     /// and `{i}` name the same macro. The lookup starts at the current
-    /// command's stage, then goes through the earlier stages in protocol
-    /// order: `C`, `H`, `M`, `R`, `T`, `L`, `N`, `B`, `E`. In
-    /// [`Handler::unknown`], [`Handler::abort`], and [`Handler::session_end`],
-    /// it looks in every stage, the latest first, starting with `U`. Which
-    /// macros the library keeps, and for how long, is in the Macros row of
+    /// command's stage and goes back through the earlier stages, the latest
+    /// first. In protocol order the stages are `C`, `H`, `M`, `R`, `T`, `L`,
+    /// `N`, `B`, and `E`, so at `R` the lookup reads `R`, `M`, `H`, then `C`.
+    /// In [`Handler::unknown`], [`Handler::abort`], and
+    /// [`Handler::session_end`], it looks in every stage, the latest first,
+    /// starting with `U`. Which macros the library keeps, and for how long,
+    /// is in the Macros row of
     /// [Protocol engine behavior](Handler#protocol-engine-behavior).
     pub fn macro_value(&self, name: &str) -> Option<&MilterText> {
         self.macros.get(name, self.stage)

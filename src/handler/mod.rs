@@ -371,8 +371,9 @@ pub enum BodyDecision {
     /// Accept the message from the client and drop it.
     Discard,
     /// Receive no more body chunks and go on to the end of the message. If
-    /// the MTA did not offer `SMFIP_SKIP`, the library sends `Continue` and
-    /// stops calling `body` for this message.
+    /// the MTA did not offer `SMFIP_SKIP`, or the negotiated version is
+    /// below 6, the library sends `Continue` and stops calling `body` for
+    /// this message.
     Skip,
 }
 
