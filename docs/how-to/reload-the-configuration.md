@@ -1,6 +1,6 @@
 # Reload the configuration without a restart
 
-This guide follows [api-specification.md](../reference/api-specification.md) and [hot-reload.md](../reference/hot-reload.md). rust-milter is not on crates.io yet, so the guide takes it from its GitHub repository.
+This guide follows the API reference of [`ReloadLoader`](https://photom.github.io/rust-milter/rust_milter/trait.ReloadLoader.html) and [hot-reload.md](../reference/hot-reload.md). rust-milter is not on crates.io yet, so the guide takes it from its GitHub repository.
 
 This guide shows how to make a rust-milter server reread its configuration file on `SIGHUP`. It assumes you already have a working milter, such as the one from [Getting started](../tutorials/getting-started.md).
 

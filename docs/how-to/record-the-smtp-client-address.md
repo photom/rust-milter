@@ -1,6 +1,6 @@
 # Record the SMTP client's address
 
-This guide follows [api-specification.md](../reference/api-specification.md) and [telemetry.md](../reference/telemetry.md).
+This guide follows the API reference of [`ConnectInfo`](https://photom.github.io/rust-milter/rust_milter/struct.ConnectInfo.html) and [telemetry.md](../reference/telemetry.md).
 
 rust-milter never records the SMTP client's address in its own logs, metrics, or spans. This guide shows how your handler records it when your application needs it, for example to investigate abuse.
 

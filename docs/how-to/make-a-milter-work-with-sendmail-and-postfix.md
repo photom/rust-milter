@@ -1,6 +1,6 @@
 # Make a milter work with both Sendmail and Postfix
 
-This guide follows [milter-protocol.md](../reference/milter-protocol.md) and [api-specification.md](../reference/api-specification.md).
+This guide follows [milter-protocol.md](../reference/milter-protocol.md) and the [API reference](https://photom.github.io/rust-milter/rust_milter/index.html).
 
 This guide lists what a rust-milter handler author must do so that the same milter behaves correctly behind Sendmail and behind Postfix.
 

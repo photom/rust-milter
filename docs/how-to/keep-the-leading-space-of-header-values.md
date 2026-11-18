@@ -1,6 +1,6 @@
 # Keep the leading space of header values
 
-This guide follows [api-specification.md](../reference/api-specification.md#negotiation-methods).
+This guide follows the API reference of [`ProtocolOptions`](https://photom.github.io/rust-milter/rust_milter/struct.ProtocolOptions.html).
 
 By default, Sendmail and Postfix remove one space from the front of each header value before your handler sees it, and add one in front of each value your handler adds or changes. This guide shows how a handler that needs the exact bytes, such as a DKIM verifier or signer, turns that off. [Whitespace in header values](../explanation/header-whitespace.md) explains with examples why the bytes change.
 

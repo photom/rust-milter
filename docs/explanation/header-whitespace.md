@@ -1,6 +1,6 @@
 # Whitespace in header values
 
-Why a handler receives header values with or without their leading space, why DKIM needs the space, and why rust-milter closes the connection when the MTA cannot keep it. The rules are in [api-specification.md, Negotiation methods](../reference/api-specification.md#negotiation-methods) and [milter-protocol.md, Headers and body](../reference/milter-protocol.md#headers-and-body), and the decision is in [ADR 0020](../adr/0020-protocol-options-are-a-fixed-handler-method-and-close-when-missing.md).
+Why a handler receives header values with or without their leading space, why DKIM needs the space, and why rust-milter closes the connection when the MTA cannot keep it. The rules are in the API reference of [`ProtocolOptions`](https://photom.github.io/rust-milter/rust_milter/struct.ProtocolOptions.html) and [milter-protocol.md, Headers and body](../reference/milter-protocol.md#headers-and-body), and the decision is in [ADR 0020](../adr/0020-protocol-options-are-a-fixed-handler-method-and-close-when-missing.md).
 
 ## The space after the colon belongs to the value
 
