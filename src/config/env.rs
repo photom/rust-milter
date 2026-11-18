@@ -15,7 +15,10 @@ impl ServerConfig {
     /// variable that starts with `prefix`, such as `RUST_MILTER_`.
     ///
     /// The helpers check names and value formats only; [`ServerConfig::validate`]
-    /// runs the validation rules.
+    /// runs the validation rules. The variable names and value formats are
+    /// in [configuration.md: Environment variables].
+    ///
+    /// [configuration.md: Environment variables]: https://github.com/photom/rust-milter/blob/main/docs/reference/configuration.md#environment-variables
     pub fn from_env(prefix: &str) -> Result<ServerConfig, ConfigError> {
         ServerConfig::from_vars(prefix, process_vars(prefix)?)
     }
@@ -27,7 +30,8 @@ impl ServerConfig {
     }
 
     /// Like [`ServerConfig::from_env`], but reads the given name and value
-    /// pairs instead of the process environment.
+    /// pairs instead of the process environment. `vars` is any iterator of
+    /// name and value pairs.
     pub fn from_vars<I, K, V>(prefix: &str, vars: I) -> Result<ServerConfig, ConfigError>
     where
         I: IntoIterator<Item = (K, V)>,

@@ -28,13 +28,14 @@ const REUSE_PORT_SUPPORTED: bool = cfg!(any(
 ));
 
 impl ServerConfig {
-    /// Checks the configuration against the validation rules in
-    /// `docs/reference/configuration.md`: every value in its range,
-    /// `bind_addresses` not empty and without duplicates, no IPv4 address
-    /// next to a dual-stack `[::]` on its port, `max_memory` large enough,
-    /// and `reuse_port` only where the platform supports it.
+    /// Checks the configuration against the [validation rules]: every value
+    /// in its range, `bind_addresses` not empty and without duplicates, no
+    /// IPv4 address next to a dual-stack `[::]` on its port, `max_memory`
+    /// large enough, and `reuse_port` only where the platform supports it.
     ///
     /// The server runs the same checks when it is built and on every reload.
+    ///
+    /// [validation rules]: https://github.com/photom/rust-milter/blob/main/docs/reference/configuration.md#validation-rules
     pub fn validate(&self) -> Result<(), ConfigError> {
         if self.bind_addresses.is_empty() {
             return Err(ConfigError::MissingBindAddress);

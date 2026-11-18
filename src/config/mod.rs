@@ -17,6 +17,21 @@ use std::time::Duration;
 /// Every field is public and has a default, so a configuration can be built
 /// with `..ServerConfig::default()`. `bind_addresses` has no useful default and
 /// must be set; [`ServerConfig::validate`] reports a configuration without one.
+///
+/// [configuration.md] specifies each setting: its type, default, valid range,
+/// and what a reload does to it, with the file format of the `serde` feature
+/// and the environment variables. The procedure of a reload is in
+/// [hot-reload.md].
+///
+/// | Method | Does |
+/// |--------|------|
+/// | [`validate`](ServerConfig::validate) | Runs the validation rules that a build and every reload also run |
+/// | [`parse_bind_address`](ServerConfig::parse_bind_address) | Parses a bind address in one of the forms an MTA configuration uses |
+/// | [`from_env`](ServerConfig::from_env), [`apply_env`](ServerConfig::apply_env) | Build or override a configuration from environment variables |
+/// | [`from_vars`](ServerConfig::from_vars), [`apply_vars`](ServerConfig::apply_vars) | The same, from name and value pairs the caller gives |
+///
+/// [configuration.md]: https://github.com/photom/rust-milter/blob/main/docs/reference/configuration.md
+/// [hot-reload.md]: https://github.com/photom/rust-milter/blob/main/docs/reference/hot-reload.md
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(
     feature = "serde",
