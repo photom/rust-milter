@@ -3,46 +3,64 @@
 use crate::{Actions, ProtocolOptions};
 
 /// The library's error type.
+///
+/// The library's errors are `thiserror` enums. Every error type implements
+/// `std::error::Error`, `Display`, and `Debug`, is `Send + Sync + 'static`,
+/// and keeps its cause in `source()`. Each variant below says what it does
+/// to the connection or the call that returns it.
+///
+/// A reload fails with a [`ReloadError`] instead, and a reload during
+/// shutdown with [`ReloadError::ShuttingDown`]. [`Error::Handler`] and
+/// [`ReloadError::Load`] box errors whose types belong to the application,
+/// except the one `Load` holds for a loader that panicked. They are the only
+/// boxed errors in the public API.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
-    /// A socket read or write failed.
+    /// A socket read or write failed. The connection closes.
     #[error("socket error")]
     Io(#[source] std::io::Error),
 
     /// The MTA sent a malformed frame, an unknown command, or a command in
-    /// the wrong state.
+    /// the wrong state, or option negotiation failed. The connection closes.
     #[error("protocol error")]
     Protocol(#[from] ProtocolError),
 
-    /// A modification method was called without its action negotiated.
+    /// An [`EomContext`](crate::EomContext) modification method was called
+    /// without its action negotiated. The method fails, and the connection
+    /// stays open.
     #[error("the action {0:?} was not negotiated")]
     ActionNotNegotiated(Actions),
 
     /// A callback returned an error. Build it with [`Error::handler`].
-    /// rust-milter logs it with its source chain.
+    /// rust-milter logs it with its source chain, and the connection closes.
     #[error("the handler failed")]
     Handler(#[source] Box<dyn std::error::Error + Send + Sync>),
 
-    /// A `Handler` method panicked. The panic's message is not kept, because
-    /// it can hold data from an SMTP session (ADR 0018).
+    /// A [`Handler`](crate::Handler) method panicked. The panic's message is
+    /// not kept, because it can hold data from an SMTP session ([ADR 0018]).
+    /// The connection closes, with no further callback.
+    ///
+    /// [ADR 0018]: https://github.com/photom/rust-milter/blob/main/docs/adr/0018-panics-in-handler-code-and-the-reload-loader-are-caught.md
     #[error("a handler method panicked")]
     HandlerPanic,
 
-    /// A connection timeout expired.
+    /// A connection timeout expired: `Connect`, `Read`, `Write`, or `Idle`.
+    /// The connection closes.
     #[error("the {0} timeout expired")]
     Timeout(TimeoutKind),
 
-    /// The MTA closed the connection in the middle of a frame.
+    /// The MTA closed the connection in the middle of a frame. The
+    /// connection closes.
     #[error("the connection closed in the middle of a frame")]
     ConnectionClosed,
 
-    /// The MTA reset the connection.
+    /// The MTA reset the connection. The connection closes.
     #[error("the connection was reset")]
     ConnectionReset,
 
     /// A packet is longer than `per_connection_buffer`, or the first packet
-    /// of a connection is longer than 1,024 bytes.
+    /// of a connection is longer than 1,024 bytes. The connection closes.
     #[error("a {length}-byte packet exceeds the {max}-byte limit")]
     FrameTooLarge {
         /// Length of the whole packet, length field included.
@@ -51,25 +69,32 @@ pub enum Error {
         max: usize,
     },
 
-    /// A reply cannot be encoded: it breaks the protocol's format rules or
-    /// a rule that Sendmail or Postfix enforces.
+    /// [`Reply::to_frame`](crate::Reply::to_frame) refused a reply that
+    /// breaks the protocol's format rules or a rule that Sendmail or Postfix
+    /// enforces. The reply is not sent.
     #[error("invalid reply")]
     InvalidReply(#[from] ReplyError),
 
-    /// The configuration is invalid.
+    /// The configuration is invalid at build time:
+    /// [`ServerBuilder::build`](crate::ServerBuilder::build) fails.
     #[error("invalid configuration")]
     Config(#[from] ConfigError),
 
-    /// A resource limit was reached.
+    /// A resource limit was reached. [`ResourceKind::MaxMemory`]: a
+    /// reservation would pass `max_memory`.
+    /// [`ResourceKind::PerConnectionBuffer`]: a command (its frame plus the
+    /// strings decoded from it) or a connection's stored macros would cost
+    /// more than `per_connection_buffer`. The connection closes.
     #[error("the {0} limit was reached")]
     ResourceLimit(ResourceKind),
 
-    /// `run()` could not register the handlers for the shutdown signals and
-    /// `SIGHUP`.
+    /// [`Server::run`](crate::Server::run) could not register the handlers
+    /// for `SIGTERM`, `SIGINT`, `SIGQUIT`, and `SIGHUP`. `run()` fails.
     #[error("cannot register the signal handlers")]
     Signals(#[source] std::io::Error),
 
-    /// A listener could not bind its address.
+    /// A listener could not bind its address. `run()` fails in `FailFast`
+    /// mode, and in `BestEffort` mode when no address binds.
     #[error("cannot bind {addr}")]
     Bind {
         /// The address.
@@ -81,7 +106,8 @@ pub enum Error {
 }
 
 impl Error {
-    /// Wraps a handler's own error as [`Error::Handler`].
+    /// Wraps a handler's own error as [`Error::Handler`]. It accepts any
+    /// `std::error::Error + Send + Sync + 'static`.
     ///
     /// rust-milter writes the error and its source chain into the WARN
     /// "Connection closed" log. Keep SMTP data, such as addresses, header
@@ -112,7 +138,7 @@ impl Error {
     }
 }
 
-/// Which connection timeout expired; see `TimeoutConfig`.
+/// Which connection timeout expired; see [`TimeoutConfig`](crate::TimeoutConfig).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum TimeoutKind {
@@ -137,7 +163,8 @@ impl std::fmt::Display for TimeoutKind {
     }
 }
 
-/// Which resource limit was reached; see `ResourceLimitsConfig`.
+/// Which resource limit was reached; see
+/// [`ResourceLimitsConfig`](crate::ResourceLimitsConfig).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ResourceKind {
@@ -174,8 +201,8 @@ pub enum ReplyError {
     #[error("text that must be one line contains CR or LF")]
     LineBreak,
 
-    /// A line of reply text, with each `%` written as `%%`, is longer than 980
-    /// bytes.
+    /// A line of reply text is longer than 980 bytes with each `%` written as
+    /// `%%`.
     #[error("a {length}-byte line of reply text exceeds 980 bytes")]
     LineTooLong {
         /// Length of the line, in bytes.
@@ -205,16 +232,17 @@ pub enum ReplyError {
     #[error("an address or reason is empty")]
     EmptyField,
 
-    /// A body chunk is longer than one frame can carry.
+    /// A `ReplaceBody` chunk is longer than 65,535 bytes, the most one frame
+    /// carries.
     #[error("a {length}-byte body chunk exceeds 65,535 bytes")]
     BodyChunkTooLarge {
         /// Length of the chunk.
         length: usize,
     },
 
-    /// Reply text breaks the SMTP line rules: each line needs a 4xx or 5xx
-    /// code, the same code on every line, then `-` on a line that is not the
-    /// last and a space on the last.
+    /// [`Reply::ReplyCode`](crate::Reply::ReplyCode) text breaks the SMTP
+    /// line rules: each line needs a 4xx or 5xx code, the same code on every
+    /// line, then `-` on a line that is not the last and a space on the last.
     #[error("reply text breaks the SMTP reply line rules")]
     MalformedReplyText,
 
@@ -224,7 +252,8 @@ pub enum ReplyError {
     #[error("the enhanced status code does not match the reply code")]
     EnhancedCodeMismatch,
 
-    /// Reply text holds a `%` that is not written as `%%`.
+    /// [`Reply::ReplyCode`](crate::Reply::ReplyCode) text holds a `%` that is
+    /// not written as `%%`.
     #[error("reply text contains a single %; write it as %%")]
     UnescapedPercent,
 }
@@ -249,7 +278,9 @@ pub enum ProtocolError {
     #[error("unknown command code 0x{0:02x}")]
     UnknownCommand(u8),
 
-    /// A command in a state where it closes the connection (ADR 0015).
+    /// A command in a state where it closes the connection ([ADR 0015]).
+    ///
+    /// [ADR 0015]: https://github.com/photom/rust-milter/blob/main/docs/adr/0015-commands-in-wrong-state-follow-libmilter-or-close.md
     #[error("command {} in a wrong state", char::from(*.command))]
     WrongState {
         /// The command code.
@@ -260,18 +291,29 @@ pub enum ProtocolError {
     #[error("protocol version {0} is below 2")]
     VersionTooOld(u32),
 
-    /// The MTA did not offer every action in `Handler::actions()`.
+    /// The MTA did not offer every action in
+    /// [`Handler::actions`](crate::Handler::actions); holds the missing
+    /// actions.
     #[error("the MTA did not offer the actions {0:?}")]
     ActionsNotOffered(Actions),
 
-    /// The MTA did not offer every option in `Handler::protocol_options()`,
-    /// or the negotiated protocol version is below 6. Holds the missing
-    /// options.
+    /// The MTA did not offer every option in
+    /// [`Handler::protocol_options`](crate::Handler::protocol_options), or the
+    /// negotiated protocol version is below 6. Holds the missing options.
     #[error("the MTA did not offer the options {0:?} at protocol version 6")]
     OptionsNotOffered(ProtocolOptions),
 }
 
-/// Why a configuration is invalid.
+/// Why a configuration is invalid, from [`ServerConfig::validate`], the
+/// environment variable helpers, or a build or reload that validates.
+///
+/// [`ServerConfig::parse_bind_address`] returns an [`AddressError`] of its
+/// own. The file format and the environment variables report an address
+/// that does not parse as their own error, which names the address's
+/// position or text: a serde error, or [`ConfigError::InvalidEnvValue`].
+///
+/// [`ServerConfig::validate`]: crate::ServerConfig::validate
+/// [`ServerConfig::parse_bind_address`]: crate::ServerConfig::parse_bind_address
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ConfigError {
@@ -279,7 +321,9 @@ pub enum ConfigError {
     #[error("bind_addresses is empty")]
     MissingBindAddress,
 
-    /// A value is outside its range in `docs/reference/configuration.md`.
+    /// A value is outside its range in [configuration.md].
+    ///
+    /// [configuration.md]: https://github.com/photom/rust-milter/blob/main/docs/reference/configuration.md#serverconfig-reference
     #[error("{field} is {value}; allowed: {allowed}")]
     OutOfRange {
         /// The setting's path, such as `timeouts.connect`.
@@ -294,7 +338,8 @@ pub enum ConfigError {
     #[error("{0} appears twice in bind_addresses")]
     DuplicateBindAddress(std::net::SocketAddr),
 
-    /// A rule across several settings failed.
+    /// A rule across several settings failed, such as `max_memory` smaller
+    /// than `per_connection_buffer`.
     #[error("{rule}: {detail}")]
     Inconsistent {
         /// The rule, such as `max_memory`.
@@ -303,7 +348,7 @@ pub enum ConfigError {
         detail: String,
     },
 
-    /// The platform does not support a setting.
+    /// The platform does not support a setting, such as `reuse_port`.
     #[error("{field} is not supported: {reason}")]
     Unsupported {
         /// The setting's path.
@@ -343,8 +388,13 @@ impl ConfigError {
     }
 }
 
-/// Why a reload failed. Every variant leaves the server running with the
-/// previous configuration generation.
+/// Why a reload failed, from [`ServerHandle::reload`] or
+/// [`ServerHandle::reload_with_config`]. Every variant leaves the server
+/// running with the previous configuration generation, and none ends
+/// [`Server::run`](crate::Server::run).
+///
+/// [`ServerHandle::reload`]: crate::ServerHandle::reload
+/// [`ServerHandle::reload_with_config`]: crate::ServerHandle::reload_with_config
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ReloadError {
@@ -352,7 +402,8 @@ pub enum ReloadError {
     #[error("no reload loader is registered")]
     NoLoader,
 
-    /// The application's loader failed.
+    /// The application's loader failed or panicked. Its error, or one that
+    /// says it panicked, is kept as the source.
     #[error("the reload loader failed")]
     Load(#[source] Box<dyn std::error::Error + Send + Sync>),
 
@@ -360,12 +411,13 @@ pub enum ReloadError {
     #[error("invalid configuration")]
     Validation(#[source] ConfigError),
 
-    /// The new configuration changes settings that require a restart;
-    /// nothing was applied.
+    /// The new configuration changes settings that require a restart, and
+    /// nothing was applied. The message lists the settings.
     #[error("changing {} requires a restart; nothing was applied", .settings.join(", "))]
     RestartRequired {
-        /// The changed settings, in the order of the configuration
-        /// reference.
+        /// The changed settings, in the order of the [ServerConfig reference].
+        ///
+        /// [ServerConfig reference]: https://github.com/photom/rust-milter/blob/main/docs/reference/configuration.md#serverconfig-reference
         settings: Vec<&'static str>,
     },
 
@@ -389,7 +441,8 @@ pub enum ReloadError {
     ShuttingDown,
 }
 
-/// Why a bind address could not be parsed.
+/// Why [`ServerConfig::parse_bind_address`](crate::ServerConfig::parse_bind_address)
+/// could not parse a bind address.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum AddressError {

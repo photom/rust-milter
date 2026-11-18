@@ -9,11 +9,25 @@ use std::time::{Duration, Instant, SystemTime};
 use crate::Error;
 use crate::engine::Traffic;
 
-/// A snapshot of the server's state.
+/// A snapshot of the server's state, from
+/// [`ServerHandle::status`](crate::ServerHandle::status).
+///
+/// It is `#[non_exhaustive]`, so counters can be added.
+///
+/// The lists hold the counts that are not zero, with the attribute values of
+/// [telemetry.md: Attribute values], in the order of its tables. Each count
+/// is the value of a metric in [telemetry.md: Status counters], so
+/// `status()` gives an application without OpenTelemetry the same numbers
+/// ([ADR 0004]).
+///
+/// [telemetry.md: Attribute values]: https://github.com/photom/rust-milter/blob/main/docs/reference/telemetry.md#attribute-values
+/// [telemetry.md: Status counters]: https://github.com/photom/rust-milter/blob/main/docs/reference/telemetry.md#status-counters
+/// [ADR 0004]: https://github.com/photom/rust-milter/blob/main/docs/adr/0004-metrics-come-from-opentelemetry-and-status.md
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Status {
-    /// `run()` has bound and no shutdown has started.
+    /// The server is accepting connections: `run()` has bound the listeners
+    /// and no shutdown has started.
     pub accepting: bool,
     /// Open connections.
     pub connections: usize,
@@ -25,14 +39,18 @@ pub struct Status {
     pub shutting_down: bool,
     /// One entry per address in `bind_addresses`, in their order.
     pub listeners: Vec<ListenerStatus>,
-    /// The current configuration generation, starting at 1.
+    /// The current configuration generation, starting at 1
+    /// ([hot-reload.md: Logging and metrics]).
+    ///
+    /// [hot-reload.md: Logging and metrics]: https://github.com/photom/rust-milter/blob/main/docs/reference/hot-reload.md#logging-and-metrics
     pub config_generation: u64,
     /// Connections accepted since `run()` started, rejected ones included.
     pub connections_accepted: u64,
     /// Connections closed at once because `max_connections` or
     /// `max_memory` was reached.
     pub connections_rejected: u64,
-    /// Bytes read from MTA connections, counted as they arrive.
+    /// Bytes read from MTA connections since `run()` started, counted as they
+    /// arrive.
     pub bytes_received: u64,
     /// Bytes written to MTA connections, counted as they are written.
     pub bytes_sent: u64,
@@ -52,7 +70,11 @@ pub struct Status {
     pub last_reload: Option<SystemTime>,
 }
 
-/// The state of one listener.
+/// The state of one listener, in [`Status::listeners`].
+///
+/// It is `#[non_exhaustive]`. A listener's counts continue when a reload
+/// keeps its address, and start at zero for an address the server had no
+/// listener on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ListenerStatus {
