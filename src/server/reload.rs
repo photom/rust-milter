@@ -16,7 +16,8 @@ use super::status::{Counters, Source};
 use crate::{ReloadError, ServerConfig};
 
 /// A new server configuration and application configuration, returned by a
-/// reload loader or passed to `ServerHandle::reload_with_config`.
+/// [`ReloadLoader`] or passed to
+/// [`ServerHandle::reload_with_config`](crate::ServerHandle::reload_with_config).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Reloaded<A> {
     /// The new server configuration.
@@ -25,13 +26,18 @@ pub struct Reloaded<A> {
     pub app: A,
 }
 
-/// The result of a reload that was applied.
+/// The result of a reload that was applied, from
+/// [`ServerHandle::reload`](crate::ServerHandle::reload) or
+/// [`ServerHandle::reload_with_config`](crate::ServerHandle::reload_with_config).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ReloadReport {
     /// The generation after the reload.
     pub generation: u64,
-    /// The names of the changed settings.
+    /// The names of the changed settings, as their paths in
+    /// [configuration.md].
+    ///
+    /// [configuration.md]: https://github.com/photom/rust-milter/blob/main/docs/reference/configuration.md#serverconfig-reference
     pub changed: Vec<&'static str>,
     /// The listeners the reload bound.
     pub listeners_added: Vec<SocketAddr>,
@@ -47,9 +53,14 @@ pub struct ReloadReport {
 /// [`ServerHandle::reload`](crate::ServerHandle::reload). Register it with
 /// [`ServerBuilder::reload_with`](crate::ServerBuilder::reload_with).
 ///
-/// The loader only reads and checks. rust-milter validates and applies what
-/// it returns, and can still reject the reload, so the loader must not
-/// change state that other code reads.
+/// The trait requires `Send + Sync + 'static`. The loader only reads and
+/// checks. rust-milter validates and applies what it returns, and can still
+/// reject the reload, so the loader must not change state that other code
+/// reads. An example loader is in [Reload the configuration without a
+/// restart][how-to], and the reload procedure in [hot-reload.md].
+///
+/// [how-to]: https://github.com/photom/rust-milter/blob/main/docs/how-to/reload-the-configuration.md#write-a-loader
+/// [hot-reload.md]: https://github.com/photom/rust-milter/blob/main/docs/reference/hot-reload.md
 pub trait ReloadLoader<A>: Send + Sync + 'static {
     /// Why a load failed. The reload then fails with
     /// [`ReloadError::Load`], which keeps this error as its source.
@@ -60,7 +71,13 @@ pub trait ReloadLoader<A>: Send + Sync + 'static {
     /// errors it wraps.
     type Error: std::error::Error + Send + Sync + 'static;
 
-    /// Reads the new configurations. Implement it as an `async fn`.
+    /// Reads the new configurations. Implement it as an `async fn`; its
+    /// future must be `Send`.
+    ///
+    /// A panic in it fails the reload with [`ReloadError::Load`]
+    /// ([ADR 0018]).
+    ///
+    /// [ADR 0018]: https://github.com/photom/rust-milter/blob/main/docs/adr/0018-panics-in-handler-code-and-the-reload-loader-are-caught.md
     fn load(&self) -> impl Future<Output = Result<Reloaded<A>, Self::Error>> + Send;
 }
 
