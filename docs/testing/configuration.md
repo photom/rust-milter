@@ -15,7 +15,7 @@ Scenarios for configuration validation, address parsing, and the serde file form
 | CFG-007 | unit | Two listeners, `max_connections` 1,000, and `max_fds` 1,011 or 1,012 | each is validated | Withdrawn: [ADR 0012](../adr/0012-no-file-descriptor-limit-setting.md) removed `max_fds`. CFG-053 and CFG-096 check that it is gone | [configuration: Validation rules](../reference/configuration.md#validation-rules) |
 | CFG-008 | unit | `max_memory` smaller than `per_connection_buffer` | it is validated | `Inconsistent` | [configuration: Validation rules](../reference/configuration.md#validation-rules) |
 | CFG-009 | unit | `reuse_port` true on a platform without `SO_REUSEPORT` (skipped where it is supported) | it is validated | `Unsupported` naming `reuse_port` | [configuration: Validation rules](../reference/configuration.md#validation-rules) |
-| CFG-010 | integration | An invalid configuration and a leased test port | `build()` is called | an error is returned, and the port can still be bound by the test, so no socket was opened | [api: Server](../reference/api-specification.md#server) |
+| CFG-010 | integration | An invalid configuration and a leased test port | `build()` is called | an error is returned, and the port can still be bound by the test, so no socket was opened | [api: Server](https://photom.github.io/rust-milter/rust_milter/struct.Server.html) |
 | CFG-028 | unit | `0.0.0.0:8891` and `[::]:8891` with `ipv6_only` false, the same with `127.0.0.1:8891`, and both with `ipv6_only` true | each is validated | the first two fail with `Inconsistent` naming `ipv6_only`; with `ipv6_only` true they are valid, and so is `[::1]:8891` next to `127.0.0.1:8891` | [configuration: Validation rules](../reference/configuration.md#validation-rules) |
 
 ## Address parsing
@@ -25,7 +25,7 @@ Scenarios for configuration validation, address parsing, and the serde file form
 | CFG-020 | unit | `127.0.0.1:8891`, `[::1]:8891`, `inet:8891@127.0.0.1`, `inet6:8891@::1` | each is parsed | the matching socket address | [configuration: Top level](../reference/configuration.md#top-level) |
 | CFG-021 | unit | `unix:/run/milter.sock` and `local:/run/milter.sock` | each is parsed | `InvalidFormat` | [configuration: Top level](../reference/configuration.md#top-level) |
 | CFG-022 | unit | Ports 0 and 70000 | each is parsed | `InvalidPort` | [configuration: Top level](../reference/configuration.md#top-level) |
-| CFG-023 | unit | `inet:8891@not a host` | it is parsed | `InvalidHost` | [api: ConfigError](../reference/api-specification.md#configerror) |
+| CFG-023 | unit | `inet:8891@not a host` | it is parsed | `InvalidHost` | [api: AddressError](https://photom.github.io/rust-milter/rust_milter/enum.AddressError.html) |
 | CFG-024 | unit | `inet:8891@::1` and `inet6:8891@127.0.0.1`, a host of the other family | each is parsed | `InvalidHost` | [configuration: Top level](../reference/configuration.md#top-level) |
 | CFG-025 | unit | `inet:8891` and `inet6:8891`, libmilter's forms without a host | each is parsed | `0.0.0.0:8891` and `[::]:8891`, every address of the family | [configuration: Top level](../reference/configuration.md#top-level) |
 | CFG-026 | unit | `[fe80::1%2]:8891`, an IPv6 address with a scope ID | it is parsed | the address with scope ID 2, so text written from such an address reads back | [configuration: Top level](../reference/configuration.md#top-level) |
