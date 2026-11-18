@@ -291,7 +291,7 @@ gantt
 
 ## Connection handling
 
-The handler API (the `Handler` callbacks and `ConnectionInfo`) is specified in [api-specification.md](api-specification.md). Handlers never touch the connection: the byte-level reads and writes, buffers, and transport states in this document are internal, and the protocol engine sits between the connection and the handler.
+The handler API is specified in the API reference of [`Handler`](https://photom.github.io/rust-milter/rust_milter/trait.Handler.html) and [`ConnectionInfo`](https://photom.github.io/rust-milter/rust_milter/struct.ConnectionInfo.html). Handlers never touch the connection: the byte-level reads and writes, buffers, and transport states in this document are internal, and the protocol engine sits between the connection and the handler.
 
 ### Connection identifier
 
@@ -348,7 +348,7 @@ Until its first packet has arrived, a connection accepts a packet of at most 1,0
 
 ## Error handling
 
-The error types and their variants are specified in [api-specification.md](api-specification.md#errors). This section covers how the server reacts to operating system errors.
+The error types and their variants are specified in the API reference, starting at [`Error`](https://photom.github.io/rust-milter/rust_milter/enum.Error.html). This section covers how the server reacts to operating system errors.
 
 ### Error recovery
 
@@ -505,7 +505,7 @@ Listener status:
 
 ## API design
 
-The server builder, the server handle, and the rest of the public API are specified in [api-specification.md](api-specification.md#server-builder-and-handle).
+The server builder, the server handle, and the rest of the public API are specified in the [API reference](https://photom.github.io/rust-milter/rust_milter/index.html), starting at [`ServerBuilder`](https://photom.github.io/rust-milter/rust_milter/struct.ServerBuilder.html) and [`ServerHandle`](https://photom.github.io/rust-milter/rust_milter/struct.ServerHandle.html).
 
 ## Testing requirements
 
