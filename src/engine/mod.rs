@@ -1,8 +1,8 @@
 //! The protocol engine: runs the Milter conversation on one connection and
 //! calls the handler, as libmilter's `mi_engine` does.
 //!
-//! The rules it follows are in "Protocol engine behavior" in
-//! `docs/reference/api-specification.md` and in ADR 0015.
+//! The rules it follows are in "Protocol engine behavior" in the doc
+//! comment of `Handler`, and in ADR 0015.
 
 mod io;
 mod macros;
