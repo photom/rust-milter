@@ -1,7 +1,7 @@
 [package]
 name = "rust-milter-docs"
 version = "0.0.0"
-description = "Compiles the Rust examples in docs/tutorials and docs/how-to as doctests"
+description = "Compiles the Rust examples in docs/tutorials and docs/how-to as doctests, and checks the links of the documents"
 publish = false
 # The library's version, as for the library's own tests: the test support
 # code in tests/support expects it. The tests build with the pinned

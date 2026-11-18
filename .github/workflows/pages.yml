@@ -1,0 +1,67 @@
+name: Pages
+
+# Publishes the API reference, the rustdoc of the library, on GitHub Pages
+# (ADR 0021). A pull request builds the site and checks its links; a push to
+# main or a manual run also deploys it. The site's root page redirects to
+# the crate's page.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build the site
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      # The library alone, with the features the API reference documents.
+      # test-support holds hooks for rust-milter's own tests and stays out.
+      - run: cargo doc -p rust-milter --no-deps --features otel,serde
+      - run: cargo run -p rust-milter-docs --no-default-features --bin check-links -- target/doc
+      - name: Assemble the site
+        run: |
+          mkdir -p _site
+          cp -R target/doc/. _site/
+          cat > _site/index.html <<'EOF'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=rust_milter/index.html"><title>rust-milter API reference</title></head>
+          <body><p><a href="rust_milter/index.html">rust-milter API reference</a></p></body>
+          </html>
+          EOF
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: _site
+
+  deploy:
+    name: Deploy
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
