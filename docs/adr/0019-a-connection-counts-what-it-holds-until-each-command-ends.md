@@ -64,6 +64,6 @@ Negative:
 ## References
 
 - [tcp-server.md, Backpressure](../reference/tcp-server.md#backpressure)
-- [api-specification.md, Protocol engine behavior](../reference/api-specification.md#protocol-engine-behavior)
+- [API reference: Handler, Protocol engine behavior](https://photom.github.io/rust-milter/rust_milter/trait.Handler.html#protocol-engine-behavior)
 - [ADR 0013](0013-the-first-packet-is-limited-to-1-kb.md)
 - [Issue #58](https://github.com/photom/rust-milter/issues/58)
