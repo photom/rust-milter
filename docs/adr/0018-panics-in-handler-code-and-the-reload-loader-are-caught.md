@@ -48,7 +48,7 @@ Negative:
 
 ## References
 
-- [api-specification.md, Callbacks](../reference/api-specification.md#callbacks)
-- [api-specification.md, Errors](../reference/api-specification.md#errors)
+- [API reference: Handler, Callbacks](https://photom.github.io/rust-milter/rust_milter/trait.Handler.html#callbacks)
+- [API reference: Error](https://photom.github.io/rust-milter/rust_milter/enum.Error.html)
 - [hot-reload.md, Reload sequence](../reference/hot-reload.md#reload-sequence)
 - [tcp-server.md, Connection lifecycle logs](../reference/tcp-server.md#connection-lifecycle-logs)

@@ -35,5 +35,5 @@ Negative:
 ## References
 
 - [tcp-server.md, Backpressure](../reference/tcp-server.md#backpressure)
-- [api-specification.md, Frame](../reference/api-specification.md#frame)
+- [API reference: Frame](https://photom.github.io/rust-milter/rust_milter/struct.Frame.html)
 - [ADR 0001](0001-commands-in-wrong-state-recover-like-libmilter-or-close.md)

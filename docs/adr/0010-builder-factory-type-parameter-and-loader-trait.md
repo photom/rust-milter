@@ -51,6 +51,6 @@ Negative:
 
 ## References
 
-- [api-specification.md, Configuration and reload API](../reference/api-specification.md#configuration-and-reload-api)
+- [API reference: ReloadLoader](https://photom.github.io/rust-milter/rust_milter/trait.ReloadLoader.html)
 - [test-environment.md, Style check](../reference/test-environment.md#style-check)
 - [Write Rust in the procedural style](../how-to/write-procedural-rust.md)

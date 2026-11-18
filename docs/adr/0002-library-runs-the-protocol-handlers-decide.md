@@ -55,7 +55,7 @@ Effect on earlier decisions:
 
 ## References
 
-- [api-specification.md, Handler trait](../reference/api-specification.md#handler-trait)
+- [API reference: Handler](https://photom.github.io/rust-milter/rust_milter/trait.Handler.html)
 - [Library architecture](../explanation/architecture.md)
 - [milter-protocol.md](../reference/milter-protocol.md)
 - Sendmail 8.19.0.2 source: `libmilter/engine.c` (`mi_engine`, `st_optionneg`, `sendreply`, `mi_sendok`), `libmilter/listener.c`, `libmilter/smfi.c`, `include/libmilter/mfapi.h`, `libmilter/docs/api.html`
