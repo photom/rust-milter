@@ -9,11 +9,26 @@ const MAX_LINES: usize = 32;
 /// The longest text a line may have, in bytes, as in libmilter.
 const MAX_LINE_LENGTH: usize = 980;
 
-/// A validated custom SMTP reply.
+/// A validated custom SMTP reply, for [`Decision::Reply`](crate::Decision::Reply)
+/// and the other decision types.
 ///
-/// The constructors check the reply as libmilter's `smfi_setreply` and
-/// `smfi_setmlreply` do. The text is taken literally: each `%` is written as
-/// `%%` on the wire, so both MTAs show the reply as written.
+/// [`ReplyCode::new`] and [`ReplyCode::multi_line`] check the reply as
+/// libmilter's `smfi_setreply` and `smfi_setmlreply` do, and fail with a
+/// [`ReplyError`]:
+/// - the code is 4xx or 5xx
+/// - the enhanced status code, if given, has the form `d.ddd.ddd` and the
+///   same first digit as the code
+/// - without an enhanced status code, no line starts with a digit other than
+///   the code's first digit, which Postfix would reject as a mismatched
+///   enhanced status code
+/// - no line contains CR, LF, or NUL, and no line is longer than 980 bytes
+///   with each `%` written as `%%`, the text libmilter's limit applies to
+/// - a multi-line reply has at most 32 lines
+///
+/// The text is taken literally. The library writes each `%` as `%%` on the
+/// wire, so a reply shows on both MTAs exactly as written. A 4xx code acts
+/// as `TempFail`, a 5xx code as `Reject`. `Reply::from(reply_code)` gives
+/// the [`Reply::ReplyCode`] that carries it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplyCode {
     /// The reply as it goes on the wire, without the terminating NUL.

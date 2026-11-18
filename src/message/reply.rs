@@ -9,10 +9,20 @@ use crate::{Frame, ReplyError, Result};
 const MAX_BODY_CHUNK: usize = 65_535;
 
 /// A reply from the milter (`SMFIR_*`), and the milter's answer to option
-/// negotiation.
+/// negotiation, in a type-safe form.
 ///
-/// This is the wire-level type. Handlers return decisions and
-/// [`ReplyCode`](crate::ReplyCode) values instead.
+/// This is a wire-level type, for tests and for the planned milter client
+/// sample. Handlers return decisions and [`ReplyCode`](crate::ReplyCode)
+/// values instead, and `Reply::from(reply_code)` gives the
+/// [`Reply::ReplyCode`] that carries a `ReplyCode`.
+///
+/// Text fields are `String`: the milter writes them, so they are always
+/// valid UTF-8.
+///
+/// The enum has no variants for `SMFIR_SHUTDOWN`, `SMFIR_CONN_FAIL`, or
+/// `SMFIR_SETSYMLIST`: Sendmail rejects the first, neither MTA accepts the
+/// second, and the third is never sent as a packet. The macro list travels
+/// in [`Reply::OptNeg`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Reply {
@@ -94,11 +104,32 @@ pub enum Reply {
 }
 
 impl Reply {
-    /// Encodes the reply as a frame.
+    /// Validates the reply and encodes it as a frame.
     ///
     /// Fails with [`Error::InvalidReply`](crate::Error::InvalidReply) when
-    /// the reply breaks a rule of the protocol or of either MTA. The
-    /// [`ReplyError`] variants list the rules.
+    /// the reply breaks a rule of the protocol or of either MTA. The checks:
+    /// - `ReplyCode` text: a 4xx or 5xx code, the multi-line rules from
+    ///   [milter-protocol.md: Multi-line reply handling], and every literal
+    ///   `%` already written as `%%`
+    /// - header names in `AddHeader` and `InsertHeader`: not empty, printable
+    ///   ASCII (33 to 126), and no colon, as RFC 5322 defines a field name.
+    ///   `ChangeHeader` names a header the MTA delivered, which can hold
+    ///   non-ASCII bytes, so its name only must not be empty or hold a colon,
+    ///   whitespace, or control characters
+    /// - header values: no CR, and LF only to fold the value, followed by a
+    ///   space or tab and more than whitespace; any other line break would
+    ///   start another header or end the header block
+    /// - addresses, ESMTP arguments, and the quarantine reason: no CR or LF,
+    ///   and addresses and the reason not empty, as libmilter's
+    ///   `smfi_addrcpt`, `smfi_delrcpt`, `smfi_chgfrom`, and
+    ///   `smfi_quarantine` require
+    /// - text fields: no NUL byte, which would end the field early on the
+    ///   wire
+    /// - `ReplaceBody` data: at most 65,535 bytes per frame
+    ///
+    /// The [`ReplyError`] variants name each failed check.
+    ///
+    /// [milter-protocol.md: Multi-line reply handling]: https://github.com/photom/rust-milter/blob/main/docs/reference/milter-protocol.md#multi-line-reply-handling
     pub fn to_frame(&self) -> Result<Frame> {
         self.validate()?;
         let mut data = BytesMut::new();

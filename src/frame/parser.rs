@@ -14,7 +14,8 @@ impl Frame {
     /// Returns the length of the whole packet, length field included, or
     /// `Ok(None)` while the frame is incomplete. Fails with
     /// [`Error::FrameTooLarge`] as soon as the length field announces a packet
-    /// longer than `max`, before the data arrives.
+    /// longer than `max`, before the data arrives, and with
+    /// [`ProtocolError::ZeroLength`] when it announces a length of 0.
     pub fn check(buf: &[u8], max: usize) -> Result<Option<usize>> {
         let Some(length_field) = buf.first_chunk::<LENGTH_FIELD>() else {
             return Ok(None);
@@ -40,7 +41,7 @@ impl Frame {
     /// Removes one frame from the front of `buf` and returns it.
     ///
     /// Returns `Ok(None)` and leaves `buf` unchanged while the frame is
-    /// incomplete.
+    /// incomplete. Fails as [`Frame::check`] does.
     pub fn parse(buf: &mut BytesMut, max: usize) -> Result<Option<Frame>> {
         let Some(packet) = Frame::check(buf, max)? else {
             return Ok(None);
