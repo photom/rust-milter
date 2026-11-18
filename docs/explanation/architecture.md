@@ -1,6 +1,6 @@
 # Library architecture
 
-How the rust-milter library is put together and why: its components, their responsibilities and interactions, and the module boundaries. The public API is in [api-specification.md](../reference/api-specification.md) and every setting is in [configuration.md](../reference/configuration.md).
+How the rust-milter library is put together and why: its components, their responsibilities and interactions, and the module boundaries. The public API is in the [API reference](https://photom.github.io/rust-milter/rust_milter/index.html) and every setting is in [configuration.md](../reference/configuration.md).
 
 ## Architecture principles
 
@@ -129,7 +129,7 @@ Dependencies: the Connection, Message, and Handler components.
 
 The `Handler` trait is where user business logic plugs in. It has one callback per protocol event, matching libmilter's `xxfi_*` callbacks, and each callback returns a decision. One handler value serves all connections; per-session and per-message data lives in the handler's `Session` and `Message` types, which the protocol engine creates and drops.
 
-The trait itself is defined in [api-specification.md](../reference/api-specification.md#handler-trait).
+The trait itself is specified in the API reference of [`Handler`](https://photom.github.io/rust-milter/rust_milter/trait.Handler.html).
 
 ### 7. Configuration
 
@@ -184,7 +184,7 @@ Responsibilities:
 - define typed error enums: `Error`, `ConfigError`, `ReloadError`, `ProtocolError`, `ReplyError`, `AddressError`
 - keep the cause of each error in `source()`
 
-The variants are listed in [api-specification.md](../reference/api-specification.md#errors).
+The variants are listed in the API reference of [`Error`](https://photom.github.io/rust-milter/rust_milter/enum.Error.html).
 
 ### Milter client sample
 
@@ -519,7 +519,7 @@ Performance targets:
 
 ## References
 
-- [API specification](../reference/api-specification.md)
+- [API reference](https://photom.github.io/rust-milter/rust_milter/index.html)
 - [Configuration specification](../reference/configuration.md)
 - [TCP server specification](../reference/tcp-server.md)
 - [Milter protocol specification](../reference/milter-protocol.md)
