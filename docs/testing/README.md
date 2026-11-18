@@ -16,7 +16,7 @@ Ordered as the components will be built:
 | [shutdown.md](shutdown.md) | Graceful and forced shutdown, signals, exit codes | `SHT` |
 | [reload.md](reload.md) | Configuration reload, listener changes, application configuration | `RLD` |
 | [telemetry.md](telemetry.md) | Metrics, traces, and the data rules | `TEL` |
-| [documentation.md](documentation.md) | Example code in the tutorials and how-to guides compiles in CI | `DOC` |
+| [documentation.md](documentation.md) | Example code in the tutorials and how-to guides compiles in CI, and links resolve | `DOC` |
 | [style.md](style.md) | The procedural style of the Rust code | `STY` |
 | [interoperability.md](interoperability.md) | rust-milter behind real Postfix and Sendmail | `INT` |
 | [load-and-chaos.md](load-and-chaos.md) | Sustained load and failure injection | `LOD`, `CHS` |
@@ -36,11 +36,11 @@ Each file groups its scenarios into tables with these columns:
 | Given | The starting state |
 | When | The single action under test |
 | Then | The observable result to check |
-| Spec | Link to the specification rule the scenario checks |
+| Spec | Link to the specification rule the scenario checks: a heading of `docs/reference/`, or an item or heading of the API reference by its Pages URL |
 
 ## Rules
 
-1. Every MUST rule and every behavior table row in `docs/reference/` has at least one scenario.
+1. Every MUST rule and every behavior table row in `docs/reference/` and in the [API reference](https://photom.github.io/rust-milter/rust_milter/index.html) has at least one scenario.
 2. A test's function name starts with its scenario ID in lowercase, such as `frm_001_parses_one_complete_frame`, so each scenario can be traced to its test and selected with `cargo test frm_001`.
 3. A test is written from its scenario before the code that makes it pass.
 4. A case found during implementation is added here first, with a new ID, then tested.
