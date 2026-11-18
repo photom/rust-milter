@@ -52,7 +52,24 @@ use crate::{BindMode, Error, Handler, ReloadError, Result, ServerConfig};
 const FIRST_GENERATION: u64 = 1;
 
 /// The milter server, generic over the handler `H` and the application
-/// configuration `A`.
+/// configuration `A` (default `()`).
+///
+/// [`Server::builder`] starts a [`ServerBuilder`]. The server's lifecycle:
+/// 1. [`ServerBuilder::build`] validates the configuration. A validation
+///    error is returned here, before any socket is opened.
+/// 2. [`Server::run`] binds the listeners according to `bind_mode`,
+///    registers the `SIGTERM`, `SIGINT`, `SIGQUIT`, and `SIGHUP` handlers,
+///    and starts accepting.
+/// 3. A shutdown signal, [`ServerHandle::shutdown`], or
+///    [`ServerHandle::force_shutdown`] ends `run()`. Once the listeners are
+///    bound and the signal handlers registered, no error ends it: accept
+///    errors back off, and a connection error closes only that connection.
+///
+/// The rules for listeners, connections, and shutdown are in
+/// [tcp-server.md], and the settings in [configuration.md].
+///
+/// [tcp-server.md]: https://github.com/photom/rust-milter/blob/main/docs/reference/tcp-server.md
+/// [configuration.md]: https://github.com/photom/rust-milter/blob/main/docs/reference/configuration.md
 pub struct Server<H, A = ()> {
     handler: Arc<H>,
     handle: ServerHandle<A>,
@@ -61,7 +78,8 @@ pub struct Server<H, A = ()> {
 }
 
 impl Server<(), ()> {
-    /// Starts a builder.
+    /// Starts a builder, with the default [`ServerConfig`], no application
+    /// configuration, and no handler.
     pub fn builder() -> ServerBuilder<(), ()> {
         ServerBuilder {
             config: ServerConfig::default(),
@@ -77,12 +95,27 @@ impl Server<(), ()> {
 
 /// Builds a [`Server`].
 ///
-/// Set the application configuration with `app_config` before `handler`
-/// and `reload_with`: the handler factory receives it, and the loader
-/// returns it. Without `app_config` it is `()`.
+/// | Method | Sets |
+/// |--------|------|
+/// | [`config`](ServerBuilder::config) | The initial [`ServerConfig`] (required) |
+/// | [`app_config`](ServerBuilder::app_config) | The initial application configuration; without it, `A` is `()` |
+/// | [`handler`](ServerBuilder::handler) | The handler factory (required) |
+/// | [`reload_with`](ServerBuilder::reload_with) | The reload loader |
+/// | `meter_provider` | The OpenTelemetry meter provider (feature `otel`) |
+/// | [`build`](ServerBuilder::build) | Validates the configuration and builds the server |
 ///
-/// `F` is the handler factory that `handler` stores and `build` calls. It
-/// is `()` until `handler` is called, so `build` does not exist before.
+/// Set the application configuration with `app_config` before `handler`
+/// and `reload_with`: the handler factory receives its type, and the loader
+/// returns it.
+///
+/// `F` is the type of the handler factory that `handler` stores and `build`
+/// calls. It is `()` until `handler` is called, so `build` does not exist
+/// before, and a builder without a handler does not compile.
+///
+/// The settings that only the builder takes, and that a reload cannot
+/// change, are in [configuration.md: Builder-only settings].
+///
+/// [configuration.md: Builder-only settings]: https://github.com/photom/rust-milter/blob/main/docs/reference/configuration.md#builder-only-settings
 pub struct ServerBuilder<H, A = (), F = ()> {
     config: ServerConfig,
     app: A,
@@ -99,16 +132,17 @@ pub struct ServerBuilder<H, A = (), F = ()> {
 type SharedMeterProvider = Arc<dyn opentelemetry::metrics::MeterProvider + Send + Sync>;
 
 impl<H, A, F> ServerBuilder<H, A, F> {
-    /// The initial server configuration. Without it, the defaults are used,
-    /// which have no bind address, so `build` fails.
+    /// The initial server configuration (required). Without it, `build`
+    /// validates the defaults, which have no bind address, and fails.
     pub fn config(mut self, config: ServerConfig) -> Self {
         self.config = config;
         self
     }
 
-    /// The reload loader, which `SIGHUP` and [`ServerHandle::reload`] run.
-    /// It returns the new server and application configurations, or an
-    /// error that fails the reload.
+    /// The reload loader: a value of a type that implements [`ReloadLoader`]
+    /// for `A`. `SIGHUP` and [`ServerHandle::reload`] run its `load` method.
+    /// It returns the new server and application configurations, or an error
+    /// that fails the reload.
     pub fn reload_with<L: ReloadLoader<A>>(mut self, loader: L) -> Self
     where
         A: Send + 'static,
@@ -130,9 +164,10 @@ impl<H, A, F> ServerBuilder<H, A, F> {
 }
 
 impl<A> ServerBuilder<(), A> {
-    /// The initial application configuration. Call it before
-    /// `reload_with`: a loader registered earlier returns the old type, so
-    /// it is dropped.
+    /// The initial application configuration; without it, `A` is `()`. Call
+    /// it before `handler` and `reload_with`: the factory receives the
+    /// configuration's type, and the loader returns it. A loader registered
+    /// earlier returns the old type, so it is dropped.
     pub fn app_config<B>(self, app: B) -> ServerBuilder<(), B> {
         ServerBuilder {
             config: self.config,
@@ -145,8 +180,11 @@ impl<A> ServerBuilder<(), A> {
         }
     }
 
-    /// The handler factory. It is called once, in `build`, and all
-    /// connections share the handler it returns.
+    /// The handler factory: a function that takes a `&HandlerContext<A>` and
+    /// returns the handler. It is called once, in `build`, and all
+    /// connections share the handler it returns. `build` exists only after
+    /// `handler`. [`HandlerContext`] gives the factory the [`ConfigWatch`]
+    /// and the shutdown token.
     pub fn handler<H, F>(self, factory: F) -> ServerBuilder<H, A, F>
     where
         F: FnOnce(&HandlerContext<A>) -> H,
@@ -165,6 +203,9 @@ impl<A> ServerBuilder<(), A> {
 
 impl<H: Handler, A: Send + Sync + 'static, F> ServerBuilder<H, A, F> {
     /// Validates the configuration and builds the server.
+    ///
+    /// Fails with [`Error::Config`] before any socket is opened. The checks
+    /// are those of [`ServerConfig::validate`].
     pub fn build(self) -> Result<Server<H, A>>
     where
         F: FnOnce(&HandlerContext<A>) -> H,
@@ -216,15 +257,22 @@ impl<H: Handler, A: Send + Sync + 'static, F> ServerBuilder<H, A, F> {
 }
 
 impl<H: Handler, A: Send + Sync + 'static> Server<H, A> {
-    /// A handle that controls the server. Can be called before `run`.
+    /// A [`ServerHandle`] that controls the server. Can be called before
+    /// `run`.
     pub fn handle(&self) -> ServerHandle<A> {
         self.handle.clone()
     }
 
     /// Binds the listeners as `bind_mode` says, registers the handlers for
     /// `SIGTERM`, `SIGINT`, `SIGQUIT`, and `SIGHUP` on Unix, and serves
-    /// until shutdown. Once registered, these signals no longer end the
-    /// process, even after `run()` returns.
+    /// until shutdown. Consumes the server. Once registered, these signals
+    /// no longer end the process, even after `run()` returns.
+    ///
+    /// Fails with [`Error::Bind`] when a listener cannot bind in `FailFast`
+    /// mode, or when no address binds in `BestEffort` mode, and with
+    /// [`Error::Signals`] when the signal handlers cannot be registered. Once
+    /// the listeners are bound and the signal handlers registered, no error
+    /// ends it.
     pub async fn run(self) -> Result<()> {
         let shared = &self.handle.inner;
         let (generation, config) = shared.watch.server();
@@ -728,8 +776,10 @@ pub(crate) fn error_chain(error: &dyn std::error::Error) -> String {
     text
 }
 
-/// Controls a running server. Clones control the same server, and a handle
-/// stays valid after the server stops.
+/// Controls a running server: shutdown, reload, and status.
+///
+/// `ServerHandle<A>` is `Clone + Send + Sync`. Clones control the same
+/// server, and a handle stays valid after the server stops.
 pub struct ServerHandle<A = ()> {
     inner: Arc<Shared<A>>,
 }
@@ -774,8 +824,9 @@ impl<A> ServerHandle<A> {
     }
 
     /// Shuts down without the grace period or the drain: every connection
-    /// closes at once, and the callbacks in progress are dropped. Also ends
-    /// a graceful shutdown in progress.
+    /// closes at once, and the callbacks in progress are dropped, with no
+    /// call to `abort` or `session_end`. Also ends a graceful shutdown in
+    /// progress.
     pub fn force_shutdown(&self) {
         if self.inner.force.is_cancelled() {
             return;
@@ -794,7 +845,13 @@ impl<A> ServerHandle<A> {
         self.inner.running.load(Ordering::SeqCst)
     }
 
-    /// A snapshot of the server's state and counters.
+    /// An in-process [`Status`] snapshot: the health check fields of
+    /// [tcp-server.md: Health check], the configuration generation, and the
+    /// status counters behind the metrics of [telemetry.md: Metrics].
+    /// Reading it takes no lock on the connection path.
+    ///
+    /// [tcp-server.md: Health check]: https://github.com/photom/rust-milter/blob/main/docs/reference/tcp-server.md#health-check
+    /// [telemetry.md: Metrics]: https://github.com/photom/rust-milter/blob/main/docs/reference/telemetry.md#metrics
     pub fn status(&self) -> Status {
         self.inner.counters.snapshot(self.inner.watch.generation())
     }
@@ -818,6 +875,12 @@ impl<A> ServerHandle<A> {
     /// does. Requests made while a reload runs are folded into one more
     /// reload. Called before `run()`, it waits until `run()` has bound the
     /// listeners.
+    ///
+    /// Fails with [`ReloadError::NoLoader`] without a registered loader; the
+    /// other [`ReloadError`] variants say why a reload failed. The procedure
+    /// is in [hot-reload.md].
+    ///
+    /// [hot-reload.md]: https://github.com/photom/rust-milter/blob/main/docs/reference/hot-reload.md
     pub async fn reload(&self) -> std::result::Result<ReloadReport, ReloadError> {
         let outcome = self.load().await;
         self.counted(outcome)
@@ -846,7 +909,7 @@ impl<A> ServerHandle<A> {
     }
 
     /// Applies a configuration the caller built, with the same checks as a
-    /// reload through the loader.
+    /// reload through the loader. Fails as [`ServerHandle::reload`] does.
     pub async fn reload_with_config(
         &self,
         new: Reloaded<A>,
@@ -891,25 +954,36 @@ impl<A> Shared<A> {
     }
 }
 
-/// What the handler factory receives at build time.
+/// What the handler factory receives at build time, so that a handler can
+/// follow reloads and shutdown from the start.
 pub struct HandlerContext<A> {
     watch: ConfigWatch<A>,
     shutdown: CancellationToken,
 }
 
 impl<A> HandlerContext<A> {
-    /// Read access to the application configuration.
+    /// A [`ConfigWatch`] for the application configuration.
     pub fn config_watch(&self) -> ConfigWatch<A> {
         self.watch.clone()
     }
 
-    /// The server's shutdown token.
+    /// The server's shutdown token, the one the callbacks' contexts return.
     pub fn shutdown(&self) -> &CancellationToken {
         &self.shutdown
     }
 }
 
-/// Facts about an MTA connection.
+/// Read-only facts about an MTA connection, from
+/// [`SessionContext::connection`](crate::SessionContext::connection).
+///
+/// It describes the MTA connection, not the SMTP client, which
+/// [`ConnectInfo`](crate::ConnectInfo) describes. The connection itself,
+/// with its socket, buffers, and timeouts, is internal. It enforces
+/// `timeouts.connect`, `timeouts.read`, `timeouts.write`, `timeouts.idle`,
+/// and `per_connection_buffer` from its configuration snapshot
+/// ([tcp-server.md]).
+///
+/// [tcp-server.md]: https://github.com/photom/rust-milter/blob/main/docs/reference/tcp-server.md
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ConnectionInfo {
@@ -921,7 +995,7 @@ pub struct ConnectionInfo {
     pub local_addr: SocketAddr,
     /// When `accept()` returned.
     pub accepted_at: Instant,
-    /// The generation of the configuration the connection uses.
+    /// The generation of the configuration snapshot the connection uses.
     pub config_generation: u64,
     /// A duplicate handle of the socket, for reading its options in
     /// tests. A clone of this value kept after the connection ends keeps
