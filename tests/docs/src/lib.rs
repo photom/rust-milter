@@ -1,8 +1,10 @@
 //! Compiles the Rust examples in `docs/tutorials/` and `docs/how-to/` as
-//! doctests. `build.rs` finds the documents, prepares a copy of each, and
-//! includes the copies here. The rules are in "Documentation check" in
+//! doctests, and checks the links of the documents. `build.rs` finds the
+//! documents, prepares a copy of each, and includes the copies here. The
+//! rules are in "Documentation check" and "Link check" in
 //! `docs/reference/test-environment.md`.
 
+pub mod links;
 #[cfg(test)]
 mod setup;
 

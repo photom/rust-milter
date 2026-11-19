@@ -12,12 +12,17 @@ const OPTNEG_LENGTH: usize = 12;
 /// Length of a frame's length field and command byte.
 const FRAME_HEADER: usize = 5;
 
-/// A command from the MTA (`SMFIC_*`).
+/// A command from the MTA (`SMFIC_*`), in a type-safe form.
+///
+/// This is a wire-level type, for tests and for the planned milter client
+/// sample. Text fields, including the hostname, the header name and value,
+/// and the macro names and values, are [`MilterText`], so bytes that are not
+/// valid UTF-8 are kept.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Command {
     /// `SMFIC_OPTNEG`: the MTA's protocol version, actions, and protocol
-    /// flags, as sent.
+    /// flags, as sent, zeros included.
     OptNeg {
         /// Protocol version.
         version: u32,
@@ -34,7 +39,8 @@ pub enum Command {
         /// Name and value pairs, in the order the MTA sent them.
         macros: Vec<(MilterText, MilterText)>,
     },
-    /// `SMFIC_CONNECT`: the SMTP client's hostname and address.
+    /// `SMFIC_CONNECT`: the SMTP client's hostname and address. `port` and
+    /// `address` are `None` for [`AddressFamily::Unknown`].
     Connect {
         /// The client's hostname; `[<address>]` when it did not resolve.
         hostname: MilterText,
@@ -94,12 +100,17 @@ pub enum AddressFamily {
 }
 
 impl Command {
-    /// Decodes a frame from the MTA.
+    /// Decodes a frame from the MTA, checking the command code and the data
+    /// format.
     ///
-    /// Fails with [`Error::Protocol`](crate::Error::Protocol) on an unknown
-    /// command code or data that does not match the command's format,
-    /// including bytes after the last field. An option negotiation may be
-    /// longer than its 12 bytes, as libmilter accepts.
+    /// Fails with [`Error::Protocol`](crate::Error::Protocol) on invalid
+    /// input: [`UnknownCommand`](crate::ProtocolError::UnknownCommand) for an
+    /// unknown command code, and [`Malformed`](crate::ProtocolError::Malformed)
+    /// for data that does not match the format, such as a missing null
+    /// terminator, bytes after the last field, a short option negotiation, a
+    /// macro name without a value, or a family byte that is not an `SMFIA_*`
+    /// code. An option negotiation longer than 12 bytes is read from its first
+    /// 12, as libmilter does.
     pub fn from_frame(frame: Frame) -> Result<Command> {
         let Frame { command, mut data } = frame;
         match command {

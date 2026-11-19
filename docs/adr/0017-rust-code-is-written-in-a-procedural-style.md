@@ -92,7 +92,7 @@ Negative:
 ## References
 
 - [test-environment.md, Style check](../reference/test-environment.md#style-check)
-- [api-specification.md, Configuration and reload API](../reference/api-specification.md#configuration-and-reload-api)
+- [API reference: ReloadLoader](https://photom.github.io/rust-milter/rust_milter/trait.ReloadLoader.html)
 - [Write Rust in the procedural style](../how-to/write-procedural-rust.md)
 - [Run the tests, Run the style check](../how-to/run-the-tests.md#run-the-style-check)
 - [Test scenarios: Style](../testing/style.md)

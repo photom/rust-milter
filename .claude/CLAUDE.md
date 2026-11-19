@@ -36,11 +36,13 @@ These rules apply to every task in this repository.
 ## Documentation
 
 - Maintain all documentation under Diátaxis (see the diataxis skill). Each document is exactly one type: tutorial (`docs/tutorials/`), how-to guide (`docs/how-to/`), reference (`docs/reference/`), or explanation (`docs/explanation/`). Do not mix types in one document; link between them instead.
+- Write the API reference as doc comments in the crate, not in `docs/` (ADR 0021). A doc comment links to a document by its GitHub URL on `main`, such as `https://github.com/photom/rust-milter/blob/main/docs/reference/configuration.md#validation-rules`.
+- Link from a document to an API item by its GitHub Pages URL with the rustdoc anchor, such as `https://photom.github.io/rust-milter/rust_milter/trait.Handler.html#method.connect`. CI checks every link against the files and the rustdoc it builds (see "Link check" in `docs/reference/test-environment.md`).
 - Record architecture decisions as ADRs in `docs/adr/`, outside the Diátaxis structure (see `docs/adr/README.md`). Do not rewrite an accepted ADR; supersede it with a new one.
 - Write test scenarios in `docs/testing/`, outside the Diátaxis structure, as Given/When/Then tables with IDs that link to spec rules (see `docs/testing/README.md`). Add a scenario before writing its test.
 - Write diagrams in Mermaid. Do not draw ASCII diagrams.
 - Do not write code in documentation, except example code.
-- Put example code only in tutorials (`docs/tutorials/`) and how-to guides (`docs/how-to/`). Reference documents and the README link to them instead.
+- Put example code only in tutorials (`docs/tutorials/`) and how-to guides (`docs/how-to/`). Reference documents, doc comments, and the README link to them instead.
 
 ## Security and confidentiality
 

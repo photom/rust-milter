@@ -177,11 +177,11 @@ The application configuration follows the same isolation rule as the rest of rus
 
 ## API
 
-The reload API (`ServerBuilder::reload_with`, `ServerHandle::reload`, `reload_with_config`, `config_watch`, `config_generation`) and the `ReloadReport` and `ReloadError` types are specified in [api-specification.md](api-specification.md#configuration-and-reload-api).
+The reload API is specified in the API reference: [`ReloadLoader`](https://photom.github.io/rust-milter/rust_milter/trait.ReloadLoader.html), [`ServerBuilder::reload_with`](https://photom.github.io/rust-milter/rust_milter/struct.ServerBuilder.html#method.reload_with), [`ServerHandle::reload`](https://photom.github.io/rust-milter/rust_milter/struct.ServerHandle.html#method.reload), [`reload_with_config`](https://photom.github.io/rust-milter/rust_milter/struct.ServerHandle.html#method.reload_with_config), [`config_watch`](https://photom.github.io/rust-milter/rust_milter/struct.ServerHandle.html#method.config_watch), [`config_generation`](https://photom.github.io/rust-milter/rust_milter/struct.ServerHandle.html#method.config_generation), and the [`ReloadReport`](https://photom.github.io/rust-milter/rust_milter/struct.ReloadReport.html) and [`ReloadError`](https://photom.github.io/rust-milter/rust_milter/enum.ReloadError.html) types.
 
 ## Errors
 
-The reload errors are the variants of `ReloadError` in [api-specification.md](api-specification.md#reloaderror). Every one of them leaves the server running with the previous generation; none ends `Server::run()`.
+The reload errors are the variants of [`ReloadError`](https://photom.github.io/rust-milter/rust_milter/enum.ReloadError.html). Every one of them leaves the server running with the previous generation; none ends `Server::run()`.
 
 A loader that panics fails the reload with `ReloadError::Load`, as a loader that returns an error does. The coordinator keeps running, and later reloads run as usual ([ADR 0018](../adr/0018-panics-in-handler-code-and-the-reload-loader-are-caught.md)).
 

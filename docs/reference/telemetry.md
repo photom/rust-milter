@@ -122,7 +122,7 @@ Durations use the unit `s`. Every histogram sets these advisory bucket boundarie
 
 ### Status counters
 
-Every counter and gauge reads the same value that `ServerHandle::status()` reports ([api-specification.md](api-specification.md#serverhandle)). Histograms have no `status()` field.
+Every counter and gauge reads the same value that `ServerHandle::status()` reports ([API reference: `ServerHandle::status`](https://photom.github.io/rust-milter/rust_milter/struct.ServerHandle.html#method.status)). Histograms have no `status()` field.
 
 | Metric | `status()` field |
 |--------|------------------|
@@ -187,7 +187,7 @@ flowchart TB
 | `milter.session` | INTERNAL | the session starts: `SMFIC_CONNECT`, or the first command of a session the MTA starts without it | `SMFIC_QUIT`, `SMFIC_QUIT_NC`, or connection close |
 | `milter.message` | INTERNAL | the handler's `Message` value is created: `SMFIC_MAIL`, or the first command of a message without it | the `Message` value is dropped: after the final reply at end of message, after a decision that ends the message earlier, on `SMFIC_ABORT`, or at session end |
 
-When a session or message starts and ends follows the protocol engine rules in [api-specification.md](api-specification.md#protocol-engine-behavior). A session span's parent is the connection span, and a message span's parent is its session span, so a second session after `SMFIC_QUIT_NC` is never a child of the first.
+When a session or message starts and ends follows the [protocol engine rules](https://photom.github.io/rust-milter/rust_milter/trait.Handler.html#protocol-engine-behavior) of the API reference. A session span's parent is the connection span, and a message span's parent is its session span, so a second session after `SMFIC_QUIT_NC` is never a child of the first.
 
 Span names are fixed strings. Nothing variable goes into a name.
 

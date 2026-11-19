@@ -1,6 +1,6 @@
 # Getting started: build your first milter
 
-rust-milter is not on crates.io yet, so this tutorial takes it from its GitHub repository. The API it uses is specified in [api-specification.md](../reference/api-specification.md).
+rust-milter is not on crates.io yet, so this tutorial takes it from its GitHub repository. The API it uses is specified in the [API reference](https://photom.github.io/rust-milter/rust_milter/index.html).
 
 In this tutorial you build a milter that adds the header `X-Filtered-By: rust-milter` to every message, and connect it to Postfix.
 

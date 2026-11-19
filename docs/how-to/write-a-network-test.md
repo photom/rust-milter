@@ -1,6 +1,6 @@
 # Write a network test
 
-This guide follows [test-environment.md](../reference/test-environment.md) and [api-specification.md](../reference/api-specification.md).
+This guide follows [test-environment.md](../reference/test-environment.md) and the [API reference](https://photom.github.io/rust-milter/rust_milter/index.html).
 
 This guide shows how to write an integration test that starts a server on a leased test port, talks to it, and stops it.
 

@@ -58,7 +58,7 @@ Negative:
 ## References
 
 - Issue #61: Let a handler request `SMFIP_HDR_LEADSPC` to receive header values unchanged
-- [api-specification.md, Negotiation methods](../reference/api-specification.md#negotiation-methods)
+- [API reference: Handler, Negotiation methods](https://photom.github.io/rust-milter/rust_milter/trait.Handler.html#negotiation-methods)
 - [milter-protocol.md, Headers and body](../reference/milter-protocol.md#headers-and-body)
 - RFC 6376, §3.4.1 and §3.7; RFC 5322, §2.2 and §4.5
 - Sendmail 8.19.0.2: `libmilter/engine.c` (`st_optionneg`); `sendmail/milter.c` (`milter_negotiate`, `milter_headers`, `milter_addheader`, `milter_insheader`, `milter_changeheader`); `sendmail/headers.c` (`chompheader`)

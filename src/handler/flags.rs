@@ -63,64 +63,109 @@ macro_rules! flag_set {
 }
 
 flag_set! {
-    /// The protocol stages a handler receives. `end_of_message`, `abort`, and
-    /// `session_end` are always delivered.
+    /// The protocol stages a handler receives, from
+    /// [`Handler::events`](crate::Handler::events). One flag per optional
+    /// stage. `end_of_message`, `abort`, and `session_end` are always
+    /// delivered.
     ///
     /// Each flag's value is the `SMFIP_NO*` flag the library requests when
     /// the stage is left out.
     Events {
-        /// `connect`
+        /// [`Handler::connect`](crate::Handler::connect); left out, the library
+        /// requests `SMFIP_NOCONNECT`.
         CONNECT = SMFIP_NOCONNECT,
-        /// `helo`
+        /// [`Handler::helo`](crate::Handler::helo); left out, the library
+        /// requests `SMFIP_NOHELO`.
         HELO = SMFIP_NOHELO,
-        /// `mail`
+        /// [`Handler::mail`](crate::Handler::mail); left out, the library
+        /// requests `SMFIP_NOMAIL`.
         MAIL = SMFIP_NOMAIL,
-        /// `rcpt`
+        /// [`Handler::rcpt`](crate::Handler::rcpt); left out, the library
+        /// requests `SMFIP_NORCPT`.
         RCPT = SMFIP_NORCPT,
-        /// `data`
+        /// [`Handler::data`](crate::Handler::data); left out, the library
+        /// requests `SMFIP_NODATA`.
         DATA = SMFIP_NODATA,
-        /// `header`
+        /// [`Handler::header`](crate::Handler::header); left out, the library
+        /// requests `SMFIP_NOHDRS`.
         HEADER = SMFIP_NOHDRS,
-        /// `end_of_headers`
+        /// [`Handler::end_of_headers`](crate::Handler::end_of_headers); left
+        /// out, the library requests `SMFIP_NOEOH`.
         END_OF_HEADERS = SMFIP_NOEOH,
-        /// `body`
+        /// [`Handler::body`](crate::Handler::body); left out, the library
+        /// requests `SMFIP_NOBODY`.
         BODY = SMFIP_NOBODY,
-        /// `unknown`
+        /// [`Handler::unknown`](crate::Handler::unknown); left out, the library
+        /// requests `SMFIP_NOUNKNOWN`.
         UNKNOWN = SMFIP_NOUNKNOWN,
     }
 }
 
 flag_set! {
-    /// The message modifications a handler may perform at end of message.
-    /// Each flag's value is the matching `SMFIF_*` flag.
+    /// The message modifications a handler may perform at end of message,
+    /// from [`Handler::actions`](crate::Handler::actions). One flag for each
+    /// modification method of [`EomContext`](crate::EomContext).
+    ///
+    /// Each flag's value is the matching `SMFIF_*` flag, as listed in
+    /// [milter-protocol.md: Action flags].
+    ///
+    /// [milter-protocol.md: Action flags]: https://github.com/photom/rust-milter/blob/main/docs/reference/milter-protocol.md#action-flags-smfif_
     Actions {
-        /// `add_header` and `insert_header`
+        /// [`add_header`](crate::EomContext::add_header) and
+        /// [`insert_header`](crate::EomContext::insert_header)
+        /// (`SMFIF_ADDHDRS`)
         ADD_HEADERS = SMFIF_ADDHDRS,
-        /// `change_header` and `delete_header`
+        /// [`change_header`](crate::EomContext::change_header) and
+        /// [`delete_header`](crate::EomContext::delete_header)
+        /// (`SMFIF_CHGHDRS`)
         CHANGE_HEADERS = SMFIF_CHGHDRS,
-        /// `add_recipient`
+        /// [`add_recipient`](crate::EomContext::add_recipient)
+        /// (`SMFIF_ADDRCPT`)
         ADD_RECIPIENTS = SMFIF_ADDRCPT,
-        /// `add_recipient_with_args`
+        /// [`add_recipient_with_args`](crate::EomContext::add_recipient_with_args)
+        /// (`SMFIF_ADDRCPT_PAR`)
         ADD_RECIPIENTS_WITH_ARGS = SMFIF_ADDRCPT_PAR,
-        /// `delete_recipient`
+        /// [`delete_recipient`](crate::EomContext::delete_recipient)
+        /// (`SMFIF_DELRCPT`)
         DELETE_RECIPIENTS = SMFIF_DELRCPT,
-        /// `change_from`
+        /// [`change_from`](crate::EomContext::change_from) (`SMFIF_CHGFROM`)
         CHANGE_FROM = SMFIF_CHGFROM,
-        /// `replace_body`
+        /// [`replace_body`](crate::EomContext::replace_body)
+        /// (`SMFIF_CHGBODY`)
         CHANGE_BODY = SMFIF_CHGBODY,
-        /// `quarantine`
+        /// [`quarantine`](crate::EomContext::quarantine)
+        /// (`SMFIF_QUARANTINE`)
         QUARANTINE = SMFIF_QUARANTINE,
     }
 }
 
 flag_set! {
-    /// The protocol options a handler requests during option negotiation.
+    /// The protocol options a handler requests during option negotiation,
+    /// from [`Handler::protocol_options`](crate::Handler::protocol_options).
+    /// One flag per option; [`ProtocolOptions::NONE`] requests none.
+    ///
     /// Each flag's value is the matching `SMFIP_*` flag. The connection
     /// closes if the MTA does not offer all of them at protocol version 6.
+    ///
+    /// Without [`HEADER_LEADING_SPACE`](ProtocolOptions::HEADER_LEADING_SPACE),
+    /// both MTAs remove one leading space (not a tab) from each value they
+    /// send, and put one space in front of each value they store for
+    /// `add_header`, `insert_header`, and `change_header`
+    /// ([milter-protocol.md: Headers and body]). [Whitespace in header values]
+    /// shows examples of both directions, and
+    /// [Keep the leading space of header values] shows how to request the
+    /// option.
+    ///
+    /// [milter-protocol.md: Headers and body]: https://github.com/photom/rust-milter/blob/main/docs/reference/milter-protocol.md#headers-and-body
+    /// [Whitespace in header values]: https://github.com/photom/rust-milter/blob/main/docs/explanation/header-whitespace.md
+    /// [Keep the leading space of header values]: https://github.com/photom/rust-milter/blob/main/docs/how-to/keep-the-leading-space-of-header-values.md
     ProtocolOptions {
-        /// `header` receives each value with its leading whitespace, and the
-        /// MTA stores the values of `add_header`, `insert_header`, and
-        /// `change_header` with no space added.
+        /// `SMFIP_HDR_LEADSPC`. While it is in force,
+        /// [`Handler::header`](crate::Handler::header) receives each value as
+        /// the message has it after the colon, leading whitespace included.
+        /// `add_header`, `insert_header`, and `change_header` send each value
+        /// as given, and the MTA stores it with no space added, so a value
+        /// without a leading space produces `Name:value` in the message.
         HEADER_LEADING_SPACE = SMFIP_HDR_LEADSPC,
     }
 }

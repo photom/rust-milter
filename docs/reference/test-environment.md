@@ -12,6 +12,7 @@ The fixed TCP ports that rust-milter's tests listen on, how tests share them, an
 - [Rules for tests](#rules-for-tests)
 - [Socket option readback](#socket-option-readback)
 - [Documentation check](#documentation-check)
+- [Link check](#link-check)
 - [Style check](#style-check)
 - [Interoperability environment](#interoperability-environment)
 - [Load and chaos environment](#load-and-chaos-environment)
@@ -85,6 +86,22 @@ CI runs the tests with `--all-features`, so the tests that need the feature run 
 | Exceptions | A block that cannot compile at all, even with setup lines, is marked `rust,ignore`, with the reason in an HTML comment right before it |
 | Features | The check compiles against rust-milter with the `otel` and `serde` features. With `--no-default-features`, the `tests/docs` crate skips the check, so that rust-milter is built without its features |
 | Failure | A block that does not compile fails the test run, and with it the CI build |
+
+## Link check
+
+The API reference is the rustdoc of the library, published on GitHub Pages ([ADR 0021](../adr/0021-the-api-reference-is-rustdoc-published-on-github-pages.md)), so documents link to it with absolute URLs, and its doc comments link back to the documents the same way. The link check follows those links to the files they name: `cargo test` checks the links to files of the repository, and CI also checks the links to the API reference, against the rustdoc that the same run builds.
+
+| Item | Behavior |
+|------|----------|
+| Files checked | Every Markdown file of the repository, except in `.git` and `target` directories, and every `.rs` file under `src/` |
+| Links read | Inline links `[text](target)`, images included, and reference definitions `[label]: target`. In Markdown, fenced code blocks and inline code spans are skipped. In a `.rs` file, only doc comment lines (`///` and `//!`) are read |
+| Relative links | In Markdown, a target without a scheme must name a file or directory that exists, relative to the document; a target that is only an anchor names the document itself. When the file is Markdown, the anchor must name one of its headings. An anchor on another kind of file, such as a line of source code, is not checked. In a `.rs` file, a target without a scheme is an intra-doc link, which rustdoc checks |
+| Repository links | A target that starts with `https://github.com/photom/rust-milter/blob/main/` or `https://github.com/photom/rust-milter/tree/main/` must name a file or directory of the repository, and its anchor a heading, as for a relative link |
+| API links | A target that starts with `https://photom.github.io/rust-milter/` must name an HTML file in the rustdoc directory, `index.html` when the path ends with `/`, and its anchor an `id` attribute in that file. `cargo test` reads these links but checks them only when given the rustdoc directory |
+| Heading anchors | A heading's anchor is its text as GitHub computes it: HTML comments, backticks, and the targets of links removed; lower case; every character other than a letter, a digit, `_`, `-`, or a space removed; and each space turned into `-`. A heading whose anchor appeared earlier in the same file gets `-1`, the next `-2`, and so on |
+| Other links | A target with another scheme, such as `https:` to another site or `mailto:`, is not checked |
+| Mechanism | The `links` module of the unpublished workspace crate `tests/docs` reads and checks the links. A `cargo test` test runs it on the repository without the rustdoc directory. The `check-links` binary of the same crate runs it with the directory given as its only argument, as in `cargo run -p rust-milter-docs --no-default-features --bin check-links -- target/doc`. The Rustdoc job and the Pages workflow run it after `cargo doc` |
+| Failure | Each broken link prints as `path:line: target: reason` and fails the test run or the job |
 
 ## Style check
 
@@ -242,9 +259,10 @@ GitHub Actions runs these jobs on every push to `main` and on every pull request
 | Clippy | `ci.yml` | Clippy with warnings as errors, with all features and with none, then the disallowed methods of the [style check](#style-check) with all features |
 | Test | `ci.yml` | `cargo test` on Rocky Linux 9, Debian 13, and macOS, with all features and with none, and `RUST_MILTER_TEST_IPV6=on`. Rocky Linux and Debian run in containers on an Ubuntu runner |
 | MSRV | `ci.yml` | The library builds with Rust 1.85, with all features and with none |
-| Rustdoc | `ci.yml` | The API documentation builds without warnings |
+| Rustdoc | `ci.yml` | The API documentation builds without warnings, and the [link check](#link-check) passes against it |
 | Dependencies | `ci.yml` | cargo-deny: known vulnerabilities, yanked crates, licenses, and sources, as set in `deny.toml` |
 | Interoperability | `ci.yml` | The `INT` tests in the [interoperability environment](#interoperability-environment) |
+| Pages | `pages.yml` | Builds the rustdoc of the library with the `otel` and `serde` features and runs the [link check](#link-check) against it. On pushes to `main` and on manual dispatch, deploys it to GitHub Pages ([ADR 0021](../adr/0021-the-api-reference-is-rustdoc-published-on-github-pages.md)) |
 | CodeQL | `codeql.yml` | CodeQL's Rust analysis; also runs weekly |
 | Advisories | `advisories.yml` | cargo-deny's advisory check alone, every day at 05:23 UTC and on demand |
 | Load and chaos | `load.yml` | The `LOD` and `CHS` tests in the [load and chaos environment](#load-and-chaos-environment). Runs weekly and on manual dispatch at full length, and on pull requests that change `tests/load/` or `load.yml` in the short mode, not on pushes to `main` |

@@ -54,13 +54,12 @@ Accurate and complete technical specifications. Use them to look up specific det
 
 - [Milter protocol specification](docs/reference/milter-protocol.md)
 - [TCP server specification](docs/reference/tcp-server.md)
-- [API specification](docs/reference/api-specification.md)
 - [Configuration specification](docs/reference/configuration.md)
 - [Milter client sample](docs/reference/milter-client.md) (design reference for the planned sample, to live in `examples/`)
 - [Configuration hot reload](docs/reference/hot-reload.md)
 - [Telemetry (OpenTelemetry)](docs/reference/telemetry.md)
 - [Test environment](docs/reference/test-environment.md)
-- API reference: run `cargo doc --open`
+- [API reference](https://photom.github.io/rust-milter/rust_milter/index.html) (rustdoc of `main`; `cargo doc --open` builds it locally)
 
 ### [Explanation](docs/explanation/) (understanding)
 

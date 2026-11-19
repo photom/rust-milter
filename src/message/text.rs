@@ -7,11 +7,16 @@ use bytes::{Buf, Bytes, BytesMut};
 
 /// Text exactly as the MTA sent it.
 ///
-/// Envelope addresses, ESMTP arguments, HELO names, headers, and macro values
-/// can hold bytes that are not valid UTF-8, so the library never converts
-/// them. A `MilterText` shares the frame's buffer; creating one copies
-/// nothing. The macros the library stores are copies, so they do not keep
-/// the frame's buffer.
+/// Envelope addresses, ESMTP arguments, HELO names, header names and values,
+/// macro values, and unknown commands can contain bytes that are not valid
+/// UTF-8, from SMTPUTF8 clients or legacy 8-bit mail, so the library never
+/// converts them. Read the text with [`as_str`](MilterText::as_str) when it
+/// must be UTF-8, and with [`to_string_lossy`](MilterText::to_string_lossy)
+/// for logging and display.
+///
+/// A `MilterText` shares the frame's buffer ([`Bytes`]), so creating one
+/// copies nothing. The macros the library stores are the exception: it
+/// copies them, so they do not keep the frame's buffer.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct MilterText(Bytes);
 

@@ -13,8 +13,12 @@ use crate::{Error, MilterText, Reply, Result};
 /// The most body data one `SMFIR_REPLBODY` frame carries.
 const MAX_BODY_CHUNK: usize = 65_535;
 
-/// What a session callback can see: the session state, the macros, and the
-/// connection.
+/// What a session callback can see: the session state, the macros, the MTA
+/// connection, the negotiated options, and the shutdown token.
+///
+/// [`Handler::connect`], [`Handler::helo`], [`Handler::unknown`], and
+/// [`Handler::session_end`] receive it. [`MessageContext`] and [`EomContext`]
+/// dereference to it, so every message callback has the same methods.
 pub struct SessionContext<H: Handler> {
     session: Option<H::Session>,
     pub(crate) macros: Macros,
@@ -37,18 +41,30 @@ impl<H: Handler> SessionContext<H> {
         }
     }
 
-    /// The handler's state for this session.
+    /// The handler's state for this session, created with `Default` on the
+    /// first call in a session. See [`Handler::Session`].
     pub fn session(&mut self) -> &mut H::Session {
         self.session.get_or_insert_default()
     }
 
-    /// The value of a macro the MTA sent in this session, at this stage or
-    /// an earlier one. `{x}` and `x` name the same one-letter macro.
+    /// The value of a macro the MTA sent in this session, at this stage or an
+    /// earlier one.
+    ///
+    /// A one-letter name matches with or without braces, as in libmilter: `i`
+    /// and `{i}` name the same macro. The lookup starts at the current
+    /// command's stage and goes back through the earlier stages, the latest
+    /// first. In protocol order the stages are `C`, `H`, `M`, `R`, `T`, `L`,
+    /// `N`, `B`, and `E`, so at `R` the lookup reads `R`, `M`, `H`, then `C`.
+    /// In [`Handler::unknown`], [`Handler::abort`], and
+    /// [`Handler::session_end`], it looks in every stage, the latest first,
+    /// starting with `U`. Which macros the library keeps, and for how long,
+    /// is in the Macros row of
+    /// [Protocol engine behavior](Handler#protocol-engine-behavior).
     pub fn macro_value(&self, name: &str) -> Option<&MilterText> {
         self.macros.get(name, self.stage)
     }
 
-    /// The MTA connection.
+    /// Facts about the MTA connection: its ID, addresses, and accept time.
     pub fn connection(&self) -> &ConnectionInfo {
         &self.connection
     }
@@ -58,7 +74,9 @@ impl<H: Handler> SessionContext<H> {
         &self.negotiated
     }
 
-    /// The server's shutdown token.
+    /// The server's shutdown token, cancelled when the shutdown grace period
+    /// ends. A callback that does long work should watch it and return early
+    /// once it is cancelled.
     pub fn shutdown(&self) -> &CancellationToken {
         &self.shutdown
     }
@@ -70,15 +88,20 @@ impl<H: Handler> SessionContext<H> {
     }
 }
 
-/// What a message callback can see: everything in [`SessionContext`], and
-/// the message state.
+/// What a message callback can see: everything in [`SessionContext`], through
+/// `Deref`, and the message state.
+///
+/// [`Handler::mail`], [`Handler::rcpt`], [`Handler::data`],
+/// [`Handler::header`], [`Handler::end_of_headers`], [`Handler::body`], and
+/// [`Handler::abort`] receive it.
 pub struct MessageContext<H: Handler> {
     pub(crate) session: SessionContext<H>,
     pub(crate) message: Option<H::Message>,
 }
 
 impl<H: Handler> MessageContext<H> {
-    /// The handler's state for this message.
+    /// The handler's state for this message. See [`Handler::Message`] for when
+    /// it is created and dropped.
     pub fn message(&mut self) -> &mut H::Message {
         self.message.get_or_insert_default()
     }
@@ -98,17 +121,36 @@ impl<H: Handler> DerefMut for MessageContext<H> {
     }
 }
 
-/// What `end_of_message` can see and do: everything in [`MessageContext`],
-/// and the message modifications.
+/// What [`Handler::end_of_message`] can see and do: everything in
+/// [`MessageContext`], through `Deref`, and the message modifications.
 ///
-/// Each modification sends its reply to the MTA at once. It fails with
-/// [`Error::ActionNotNegotiated`] when its action was not negotiated, and
-/// with [`Error::InvalidReply`] when the MTA would refuse the values.
+/// The modification methods exist only on this type, so a handler can
+/// modify a message only at end of message, as libmilter's `mi_sendok`
+/// requires. Each one is async, returns `Result<()>`, and sends its reply to
+/// the MTA at once. It fails with [`Error::ActionNotNegotiated`] when its
+/// action is not in [`Handler::actions`] or the MTA did not offer it, and
+/// with [`Error::InvalidReply`] when the MTA would refuse the values; the
+/// [`ReplyError`](crate::ReplyError) variants list the rules.
 ///
-/// The header methods send each value unchanged. The MTA puts a space
+/// | Method | Action required | Sends |
+/// |--------|-----------------|-------|
+/// | [`add_header`](EomContext::add_header) | [`ADD_HEADERS`](Actions::ADD_HEADERS) | `SMFIR_ADDHEADER` |
+/// | [`insert_header`](EomContext::insert_header) | [`ADD_HEADERS`](Actions::ADD_HEADERS) | `SMFIR_INSHEADER` |
+/// | [`change_header`](EomContext::change_header) | [`CHANGE_HEADERS`](Actions::CHANGE_HEADERS) | `SMFIR_CHGHEADER` |
+/// | [`delete_header`](EomContext::delete_header) | [`CHANGE_HEADERS`](Actions::CHANGE_HEADERS) | `SMFIR_CHGHEADER` with an empty value |
+/// | [`add_recipient`](EomContext::add_recipient) | [`ADD_RECIPIENTS`](Actions::ADD_RECIPIENTS) | `SMFIR_ADDRCPT` |
+/// | [`add_recipient_with_args`](EomContext::add_recipient_with_args) | [`ADD_RECIPIENTS_WITH_ARGS`](Actions::ADD_RECIPIENTS_WITH_ARGS) | `SMFIR_ADDRCPT_PAR` |
+/// | [`delete_recipient`](EomContext::delete_recipient) | [`DELETE_RECIPIENTS`](Actions::DELETE_RECIPIENTS) | `SMFIR_DELRCPT` |
+/// | [`change_from`](EomContext::change_from) | [`CHANGE_FROM`](Actions::CHANGE_FROM) | `SMFIR_CHGFROM` |
+/// | [`replace_body`](EomContext::replace_body) | [`CHANGE_BODY`](Actions::CHANGE_BODY) | `SMFIR_REPLBODY`, split into chunks of at most 65,535 bytes |
+/// | [`quarantine`](EomContext::quarantine) | [`QUARANTINE`](Actions::QUARANTINE) | `SMFIR_QUARANTINE` |
+/// | [`progress`](EomContext::progress) | none | `SMFIR_PROGRESS` |
+///
+/// The header methods send each value unchanged, and the MTA puts a space
 /// between the colon and the value unless
 /// [`ProtocolOptions::HEADER_LEADING_SPACE`](crate::ProtocolOptions::HEADER_LEADING_SPACE)
-/// is in force. With the option, pass `" value"` to get `Name: value`.
+/// is in force. With the option in force, a handler that wants
+/// `Name: value` passes `" value"`.
 pub struct EomContext<H: Handler> {
     pub(crate) message: MessageContext<H>,
     pub(crate) outbound: Outbound,

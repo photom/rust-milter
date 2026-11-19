@@ -142,6 +142,9 @@ jobs:
           persist-credentials: false
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo doc --workspace --no-deps --all-features
+      # The links of the documents and of the doc comments, API links
+      # included, against the rustdoc just built (ADR 0021).
+      - run: cargo run -p rust-milter-docs --no-default-features --bin check-links -- target/doc
 
   deny:
     name: Dependencies (cargo-deny)

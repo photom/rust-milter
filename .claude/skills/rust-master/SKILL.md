@@ -82,7 +82,7 @@ description: Project Rust conventions for naming, module layout, error handling,
 
 ### Documentation
 
-- Give every public API a rustdoc comment with an example that runs as a doctest.
+- Give every public API a rustdoc comment: the API reference is the rustdoc (ADR 0021). Examples go in the tutorials and how-to guides, and the comment links to them.
 - Document the safety requirements of `unsafe` code.
 - Explain design decisions that are not obvious in the module-level docs.
 

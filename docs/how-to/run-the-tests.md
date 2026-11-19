@@ -31,6 +31,17 @@ The Rust examples in the tutorials and how-to guides compile as doctests. Run on
 cargo test --doc
 ```
 
+## Run the link check
+
+`cargo test` checks the relative links and the links to files of the repository. To check the links to the API reference too, build the rustdoc and pass its directory to the `check-links` binary, as CI does:
+
+```sh
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
+cargo run -p rust-milter-docs --no-default-features --bin check-links -- target/doc
+```
+
+Each broken link prints as `path:line: target: reason`. The rules are in [test-environment.md: Link check](../reference/test-environment.md#link-check).
+
 ## Run the style check
 
 The style check reports closures, `Fn` bounds, and function pointer types outside the exceptions of [ADR 0017](../adr/0017-rust-code-is-written-in-a-procedural-style.md):
@@ -66,6 +77,8 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo clippy --workspace --all-targets --all-features --message-format=short -- -W clippy::disallowed_methods 2> /tmp/clippy-style.txt
 cargo run -p rust-milter-style --bin disallowed-methods -- /tmp/clippy-style.txt
 cargo +1.85 check -p rust-milter --lib --all-features
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
+cargo run -p rust-milter-docs --no-default-features --bin check-links -- target/doc
 cargo deny --all-features check
 ```
 

@@ -96,7 +96,7 @@ Follow-up work:
 
 ## References
 
-- [api-specification.md, protocol engine behavior](../reference/api-specification.md#protocol-engine-behavior)
+- [API reference: Handler, Protocol engine behavior](https://photom.github.io/rust-milter/rust_milter/trait.Handler.html#protocol-engine-behavior)
 - [milter-protocol.md, rust-milter protocol support](../reference/milter-protocol.md#rust-milter-protocol-support)
 - [milter-protocol.md, protocol states](../reference/milter-protocol.md#protocol-states)
 - [milter-client.md, reuse rules](../reference/milter-client.md#reuse-rules)

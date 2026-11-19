@@ -16,6 +16,12 @@ struct Published<A> {
 
 /// Read access to the current application configuration and its
 /// generation. Clones follow the same configuration.
+///
+/// A handler gets one from
+/// [`HandlerContext::config_watch`](crate::HandlerContext::config_watch) and
+/// keeps it in a field. Read the configuration once per session or once per
+/// message, and keep the value in [`Handler::Session`](crate::Handler::Session)
+/// or [`Handler::Message`](crate::Handler::Message).
 pub struct ConfigWatch<A> {
     receiver: watch::Receiver<Published<A>>,
 }
@@ -36,7 +42,8 @@ impl<A> ConfigWatch<A> {
         (ConfigWatch { receiver }, Publisher { sender })
     }
 
-    /// The current configuration. Never blocks.
+    /// The current configuration. Never blocks: it takes a short read lock
+    /// with no contention from other readers.
     pub fn current(&self) -> Arc<A> {
         Arc::clone(&self.receiver.borrow().app)
     }
