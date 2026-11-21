@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-21
-- Supersedes: [testing ADR 0003](0003-interop-stack-resolves-names-with-a-local-unbound.md), which put the test names in `void.invalid`, a domain that RFC 6761 does not let a DNS server answer for
+- Supersedes: [testing ADR 0003](0003-interop-stack-resolves-names-with-a-local-unbound.md)
 - Affects: test environment, CI, tests, test scenarios, examples in the documentation
 
 ## Context
@@ -12,20 +12,18 @@ Tests, test scenarios, and examples in the documentation use email addresses and
 The Compose network of the interoperability stack is internal: no container can reach the internet, so test mail cannot leave the stack ([testing ADR 0001](0001-interop-tests-run-on-distro-mtas-in-compose-on-every-pr.md)). Docker's resolver answers for the service names, and nothing answers for any other name.
 
 The MTAs look names up all the time: the milter's address, their own host name, the recipient's domain, the client's address. In the first CI runs:
-- Sendmail queued every message instead of delivering it, because its lookup of `void.invalid` failed with a temporary error.
+- Sendmail queued every message instead of delivering it, because its lookup of the test domain failed with a temporary error.
 - Sendmail resolves the milter's host when it reads its configuration. The runner, which holds the milter, starts after the MTAs, so Docker's resolver did not know its name yet. Sendmail retried for about 87 seconds before it answered its first connection. Once its other lookups were made fast, it reached this one before the runner existed, and exited.
 
 Each failure could be worked around one at a time with a Sendmail option such as `FEATURE(nocanonify)`. Every workaround moves the MTA further from how it runs in production, and the next lookup could fail the same way.
 
-Testing ADR 0003 put the test names in `void.invalid`. RFC 2606 §2 reserves four top-level domains: `.test` "for use in testing of current or new DNS related code", `.example` for documentation, `.invalid` for names "that are sure to be invalid", and `.localhost`. Its §3 adds `example.com`, `example.net`, and `example.org` as examples. Under RFC 6761, resolvers and DNS servers treat these names as follows:
+RFC 2606 §2 reserves four top-level domains: `.test` "for use in testing of current or new DNS related code", `.example` for documentation, `.invalid` for names "that are sure to be invalid", and `.localhost`. Its §3 adds `example.com`, `example.net`, and `example.org` as examples. Under RFC 6761, resolvers and DNS servers treat these names as follows:
 
 | Domain | Resolver libraries | DNS servers | RFC 6761 |
 |---|---|---|---|
 | `.invalid` | SHOULD answer with an immediate negative response, and SHOULD NOT send the query to a DNS server | SHOULD answer NXDOMAIN. The data "cannot be modified by local configuration" | §6.4 items 3 to 6 |
 | `.test` | SHOULD NOT treat the names as special, and SHOULD send the query to the configured DNS server | SHOULD answer negatively "unless explicitly configured by the administrator to give positive answers for test names". An operator who uses test names SHOULD make its servers authoritative for them | §6.2 items 3 to 6 |
 | `example.com` and the other example names | SHOULD NOT treat the names as special | SHOULD resolve them normally. The names are "reserved for use in documentation" and registered to IANA | §6.5 items 1, 3, 4, and 7 |
-
-The stack's DNS server gave positive answers for `void.invalid`, against §6.4 items 5 and 6, and a resolver library that follows §6.4 item 3 would fail every lookup of a name in `void.invalid`.
 
 ## Options considered
 
@@ -35,7 +33,7 @@ Name resolution in the stack:
 - (c) Give the network a route to a public resolver.
 
 Domain for the test names:
-- (d) Keep `void.invalid`.
+- (d) Names in a domain under `.invalid`.
 - (e) Names under `example.com`.
 - (f) Names under `void.test`.
 
