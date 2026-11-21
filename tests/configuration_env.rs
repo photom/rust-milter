@@ -107,7 +107,7 @@ fn cfg_087_ignores_variables_without_the_prefix() {
         ("PATH", "/usr/bin"),
         (
             "OTEL_EXPORTER_OTLP_ENDPOINT",
-            "http://collector.void.invalid:4317",
+            "http://collector.void.test:4317",
         ),
     ])
     .unwrap();
