@@ -89,9 +89,9 @@ async fn eng_081_a_second_message_starts_fresh() {
     let mut mta = server.mta().await;
     mta.reach(Reach::Helo).await;
 
-    for sender in ["<a@void.invalid>", "<b@void.invalid>"] {
+    for sender in ["<a@void.test>", "<b@void.test>"] {
         mta.ask_continue(SMFIC_MAIL, strings(&[sender])).await;
-        mta.ask_continue(SMFIC_RCPT, strings(&["<r@void.invalid>"]))
+        mta.ask_continue(SMFIC_RCPT, strings(&["<r@void.test>"]))
             .await;
         mta.ask_continue(SMFIC_BODYEOB, Bytes::new()).await;
     }
@@ -99,8 +99,8 @@ async fn eng_081_a_second_message_starts_fresh() {
     assert_eq!(
         &log.events()[1..],
         [
-            "mail <a@void.invalid>: message None, session Some(\"[192.0.2.1]\")",
-            "mail <b@void.invalid>: message None, session Some(\"[192.0.2.1]\")"
+            "mail <a@void.test>: message None, session Some(\"[192.0.2.1]\")",
+            "mail <b@void.test>: message None, session Some(\"[192.0.2.1]\")"
         ]
     );
     server.stop().await;
@@ -144,12 +144,12 @@ async fn session(mut mta: Mta, name: &str) {
     mta.negotiate().await;
     mta.ask_continue(SMFIC_CONNECT, connect_data(name, "192.0.2.1", 4711))
         .await;
-    mta.ask_continue(SMFIC_HELO, strings(&["client.void.invalid"]))
+    mta.ask_continue(SMFIC_HELO, strings(&["client.void.test"]))
         .await;
     for i in 0..20 {
-        let sender = format!("<{name}-{i}@void.invalid>");
+        let sender = format!("<{name}-{i}@void.test>");
         mta.ask_continue(SMFIC_MAIL, strings(&[&sender])).await;
-        mta.ask_continue(SMFIC_RCPT, strings(&["<r@void.invalid>"]))
+        mta.ask_continue(SMFIC_RCPT, strings(&["<r@void.test>"]))
             .await;
         mta.ask_continue(SMFIC_BODYEOB, Bytes::new()).await;
     }
