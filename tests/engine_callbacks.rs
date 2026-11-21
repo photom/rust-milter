@@ -21,7 +21,7 @@ async fn eng_020_continues_every_command_of_a_session_by_default() {
 
     mta.send(
         SMFIC_MACRO,
-        macro_data(SMFIC_CONNECT, &[("j", "mta.void.invalid")]),
+        macro_data(SMFIC_CONNECT, &[("j", "mta.void.test")]),
     )
     .await;
     let commands: [(u8, Bytes); 13] = [
@@ -29,13 +29,13 @@ async fn eng_020_continues_every_command_of_a_session_by_default() {
             SMFIC_CONNECT,
             connect_data("[192.0.2.1]", "192.0.2.1", 4711),
         ),
-        (SMFIC_HELO, strings(&["client.void.invalid"])),
-        (SMFIC_MAIL, strings(&["<sender@void.invalid>"])),
-        (SMFIC_RCPT, strings(&["<one@void.invalid>"])),
-        (SMFIC_RCPT, strings(&["<two@void.invalid>"])),
+        (SMFIC_HELO, strings(&["client.void.test"])),
+        (SMFIC_MAIL, strings(&["<sender@void.test>"])),
+        (SMFIC_RCPT, strings(&["<one@void.test>"])),
+        (SMFIC_RCPT, strings(&["<two@void.test>"])),
         (SMFIC_DATA, Bytes::new()),
-        (SMFIC_HEADER, strings(&["From", "sender@void.invalid"])),
-        (SMFIC_HEADER, strings(&["To", "one@void.invalid"])),
+        (SMFIC_HEADER, strings(&["From", "sender@void.test"])),
+        (SMFIC_HEADER, strings(&["To", "one@void.test"])),
         (SMFIC_HEADER, strings(&["Subject", "test"])),
         (SMFIC_EOH, Bytes::new()),
         (SMFIC_BODY, Bytes::from_static(b"first\r\n")),
@@ -91,7 +91,7 @@ async fn eng_021_returns_to_helo_after_a_connect_level_accept() {
             connect_data("[192.0.2.1]", "192.0.2.1", 4711),
         )
         .await;
-    let helo = mta.ask(SMFIC_HELO, strings(&["client.void.invalid"])).await;
+    let helo = mta.ask(SMFIC_HELO, strings(&["client.void.test"])).await;
 
     assert_eq!(connect.command, SMFIR_ACCEPT);
     assert_eq!(helo.command, SMFIR_CONTINUE);
@@ -99,7 +99,7 @@ async fn eng_021_returns_to_helo_after_a_connect_level_accept() {
     server.stop().await;
 }
 
-/// Rejects the recipient `<bad@void.invalid>`.
+/// Rejects the recipient `<bad@void.test>`.
 struct RejectsBadRecipient(Log);
 
 impl Handler for RejectsBadRecipient {
@@ -113,7 +113,7 @@ impl Handler for RejectsBadRecipient {
         _args: &[MilterText],
     ) -> Result<Decision> {
         self.0.push(recipient.to_string_lossy());
-        if recipient.as_bytes() == b"<bad@void.invalid>" {
+        if recipient.as_bytes() == b"<bad@void.test>" {
             Ok(Decision::Reject)
         } else {
             Ok(Decision::Continue)
@@ -129,12 +129,12 @@ async fn eng_022_a_rejected_recipient_does_not_end_the_message() {
     let mut mta = server.mta().await;
     mta.reach(Reach::Mail).await;
 
-    let first = mta.ask(SMFIC_RCPT, strings(&["<bad@void.invalid>"])).await;
-    let second = mta.ask(SMFIC_RCPT, strings(&["<good@void.invalid>"])).await;
+    let first = mta.ask(SMFIC_RCPT, strings(&["<bad@void.test>"])).await;
+    let second = mta.ask(SMFIC_RCPT, strings(&["<good@void.test>"])).await;
 
     assert_eq!(first.command, SMFIR_REJECT);
     assert_eq!(second.command, SMFIR_CONTINUE);
-    assert_eq!(log.events(), ["<bad@void.invalid>", "<good@void.invalid>"]);
+    assert_eq!(log.events(), ["<bad@void.test>", "<good@void.test>"]);
     server.stop().await;
 }
 
@@ -170,8 +170,8 @@ async fn eng_023_a_new_mail_after_a_reject_gets_a_fresh_message() {
     let mut mta = server.mta().await;
     mta.reach(Reach::Helo).await;
 
-    let first = mta.ask(SMFIC_MAIL, strings(&["<one@void.invalid>"])).await;
-    let second = mta.ask(SMFIC_MAIL, strings(&["<two@void.invalid>"])).await;
+    let first = mta.ask(SMFIC_MAIL, strings(&["<one@void.test>"])).await;
+    let second = mta.ask(SMFIC_MAIL, strings(&["<two@void.test>"])).await;
 
     assert_eq!(first.command, SMFIR_REJECT);
     assert_eq!(second.command, SMFIR_REJECT);
@@ -207,7 +207,7 @@ async fn eng_024_sends_a_custom_reply_with_percent_doubled() {
         let mut mta = server.mta().await;
         mta.reach(Reach::Mail).await;
 
-        let answer = mta.ask(SMFIC_RCPT, strings(&["<rcpt@void.invalid>"])).await;
+        let answer = mta.ask(SMFIC_RCPT, strings(&["<rcpt@void.test>"])).await;
 
         assert_eq!(answer.command, SMFIR_REPLYCODE);
         let expected = format!("{}\0", wire.replace('%', "%%"));
@@ -373,7 +373,7 @@ async fn eng_029_a_modification_without_its_action_fails_and_sends_nothing() {
     mta.reach(Reach::Body).await;
 
     let reply = mta.ask(SMFIC_BODYEOB, Bytes::new()).await;
-    mta.ask_continue(SMFIC_MAIL, strings(&["<next@void.invalid>"]))
+    mta.ask_continue(SMFIC_MAIL, strings(&["<next@void.test>"]))
         .await;
 
     assert_eq!(reply.command, SMFIR_CONTINUE);
@@ -588,9 +588,9 @@ async fn eng_033_callbacks_of_one_connection_run_one_at_a_time_in_order() {
             SMFIC_CONNECT,
             connect_data("[192.0.2.1]", "192.0.2.1", 4711),
         ),
-        (SMFIC_HELO, strings(&["client.void.invalid"])),
-        (SMFIC_MAIL, strings(&["<sender@void.invalid>"])),
-        (SMFIC_RCPT, strings(&["<rcpt@void.invalid>"])),
+        (SMFIC_HELO, strings(&["client.void.test"])),
+        (SMFIC_MAIL, strings(&["<sender@void.test>"])),
+        (SMFIC_RCPT, strings(&["<rcpt@void.test>"])),
         (SMFIC_BODYEOB, Bytes::new()),
     ];
     for (command, data) in commands {
