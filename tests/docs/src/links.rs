@@ -717,7 +717,7 @@ mod tests {
         let markdown = Kind::Markdown;
         let rust = Kind::Rust;
         let site = "https://doc.rust-lang.org/rustdoc/";
-        let mail = "mailto:test@void.invalid";
+        let mail = "mailto:test@void.test";
         let intra_doc = "Handler#protocol-engine-behavior";
 
         for target in [site, mail] {
