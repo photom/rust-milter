@@ -190,7 +190,7 @@ impl Mta {
         if state == Reach::Conn {
             return;
         }
-        self.ask_continue(SMFIC_HELO, strings(&["client.void.invalid"]))
+        self.ask_continue(SMFIC_HELO, strings(&["client.void.test"]))
             .await;
         match state {
             Reach::Helo => return,
@@ -201,8 +201,8 @@ impl Mta {
             _ => {}
         }
         let steps: [(Reach, u8, Bytes); 7] = [
-            (Reach::Mail, SMFIC_MAIL, strings(&["<sender@void.invalid>"])),
-            (Reach::Rcpt, SMFIC_RCPT, strings(&["<rcpt@void.invalid>"])),
+            (Reach::Mail, SMFIC_MAIL, strings(&["<sender@void.test>"])),
+            (Reach::Rcpt, SMFIC_RCPT, strings(&["<rcpt@void.test>"])),
             (Reach::Data, SMFIC_DATA, Bytes::new()),
             (Reach::Hdrs, SMFIC_HEADER, strings(&["Subject", "test"])),
             (Reach::Eohs, SMFIC_EOH, Bytes::new()),
