@@ -7,7 +7,7 @@ body:
       value: |
         Do not report security vulnerabilities here. Use "Report a security vulnerability" on the new issue page instead.
 
-        Before you paste logs or messages, remove real email addresses, hostnames, and SMTP client IP addresses. Use addresses under `void.invalid` in examples, such as `sender@void.invalid`.
+        Before you paste logs or messages, remove real email addresses, hostnames, and SMTP client IP addresses. Use addresses under `void.test` in examples, such as `sender@void.test`.
   - type: textarea
     id: what-happened
     attributes:
@@ -28,7 +28,7 @@ body:
       description: The smallest handler and configuration that shows the bug, and the SMTP session that triggers it.
       placeholder: |
         1. Run a milter with this handler: ...
-        2. Send mail from sender@void.invalid to rcpt@void.invalid through Postfix
+        2. Send mail from sender@void.test to rcpt@void.test through Postfix
         3. ...
     validations:
       required: true

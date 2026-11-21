@@ -129,7 +129,7 @@ sudo postfix reload
 ## 5. Send a test message
 
 ```sh
-swaks --server 127.0.0.1 --to "$USER@localhost" --from test@void.invalid
+swaks --server 127.0.0.1 --to "$USER@localhost" --from test@void.test
 ```
 
 Open the delivered message, for example in `/var/mail/$USER`. Its headers include:
