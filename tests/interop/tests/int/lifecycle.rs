@@ -106,7 +106,7 @@ async fn attempt(mta: Mta, mail: &Mail) -> Attempt {
         attempt.replies = replies;
         return attempt;
     }
-    let ehlo = smtp.command("EHLO client.void.invalid").await;
+    let ehlo = smtp.command("EHLO client.void.test").await;
     let ehlo_closes = ehlo.code == 421;
     let ehlo_accepted = ehlo.is_positive();
     replies.push(ehlo);

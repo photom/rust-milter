@@ -405,7 +405,7 @@ async fn rld_051_a_shutdown_uses_the_current_timings() {
     let started = Instant::now();
 
     tokio::time::sleep(Duration::from_millis(200)).await;
-    mta.ask_continue(SMFIC_MAIL, strings(&["<sender@void.invalid>"]))
+    mta.ask_continue(SMFIC_MAIL, strings(&["<sender@void.test>"]))
         .await;
     assert!(mta.closes().await);
     let closed = started.elapsed();
@@ -579,10 +579,10 @@ impl Handler for Threshold {
 
 /// One message from MAIL to end of message, with a step in between.
 async fn message(mta: &mut Mta, between: impl std::future::Future<Output = ()>) {
-    mta.ask_continue(SMFIC_MAIL, strings(&["<sender@void.invalid>"]))
+    mta.ask_continue(SMFIC_MAIL, strings(&["<sender@void.test>"]))
         .await;
     between.await;
-    mta.ask_continue(SMFIC_RCPT, strings(&["<rcpt@void.invalid>"]))
+    mta.ask_continue(SMFIC_RCPT, strings(&["<rcpt@void.test>"]))
         .await;
     mta.ask_continue(SMFIC_BODYEOB, Bytes::new()).await;
 }
@@ -1072,10 +1072,10 @@ mod sockets {
         second.reach(Reach::Helo).await;
         let before = handler.seen().len();
         first
-            .ask_continue(SMFIC_MAIL, strings(&["<first@void.invalid>"]))
+            .ask_continue(SMFIC_MAIL, strings(&["<first@void.test>"]))
             .await;
         second
-            .ask_continue(SMFIC_MAIL, strings(&["<second@void.invalid>"]))
+            .ask_continue(SMFIC_MAIL, strings(&["<second@void.test>"]))
             .await;
 
         let seen = handler.seen()[before..].to_vec();
@@ -1107,11 +1107,11 @@ mod sockets {
                 (SMFIC_CONNECT, connect, "connect")
             }
             Step::Negotiated => (SMFIC_CONNECT, connect, "connect"),
-            Step::At(Reach::Conn) => (SMFIC_HELO, strings(&["client.void.invalid"]), "helo"),
+            Step::At(Reach::Conn) => (SMFIC_HELO, strings(&["client.void.test"]), "helo"),
             Step::At(Reach::Helo | Reach::Endm | Reach::Unkn) => {
-                (SMFIC_MAIL, strings(&["<next@void.invalid>"]), "mail")
+                (SMFIC_MAIL, strings(&["<next@void.test>"]), "mail")
             }
-            Step::At(Reach::Mail) => (SMFIC_RCPT, strings(&["<next@void.invalid>"]), "rcpt"),
+            Step::At(Reach::Mail) => (SMFIC_RCPT, strings(&["<next@void.test>"]), "rcpt"),
             Step::At(Reach::Rcpt) => (SMFIC_DATA, Bytes::new(), "data"),
             Step::At(Reach::Data) => (SMFIC_HEADER, strings(&["Subject", "next"]), "header"),
             Step::At(Reach::Hdrs) => (SMFIC_EOH, Bytes::new(), "end_of_headers"),

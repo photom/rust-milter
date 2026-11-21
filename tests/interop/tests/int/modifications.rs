@@ -22,9 +22,9 @@ impl Handler for ChangesEverything {
     async fn end_of_message(&self, ctx: &mut EomContext<Self>) -> Result<Decision> {
         ctx.change_header("X-Change", 1, "new").await?;
         ctx.delete_header("X-Delete", 1).await?;
-        ctx.add_recipient("<added@void.invalid>").await?;
-        ctx.delete_recipient("<removed@void.invalid>").await?;
-        ctx.change_from("<changed@void.invalid>", None).await?;
+        ctx.add_recipient("<added@void.test>").await?;
+        ctx.delete_recipient("<removed@void.test>").await?;
+        ctx.change_from("<changed@void.test>", None).await?;
         ctx.replace_body(b"Replaced body.\r\n").await?;
         Ok(Decision::Continue)
     }
@@ -36,7 +36,7 @@ async fn int_020_every_modification_reaches_the_delivered_message() {
     for mta in Mta::BOTH {
         let milter = Milter::start(ChangesEverything).await;
         let mail = Mail::new()
-            .to(&["kept@void.invalid", "removed@void.invalid"])
+            .to(&["kept@void.test", "removed@void.test"])
             .header("X-Change", "old")
             .header("X-Delete", "gone");
 
@@ -44,16 +44,11 @@ async fn int_020_every_modification_reaches_the_delivered_message() {
 
         assert!(sent.accepted(), "{mta}: {sent:?}");
         let reached =
-            sink::wait_for_recipients(&mail.token, &["added@void.invalid", "kept@void.invalid"])
-                .await;
-        assert_eq!(
-            reached,
-            ["added@void.invalid", "kept@void.invalid"],
-            "{mta}"
-        );
+            sink::wait_for_recipients(&mail.token, &["added@void.test", "kept@void.test"]).await;
+        assert_eq!(reached, ["added@void.test", "kept@void.test"], "{mta}");
         let copies = sink::received(&mail.token);
         for copy in &copies {
-            assert_eq!(copy.from, "changed@void.invalid", "{mta}: {copy:?}");
+            assert_eq!(copy.from, "changed@void.test", "{mta}: {copy:?}");
             assert_eq!(copy.header("X-Change").as_deref(), Some("new"), "{mta}");
             assert_eq!(copy.header("X-Delete"), None, "{mta}");
             assert_eq!(copy.body(), b"Replaced body.\r\n", "{mta}");

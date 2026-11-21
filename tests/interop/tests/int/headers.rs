@@ -189,7 +189,7 @@ async fn int_063_postfix_below_version_6_tempfails_a_handler_that_needs_the_opti
     // so the test collects every reply of the session.
     let mut smtp = Smtp::connect_port(Mta::Postfix, POSTFIX_VERSION_4).await;
     let mut replies: Vec<Reply> = vec![smtp.greeting.clone()];
-    replies.push(smtp.command("EHLO client.void.invalid").await);
+    replies.push(smtp.command("EHLO client.void.test").await);
     let sent = smtp.send(&mail).await;
     smtp.quit().await;
     replies.push(sent.mail.clone());

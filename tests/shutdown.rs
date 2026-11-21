@@ -153,7 +153,7 @@ async fn sht_003_commands_in_the_grace_period_are_served() {
     server.handle.shutdown();
     let status = server.handle.status();
     tokio::time::sleep(Duration::from_millis(200)).await;
-    mta.ask_continue(SMFIC_MAIL, strings(&["<s@void.invalid>"]))
+    mta.ask_continue(SMFIC_MAIL, strings(&["<s@void.test>"]))
         .await;
 
     assert!(status.shutting_down && !status.accepting, "{status:?}");
@@ -343,7 +343,7 @@ async fn sht_010_a_frame_in_progress_is_finished_and_answered() {
     let (server, log) = recording(timings(300, 5_000)).await;
     let mut mta = server.mta().await;
     mta.reach(Reach::Helo).await;
-    let data = strings(&["<s@void.invalid>"]);
+    let data = strings(&["<s@void.test>"]);
     let mut frame = u32::try_from(data.len() + 1)
         .unwrap()
         .to_be_bytes()
@@ -487,9 +487,9 @@ mod sockets {
         mta.reach(Reach::Helo).await;
 
         server.handle.shutdown();
-        mta.ask_continue(SMFIC_MAIL, strings(&["<s@void.invalid>"]))
+        mta.ask_continue(SMFIC_MAIL, strings(&["<s@void.test>"]))
             .await;
-        mta.ask_continue(SMFIC_RCPT, strings(&["<r@void.invalid>"]))
+        mta.ask_continue(SMFIC_RCPT, strings(&["<r@void.test>"]))
             .await;
         mta.ask_continue(SMFIC_BODYEOB, Bytes::new()).await;
 

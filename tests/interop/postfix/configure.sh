@@ -1,16 +1,16 @@
 #!/bin/sh
 # Postfix settings for the interoperability stack. The test domain
-# void.invalid is relayed to the SMTP sink in the runner.
+# void.test is relayed to the SMTP sink in the runner.
 set -eu
 
 postconf -e \
   'compatibility_level = 3.6' \
-  'myhostname = postfix.void.invalid' \
+  'myhostname = postfix.void.test' \
   'mydestination =' \
   'inet_protocols = ipv4' \
-  'relay_domains = void.invalid' \
-  'transport_maps = inline:{ void.invalid=smtp:[runner.void.invalid]:2525 }' \
-  'smtpd_milters = inet:runner.void.invalid:8891' \
+  'relay_domains = void.test' \
+  'transport_maps = inline:{ void.test=smtp:[runner.void.test]:2525 }' \
+  'smtpd_milters = inet:runner.void.test:8891' \
   'milter_protocol = 6' \
   'milter_default_action = tempfail' \
   'maillog_file = /dev/stdout'

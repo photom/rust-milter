@@ -87,9 +87,9 @@ impl Mta {
     pub async fn session(&mut self) -> Result<(), Failure> {
         let steps: [(u8, Bytes); 9] = [
             (SMFIC_CONNECT, connect_data()),
-            (SMFIC_HELO, strings(&["client.void.invalid"])),
-            (SMFIC_MAIL, strings(&["<sender@void.invalid>"])),
-            (SMFIC_RCPT, strings(&["<rcpt@void.invalid>"])),
+            (SMFIC_HELO, strings(&["client.void.test"])),
+            (SMFIC_MAIL, strings(&["<sender@void.test>"])),
+            (SMFIC_RCPT, strings(&["<rcpt@void.test>"])),
             (SMFIC_DATA, Bytes::new()),
             (SMFIC_HEADER, strings(&["Subject", "load"])),
             (SMFIC_EOH, Bytes::new()),

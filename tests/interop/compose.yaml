@@ -29,12 +29,12 @@ services:
   # address when it reads its configuration, and exits if the lookup fails.
   dns:
     build: ./dns
-    hostname: dns.void.invalid
+    hostname: dns.void.test
     networks:
       interop:
         ipv4_address: 10.231.0.53
     healthcheck:
-      test: ["CMD", "getent", "hosts", "runner.void.invalid"]
+      test: ["CMD", "getent", "hosts", "runner.void.test"]
       interval: 1s
       timeout: 2s
       retries: 30
@@ -43,7 +43,7 @@ services:
     build:
       context: ../..
       dockerfile: tests/interop/runner/Dockerfile
-    hostname: runner.void.invalid
+    hostname: runner.void.test
     networks:
       interop:
         ipv4_address: 10.231.0.10
@@ -54,7 +54,7 @@ services:
 
   postfix:
     build: ./postfix
-    hostname: postfix.void.invalid
+    hostname: postfix.void.test
     environment: *mta-environment
     networks:
       interop:
@@ -67,7 +67,7 @@ services:
 
   sendmail:
     build: ./sendmail
-    hostname: sendmail.void.invalid
+    hostname: sendmail.void.test
     environment: *mta-environment
     networks:
       interop:
@@ -83,7 +83,7 @@ services:
       context: ./sendmail
       args:
         FILTER_TIMEOUTS: "E:4s;R:3s"
-    hostname: sendmail-short.void.invalid
+    hostname: sendmail-short.void.test
     environment: *mta-environment
     networks:
       interop:

@@ -53,10 +53,10 @@ async fn srv_050_closes_a_connection_over_max_connections_at_once() {
 
     assert!(third.closes().await, "the third connection gets no data");
     first
-        .ask_continue(SMFIC_MAIL, strings(&["<a@void.invalid>"]))
+        .ask_continue(SMFIC_MAIL, strings(&["<a@void.test>"]))
         .await;
     second
-        .ask_continue(SMFIC_MAIL, strings(&["<b@void.invalid>"]))
+        .ask_continue(SMFIC_MAIL, strings(&["<b@void.test>"]))
         .await;
     let rejected = logs.one("Connection rejected (limit)");
     assert_eq!(rejected.level, tracing::Level::WARN);
@@ -274,7 +274,7 @@ async fn srv_061_a_slow_callback_does_not_hold_up_other_connections() {
         support::mta::connect_data("slow", "192.0.2.1", 4711),
     )
     .await;
-    slow.send(SMFIC_MAIL, strings(&["<s@void.invalid>"])).await;
+    slow.send(SMFIC_MAIL, strings(&["<s@void.test>"])).await;
     let mut fast = server.mta().await;
 
     let times = Arc::new(Mutex::new(Vec::new()));
@@ -284,9 +284,9 @@ async fn srv_061_a_slow_callback_does_not_hold_up_other_connections() {
             SMFIC_CONNECT,
             support::mta::connect_data("fast", "192.0.2.2", 4712),
         ),
-        (SMFIC_HELO, strings(&["fast.void.invalid"])),
-        (SMFIC_MAIL, strings(&["<f@void.invalid>"])),
-        (SMFIC_RCPT, strings(&["<r@void.invalid>"])),
+        (SMFIC_HELO, strings(&["fast.void.test"])),
+        (SMFIC_MAIL, strings(&["<f@void.test>"])),
+        (SMFIC_RCPT, strings(&["<r@void.test>"])),
     ] {
         let sent = Instant::now();
         fast.ask_continue(command, data).await;
@@ -382,7 +382,7 @@ async fn srv_080_stored_macros_count_against_max_memory() {
     b.write_raw(&frame_start(30_000)).await;
 
     assert!(b.closes().await);
-    a.ask_continue(SMFIC_HELO, strings(&["client.void.invalid"]))
+    a.ask_continue(SMFIC_HELO, strings(&["client.void.test"]))
         .await;
     assert!(closed_at_limit(&logs, "max_memory"));
     server.stop().await;
@@ -431,7 +431,7 @@ async fn srv_083_dropped_macros_return_their_memory() {
     a.send(SMFIC_MACRO, macro_data(SMFIC_BODYEOB, &[("i", &value)]))
         .await;
     a.ask_continue(SMFIC_BODYEOB, Bytes::new()).await;
-    a.ask_continue(SMFIC_MAIL, strings(&["<sender@void.invalid>"]))
+    a.ask_continue(SMFIC_MAIL, strings(&["<sender@void.test>"]))
         .await;
     let mut b = server.mta().await;
     b.reach(Reach::Data).await;
@@ -510,7 +510,7 @@ async fn srv_090_decoded_strings_count_against_max_memory() {
     assert!(b.closes().await);
     assert!(closed_at_limit(&logs, "max_memory"));
     assert!(!ran(&recorder, "mail"));
-    a.ask_continue(SMFIC_HELO, strings(&["client.void.invalid"]))
+    a.ask_continue(SMFIC_HELO, strings(&["client.void.test"]))
         .await;
     server.stop().await;
 }
@@ -523,7 +523,7 @@ async fn srv_091_a_frame_stays_reserved_until_its_command_finishes() {
     a.negotiate().await;
     a.ask_continue(SMFIC_CONNECT, connect_data("slow", "192.0.2.1", 4711))
         .await;
-    let sender = format!("<{}@void.invalid>", "s".repeat(29_985));
+    let sender = format!("<{}@void.test>", "s".repeat(29_988));
     a.send(SMFIC_MAIL, strings(&[sender.as_str()])).await;
     // Let the server read A's frame and start the slow `mail`.
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -575,13 +575,13 @@ async fn srv_092_a_command_returns_its_memory_after_the_reply() {
 
     a.ask_continue(
         SMFIC_MAIL,
-        strings(&["<sender@void.invalid>", "SIZE=1024", "BODY=8BITMIME"]),
+        strings(&["<sender@void.test>", "SIZE=1024", "BODY=8BITMIME"]),
     )
     .await;
 
     assert_eq!(
         *envelope.0.lock().unwrap(),
-        ["<sender@void.invalid>", "SIZE=1024", "BODY=8BITMIME"]
+        ["<sender@void.test>", "SIZE=1024", "BODY=8BITMIME"]
     );
     let mut b = server.mta().await;
     b.reach(Reach::Data).await;
