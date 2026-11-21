@@ -13,7 +13,7 @@ use tracing::Level;
 /// How long a test waits to be sure a message is not delivered.
 const NOT_DELIVERED: Duration = Duration::from_secs(5);
 
-/// Rejects the recipient `bad@void.invalid`.
+/// Rejects the recipient `bad@void.test`.
 struct RejectsBadRecipient;
 
 impl Handler for RejectsBadRecipient {
@@ -26,7 +26,7 @@ impl Handler for RejectsBadRecipient {
         recipient: &MilterText,
         _args: &[MilterText],
     ) -> Result<Decision> {
-        let bad = recipient.to_string_lossy().contains("bad@void.invalid");
+        let bad = recipient.to_string_lossy().contains("bad@void.test");
         Ok(if bad {
             Decision::Reject
         } else {
@@ -40,7 +40,7 @@ impl Handler for RejectsBadRecipient {
 async fn int_010_a_rejected_recipient_does_not_get_the_message() {
     for mta in Mta::BOTH {
         let milter = Milter::start(RejectsBadRecipient).await;
-        let mail = Mail::new().to(&["bad@void.invalid", "good@void.invalid"]);
+        let mail = Mail::new().to(&["bad@void.test", "good@void.test"]);
 
         let sent = Smtp::send_one(mta, &mail).await;
 
@@ -48,7 +48,7 @@ async fn int_010_a_rejected_recipient_does_not_get_the_message() {
         assert_eq!(sent.rcpts[1].code, 250, "{mta}: {sent:?}");
         assert!(sent.accepted(), "{mta}: {sent:?}");
         let delivered = sink::wait_for(&mail.token).await;
-        assert_eq!(delivered.rcpts, ["good@void.invalid"], "{mta}");
+        assert_eq!(delivered.rcpts, ["good@void.test"], "{mta}");
         milter.wait_closed(1).await;
         milter.stop().await;
     }
@@ -145,8 +145,8 @@ async fn int_013_postfix_closes_the_connection_after_a_connect_reject() {
     // so the test collects the replies up to MAIL.
     let mut smtp = Smtp::connect(Mta::Postfix).await;
     let mut replies = vec![smtp.greeting.clone()];
-    replies.push(smtp.command("EHLO client.void.invalid").await);
-    replies.push(smtp.command("MAIL FROM:<sender@void.invalid>").await);
+    replies.push(smtp.command("EHLO client.void.test").await);
+    replies.push(smtp.command("MAIL FROM:<sender@void.test>").await);
     smtp.quit().await;
 
     let mut rejected = false;
@@ -222,7 +222,7 @@ async fn int_015_a_quarantined_message_is_held() {
     }
 }
 
-/// Tempfails MAIL from `tempfail@void.invalid`.
+/// Tempfails MAIL from `tempfail@void.test`.
 struct TempfailsSender;
 
 impl Handler for TempfailsSender {
@@ -235,7 +235,7 @@ impl Handler for TempfailsSender {
         sender: &MilterText,
         _args: &[MilterText],
     ) -> Result<Decision> {
-        let tempfail = sender.to_string_lossy().contains("tempfail@void.invalid");
+        let tempfail = sender.to_string_lossy().contains("tempfail@void.test");
         Ok(if tempfail {
             Decision::TempFail
         } else {
@@ -250,7 +250,7 @@ async fn int_016_a_tempfail_at_mail_leaves_the_session_usable() {
     for mta in Mta::BOTH {
         let milter = Milter::start(TempfailsSender).await;
         let mut refused = Mail::new();
-        refused.from = "tempfail@void.invalid".to_owned();
+        refused.from = "tempfail@void.test".to_owned();
         let second = Mail::new();
 
         let mut smtp = Smtp::connect(mta).await;
