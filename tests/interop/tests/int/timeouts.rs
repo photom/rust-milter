@@ -102,8 +102,8 @@ async fn int_042_an_idle_connection_is_closed_and_the_mta_tempfails() {
 
         let mut smtp = Smtp::connect(mta).await;
         smtp.ehlo().await;
-        let from = smtp.command("MAIL FROM:<sender@void.invalid>").await;
-        let rcpt = smtp.command("RCPT TO:<rcpt@void.invalid>").await;
+        let from = smtp.command("MAIL FROM:<sender@void.test>").await;
+        let rcpt = smtp.command("RCPT TO:<rcpt@void.test>").await;
         tokio::time::sleep(Duration::from_secs(5)).await;
         let data = smtp.data(&mail.content()).await;
         smtp.quit().await;

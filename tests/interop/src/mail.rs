@@ -21,7 +21,7 @@ pub struct Mail {
 }
 
 impl Mail {
-    /// A short message from `sender@void.invalid` to `rcpt@void.invalid`.
+    /// A short message from `sender@void.test` to `rcpt@void.test`.
     pub fn new() -> Mail {
         let since_epoch = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -34,8 +34,8 @@ impl Mail {
         );
         Mail {
             token,
-            from: "sender@void.invalid".to_owned(),
-            to: vec!["rcpt@void.invalid".to_owned()],
+            from: "sender@void.test".to_owned(),
+            to: vec!["rcpt@void.test".to_owned()],
             headers: Vec::new(),
             body: b"A test message.\r\n".to_vec(),
         }
@@ -75,7 +75,7 @@ impl Mail {
     /// The message as sent after DATA, before dot-stuffing.
     pub fn content(&self) -> Vec<u8> {
         let mut content = format!(
-            "From: <{}>\r\nTo: <{}>\r\nSubject: {}\r\nMessage-ID: <{}@void.invalid>\r\n",
+            "From: <{}>\r\nTo: <{}>\r\nSubject: {}\r\nMessage-ID: <{}@void.test>\r\n",
             self.from,
             self.to.join(">, <"),
             self.token,
