@@ -743,9 +743,9 @@ mod otel {
                 .await;
         }
         mta.ask_continue(SMFIC_BODYEOB, Bytes::new()).await;
-        mta.ask_continue(SMFIC_MAIL, strings(&["<sender@void.invalid>"]))
+        mta.ask_continue(SMFIC_MAIL, strings(&["<sender@void.test>"]))
             .await;
-        mta.ask_continue(SMFIC_RCPT, strings(&["<rcpt@void.invalid>"]))
+        mta.ask_continue(SMFIC_RCPT, strings(&["<rcpt@void.test>"]))
             .await;
         mta.ask_continue(SMFIC_BODYEOB, Bytes::new()).await;
 
@@ -889,10 +889,10 @@ mod otel {
 
     /// Values that must not appear in any metric.
     const MARKERS: [&str; 6] = [
-        "marker-host.void.invalid",
+        "marker-host.void.test",
         "192.0.2.77",
-        "marker-helo.void.invalid",
-        "marker-sender@void.invalid",
+        "marker-helo.void.test",
+        "marker-sender@void.test",
         "marker-header-value",
         "marker-reply-text",
     ];
@@ -928,14 +928,14 @@ mod otel {
         mta.negotiate().await;
         mta.ask_continue(
             SMFIC_CONNECT,
-            connect_data("marker-host.void.invalid", "192.0.2.77", 4714),
+            connect_data("marker-host.void.test", "192.0.2.77", 4714),
         )
         .await;
-        mta.ask_continue(SMFIC_HELO, strings(&["marker-helo.void.invalid"]))
+        mta.ask_continue(SMFIC_HELO, strings(&["marker-helo.void.test"]))
             .await;
-        mta.ask_continue(SMFIC_MAIL, strings(&["<marker-sender@void.invalid>"]))
+        mta.ask_continue(SMFIC_MAIL, strings(&["<marker-sender@void.test>"]))
             .await;
-        mta.ask_continue(SMFIC_RCPT, strings(&["<rcpt@void.invalid>"]))
+        mta.ask_continue(SMFIC_RCPT, strings(&["<rcpt@void.test>"]))
             .await;
         mta.ask_continue(SMFIC_HEADER, strings(&["X-Marker", "marker-header-value"]))
             .await;
