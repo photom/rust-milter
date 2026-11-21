@@ -263,8 +263,8 @@ mod tests {
     #[test]
     fn cmd_045_a_command_costs_its_packet_and_its_strings() {
         let text = std::mem::size_of::<MilterText>();
-        let mail = frame(SMFIC_MAIL, b"<a@void.invalid>\0SIZE=100\0");
-        let macros = frame(SMFIC_MACRO, b"C{j}\0mx.void.invalid\0{x}\0\0");
+        let mail = frame(SMFIC_MAIL, b"<a@void.test>\0SIZE=100\0");
+        let macros = frame(SMFIC_MACRO, b"C{j}\0mx.void.test\0{x}\0\0");
         let body = frame(SMFIC_BODY, &[0; 100]);
 
         assert_eq!(cost(&mail), 5 + mail.data.len() + 2 * text);

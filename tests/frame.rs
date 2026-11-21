@@ -31,7 +31,7 @@ fn frm_001_parses_one_complete_frame() {
 #[test]
 fn frm_002_parses_two_frames_back_to_back() {
     let mut bytes = raw_frame(b'H', b"mail\0");
-    bytes.extend(raw_frame(b'R', b"<rcpt@void.invalid>\0"));
+    bytes.extend(raw_frame(b'R', b"<rcpt@void.test>\0"));
     let mut buf = BytesMut::from(&bytes[..]);
 
     let first = Frame::parse(&mut buf, DEFAULT_MAX).unwrap().unwrap();
@@ -40,7 +40,7 @@ fn frm_002_parses_two_frames_back_to_back() {
     assert_eq!((first.command, &first.data[..]), (b'H', &b"mail\0"[..]));
     assert_eq!(
         (second.command, &second.data[..]),
-        (b'R', &b"<rcpt@void.invalid>\0"[..])
+        (b'R', &b"<rcpt@void.test>\0"[..])
     );
     assert!(buf.is_empty());
 }
