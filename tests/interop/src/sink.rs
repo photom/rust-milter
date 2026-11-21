@@ -1,5 +1,5 @@
 //! The SMTP sink on port 2525 of the runner. Both MTAs relay mail for
-//! `void.invalid` to it, and it keeps every message it receives.
+//! `void.test` to it, and it keeps every message it receives.
 //!
 //! The sink runs on its own thread for the whole test binary, so that an
 //! MTA's delivery never finds it stopped between two tests. A test finds its
@@ -230,7 +230,7 @@ async fn serve(ready: std::sync::mpsc::Sender<()>) {
 async fn session(stream: TcpStream) -> io::Result<()> {
     let (read, mut write) = stream.into_split();
     let mut read = BufReader::new(read);
-    write.write_all(b"220 sink.void.invalid ESMTP\r\n").await?;
+    write.write_all(b"220 sink.void.test ESMTP\r\n").await?;
     let mut from = String::new();
     let mut rcpts = Vec::new();
     loop {
@@ -241,9 +241,9 @@ async fn session(stream: TcpStream) -> io::Result<()> {
         let line = String::from_utf8_lossy(&line).trim_end().to_owned();
         let upper = line.to_ascii_uppercase();
         let reply: &[u8] = if upper.starts_with("EHLO") {
-            b"250-sink.void.invalid\r\n250 8BITMIME\r\n"
+            b"250-sink.void.test\r\n250 8BITMIME\r\n"
         } else if upper.starts_with("HELO") {
-            b"250 sink.void.invalid\r\n"
+            b"250 sink.void.test\r\n"
         } else if upper.starts_with("MAIL FROM:") {
             from = path(&line["MAIL FROM:".len()..]);
             rcpts.clear();
@@ -295,7 +295,7 @@ async fn read_data(read: &mut BufReader<tokio::net::tcp::OwnedReadHalf>) -> io::
     }
 }
 
-/// The address in a MAIL or RCPT argument, such as `<a@void.invalid> SIZE=10`.
+/// The address in a MAIL or RCPT argument, such as `<a@void.test> SIZE=10`.
 fn path(argument: &str) -> String {
     let argument = argument.trim_start();
     if let Some(rest) = argument.strip_prefix('<') {

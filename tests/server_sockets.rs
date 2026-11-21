@@ -187,7 +187,7 @@ async fn every_state(config: ServerConfig) -> Vec<(String, SocketReadback)> {
     let mut mta = server.mta().await;
     mta.reach(Reach::Endm).await;
     mta.ask_continue(SMFIC_UNKNOWN, strings(&["NOOP"])).await;
-    mta.ask_continue(SMFIC_MAIL, strings(&["<second@void.invalid>"]))
+    mta.ask_continue(SMFIC_MAIL, strings(&["<second@void.test>"]))
         .await;
     mta.send(SMFIC_ABORT, Bytes::new()).await;
     mta.ask_continue(SMFIC_UNKNOWN, strings(&["NOOP"])).await;

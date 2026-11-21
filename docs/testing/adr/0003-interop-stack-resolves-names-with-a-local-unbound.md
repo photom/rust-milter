@@ -1,6 +1,6 @@
 # Testing ADR 0003: The interoperability stack resolves names with a local Unbound
 
-- Status: Accepted
+- Status: Superseded by [testing ADR 0007](0007-test-names-are-in-void-test-and-resolve-with-a-local-unbound.md)
 - Date: 2026-11-05
 - Affects: test environment, CI
 

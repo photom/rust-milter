@@ -231,9 +231,9 @@ async fn server_with(commands: TraceCommands) -> TestServer {
 }
 
 async fn message(mta: &mut Mta) {
-    mta.ask_continue(SMFIC_MAIL, strings(&["<sender@void.invalid>"]))
+    mta.ask_continue(SMFIC_MAIL, strings(&["<sender@void.test>"]))
         .await;
-    mta.ask_continue(SMFIC_RCPT, strings(&["<rcpt@void.invalid>"]))
+    mta.ask_continue(SMFIC_RCPT, strings(&["<rcpt@void.test>"]))
         .await;
     mta.ask_continue(SMFIC_BODYEOB, Bytes::new()).await;
 }
@@ -303,9 +303,9 @@ async fn tel_033_an_aborted_message_has_no_earlier_queue_id() {
     mta.send(SMFIC_MACRO, macro_data(SMFIC_BODYEOB, &[("i", "4XyZ12")]))
         .await;
     mta.ask_continue(SMFIC_BODYEOB, Bytes::new()).await;
-    mta.ask_continue(SMFIC_MAIL, strings(&["<two@void.invalid>"]))
+    mta.ask_continue(SMFIC_MAIL, strings(&["<two@void.test>"]))
         .await;
-    mta.ask_continue(SMFIC_RCPT, strings(&["<rcpt@void.invalid>"]))
+    mta.ask_continue(SMFIC_RCPT, strings(&["<rcpt@void.test>"]))
         .await;
     mta.send(SMFIC_ABORT, Bytes::new()).await;
     mta.close().await;
@@ -388,13 +388,13 @@ async fn full_session(mta: &mut Mta) {
         connect_data("[192.0.2.1]", "192.0.2.1", 4711),
     )
     .await;
-    mta.ask_continue(SMFIC_HELO, strings(&["client.void.invalid"]))
+    mta.ask_continue(SMFIC_HELO, strings(&["client.void.test"]))
         .await;
     mta.send(SMFIC_MACRO, macro_data(SMFIC_MAIL, &[("{mail_addr}", "x")]))
         .await;
-    mta.ask_continue(SMFIC_MAIL, strings(&["<sender@void.invalid>"]))
+    mta.ask_continue(SMFIC_MAIL, strings(&["<sender@void.test>"]))
         .await;
-    mta.ask_continue(SMFIC_RCPT, strings(&["<rcpt@void.invalid>"]))
+    mta.ask_continue(SMFIC_RCPT, strings(&["<rcpt@void.test>"]))
         .await;
     mta.ask_continue(SMFIC_DATA, Bytes::new()).await;
     for name in ["Subject", "From", "To"] {
@@ -486,8 +486,8 @@ async fn tel_026_a_handler_attribute_lands_on_the_session_span() {
     assert_eq!(span_text(connection, "app.verdict"), None);
 }
 
-/// Rejects the client `reject.void.invalid`, and the recipient
-/// `<bad@void.invalid>`; accepts every message at its end.
+/// Rejects the client `reject.void.test`, and the recipient
+/// `<bad@void.test>`; accepts every message at its end.
 struct Deciding;
 
 impl Handler for Deciding {
@@ -499,7 +499,7 @@ impl Handler for Deciding {
         _ctx: &mut SessionContext<Self>,
         info: &ConnectInfo,
     ) -> Result<ConnectDecision> {
-        if info.hostname.as_bytes() == b"reject.void.invalid" {
+        if info.hostname.as_bytes() == b"reject.void.test" {
             return Ok(ConnectDecision::Reject);
         }
         Ok(ConnectDecision::Continue)
@@ -511,7 +511,7 @@ impl Handler for Deciding {
         recipient: &MilterText,
         _args: &[MilterText],
     ) -> Result<Decision> {
-        if recipient.as_bytes() == b"<bad@void.invalid>" {
+        if recipient.as_bytes() == b"<bad@void.test>" {
             return Ok(Decision::Reject);
         }
         Ok(Decision::Continue)
@@ -531,7 +531,7 @@ async fn tel_027_session_and_message_spans_record_the_final_decision() {
     let reply = rejected
         .ask(
             SMFIC_CONNECT,
-            connect_data("reject.void.invalid", "192.0.2.9", 4713),
+            connect_data("reject.void.test", "192.0.2.9", 4713),
         )
         .await;
     assert_eq!(reply.command, SMFIR_REJECT);
@@ -542,21 +542,21 @@ async fn tel_027_session_and_message_spans_record_the_final_decision() {
         mta.ask(SMFIC_BODYEOB, Bytes::new()).await.command,
         SMFIR_ACCEPT
     );
-    mta.ask_continue(SMFIC_MAIL, strings(&["<sender@void.invalid>"]))
+    mta.ask_continue(SMFIC_MAIL, strings(&["<sender@void.test>"]))
         .await;
     assert_eq!(
-        mta.ask(SMFIC_RCPT, strings(&["<bad@void.invalid>"]))
+        mta.ask(SMFIC_RCPT, strings(&["<bad@void.test>"]))
             .await
             .command,
         SMFIR_REJECT
     );
-    mta.ask_continue(SMFIC_RCPT, strings(&["<rcpt@void.invalid>"]))
+    mta.ask_continue(SMFIC_RCPT, strings(&["<rcpt@void.test>"]))
         .await;
     assert_eq!(
         mta.ask(SMFIC_BODYEOB, Bytes::new()).await.command,
         SMFIR_ACCEPT
     );
-    mta.ask_continue(SMFIC_MAIL, strings(&["<sender@void.invalid>"]))
+    mta.ask_continue(SMFIC_MAIL, strings(&["<sender@void.test>"]))
         .await;
     mta.send(SMFIC_ABORT, Bytes::new()).await;
     mta.close().await;
@@ -660,11 +660,11 @@ async fn tel_029_a_timeout_or_a_reset_is_no_span_error() {
 
 /// Values that must not appear in any span, event, or log record.
 const MARKERS: [&str; 14] = [
-    "marker-host.void.invalid",
+    "marker-host.void.test",
     "192.0.2.77",
-    "marker-helo.void.invalid",
-    "marker-sender@void.invalid",
-    "marker-rcpt@void.invalid",
+    "marker-helo.void.test",
+    "marker-sender@void.test",
+    "marker-rcpt@void.test",
     "MARKER-ESMTP",
     "X-Marker-Name",
     "marker-header-value",
@@ -723,10 +723,10 @@ async fn tel_030_no_smtp_data_reaches_spans_events_or_logs() {
     .await;
     mta.ask_continue(
         SMFIC_CONNECT,
-        connect_data("marker-host.void.invalid", "192.0.2.77", 4714),
+        connect_data("marker-host.void.test", "192.0.2.77", 4714),
     )
     .await;
-    mta.ask_continue(SMFIC_HELO, strings(&["marker-helo.void.invalid"]))
+    mta.ask_continue(SMFIC_HELO, strings(&["marker-helo.void.test"]))
         .await;
     mta.send(
         SMFIC_MACRO,
@@ -738,13 +738,13 @@ async fn tel_030_no_smtp_data_reaches_spans_events_or_logs() {
     .await;
     mta.ask_continue(
         SMFIC_MAIL,
-        strings(&["<marker-sender@void.invalid>", "MARKER-ESMTP"]),
+        strings(&["<marker-sender@void.test>", "MARKER-ESMTP"]),
     )
     .await;
-    mta.ask_continue(SMFIC_RCPT, strings(&["<marker-rcpt@void.invalid>"]))
+    mta.ask_continue(SMFIC_RCPT, strings(&["<marker-rcpt@void.test>"]))
         .await;
     let reply = mta
-        .ask(SMFIC_RCPT, strings(&["<marker-rcpt@void.invalid>"]))
+        .ask(SMFIC_RCPT, strings(&["<marker-rcpt@void.test>"]))
         .await;
     assert_eq!(reply.command, SMFIR_REPLYCODE);
     mta.ask_continue(

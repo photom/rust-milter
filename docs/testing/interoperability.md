@@ -1,6 +1,6 @@
 # Test scenarios: Interoperability with Sendmail and Postfix
 
-Scenarios that run rust-milter behind real MTAs: the Postfix and Sendmail packages of the pinned Debian release. They run in the [interoperability environment](../reference/test-environment.md#interoperability-environment), outside `cargo test`; a scenario that names both MTAs runs once with each. The test sends mail with its own SMTP client, and reads the SMTP replies, the messages that reach the SMTP sink, and the logs. Every address uses the domain `void.invalid`. Conventions are in [README.md](README.md).
+Scenarios that run rust-milter behind real MTAs: the Postfix and Sendmail packages of the pinned Debian release. They run in the [interoperability environment](../reference/test-environment.md#interoperability-environment), outside `cargo test`; a scenario that names both MTAs runs once with each. The test sends mail with its own SMTP client, and reads the SMTP replies, the messages that reach the SMTP sink, and the logs. Every address uses the domain `void.test`. Conventions are in [README.md](README.md).
 
 ## Basic flow
 
@@ -15,7 +15,7 @@ Scenarios that run rust-milter behind real MTAs: the Postfix and Sendmail packag
 
 | ID | Level | Given | When | Then | Spec |
 |----|-------|-------|------|------|------|
-| INT-010 | interop | Both MTAs and a handler whose `rcpt` rejects `bad@void.invalid` | a client sends to `bad@void.invalid` and `good@void.invalid` | the client gets 5xx for the first recipient and 250 for the second, and the message reaches only the second | [api: Handler, Callbacks](https://photom.github.io/rust-milter/rust_milter/trait.Handler.html#callbacks) |
+| INT-010 | interop | Both MTAs and a handler whose `rcpt` rejects `bad@void.test` | a client sends to `bad@void.test` and `good@void.test` | the client gets 5xx for the first recipient and 250 for the second, and the message reaches only the second | [api: Handler, Callbacks](https://photom.github.io/rust-milter/rust_milter/trait.Handler.html#callbacks) |
 | INT-011 | interop | Both MTAs and a handler whose `end_of_message` returns `Reply` with `550 5.7.1 Rejected: 100% spam` | a client sends one message | the client sees exactly `550 5.7.1 Rejected: 100% spam` | [protocol: SMTP reply code handling](../reference/milter-protocol.md#smtp-reply-code-handling-smfir_replycode) |
 | INT-012 | interop | Both MTAs and a multi-line `Reply` with three lines | a client sends one message | the client sees the three lines in order, each with the code and enhanced code | [protocol: Multi-line reply handling](../reference/milter-protocol.md#multi-line-reply-handling) |
 | INT-013 | interop | Postfix and a handler whose `connect` returns `Reject` | a client connects | the client gets a 5xx reply; Postfix closes the milter connection without `SMFIC_QUIT`; `session_end` gets `ConnectionClosed`; the milter logs nothing above DEBUG | [protocol: Connection lifecycle](../reference/milter-protocol.md#connection-lifecycle) |

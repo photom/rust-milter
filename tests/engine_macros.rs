@@ -125,21 +125,21 @@ async fn eng_042_later_stages_see_the_mail_macros() {
 
     mta.send(
         SMFIC_MACRO,
-        macro_data(SMFIC_MAIL, &[("{mail_addr}", "sender@void.invalid")]),
+        macro_data(SMFIC_MAIL, &[("{mail_addr}", "sender@void.test")]),
     )
     .await;
-    mta.ask_continue(SMFIC_MAIL, strings(&["<sender@void.invalid>"]))
+    mta.ask_continue(SMFIC_MAIL, strings(&["<sender@void.test>"]))
         .await;
-    mta.ask_continue(SMFIC_RCPT, strings(&["<rcpt@void.invalid>"]))
+    mta.ask_continue(SMFIC_RCPT, strings(&["<rcpt@void.test>"]))
         .await;
     mta.ask_continue(SMFIC_BODYEOB, Bytes::new()).await;
 
     assert_eq!(
         &log.events()[1..],
         [
-            "mail=sender@void.invalid",
-            "rcpt=sender@void.invalid",
-            "end_of_message=sender@void.invalid"
+            "mail=sender@void.test",
+            "rcpt=sender@void.test",
+            "end_of_message=sender@void.test"
         ]
     );
     server.stop().await;
@@ -196,7 +196,7 @@ async fn message_with_sender(mta: &mut support::mta::Mta, sender: &str) {
     )
     .await;
     mta.ask_continue(SMFIC_MAIL, strings(&[sender])).await;
-    mta.ask_continue(SMFIC_RCPT, strings(&["<rcpt@void.invalid>"]))
+    mta.ask_continue(SMFIC_RCPT, strings(&["<rcpt@void.test>"]))
         .await;
     mta.ask_continue(SMFIC_BODYEOB, Bytes::new()).await;
 }
@@ -207,15 +207,15 @@ async fn eng_045_macros_sent_again_replace_the_earlier_ones() {
     let mut mta = server.mta().await;
     mta.reach(Reach::Helo).await;
 
-    message_with_sender(&mut mta, "a@void.invalid").await;
-    message_with_sender(&mut mta, "b@void.invalid").await;
+    message_with_sender(&mut mta, "a@void.test").await;
+    message_with_sender(&mut mta, "b@void.test").await;
 
     assert_eq!(
         &log.events()[4..],
         [
-            "mail=b@void.invalid",
-            "rcpt=b@void.invalid",
-            "end_of_message=b@void.invalid"
+            "mail=b@void.test",
+            "rcpt=b@void.test",
+            "end_of_message=b@void.test"
         ]
     );
     server.stop().await;
@@ -229,16 +229,16 @@ async fn eng_046_a_later_stages_macros_are_not_searched() {
 
     mta.send(SMFIC_MACRO, macro_data(SMFIC_MAIL, &[("{x}", "m1")]))
         .await;
-    mta.ask_continue(SMFIC_MAIL, strings(&["<one@void.invalid>"]))
+    mta.ask_continue(SMFIC_MAIL, strings(&["<one@void.test>"]))
         .await;
     mta.send(SMFIC_MACRO, macro_data(SMFIC_RCPT, &[("{x}", "r1")]))
         .await;
-    mta.ask_continue(SMFIC_RCPT, strings(&["<rcpt@void.invalid>"]))
+    mta.ask_continue(SMFIC_RCPT, strings(&["<rcpt@void.test>"]))
         .await;
     mta.ask_continue(SMFIC_BODYEOB, Bytes::new()).await;
     mta.send(SMFIC_MACRO, macro_data(SMFIC_MAIL, &[("{x}", "m2")]))
         .await;
-    mta.ask_continue(SMFIC_MAIL, strings(&["<two@void.invalid>"]))
+    mta.ask_continue(SMFIC_MAIL, strings(&["<two@void.test>"]))
         .await;
 
     assert_eq!(
@@ -260,13 +260,13 @@ async fn eng_048_a_new_message_drops_the_later_stages_macros() {
     .await;
     mta.ask_continue(SMFIC_BODYEOB, Bytes::new()).await;
 
-    mta.ask_continue(SMFIC_MAIL, strings(&["<two@void.invalid>"]))
+    mta.ask_continue(SMFIC_MAIL, strings(&["<two@void.test>"]))
         .await;
-    mta.ask_continue(SMFIC_RCPT, strings(&["<rcpt@void.invalid>"]))
+    mta.ask_continue(SMFIC_RCPT, strings(&["<rcpt@void.test>"]))
         .await;
     mta.send(SMFIC_ABORT, Bytes::new()).await;
     // HELO gets a reply, so the abort has run once it arrives.
-    mta.ask_continue(SMFIC_HELO, strings(&["mx.void.invalid"]))
+    mta.ask_continue(SMFIC_HELO, strings(&["mx.void.test"]))
         .await;
 
     let events = log.events();
@@ -283,10 +283,10 @@ async fn eng_049_a_stage_command_drops_the_unknown_commands_macros() {
         .await;
     mta.ask_continue(SMFIC_UNKNOWN, strings(&["NOOP"])).await;
 
-    mta.ask_continue(SMFIC_MAIL, strings(&["<one@void.invalid>"]))
+    mta.ask_continue(SMFIC_MAIL, strings(&["<one@void.test>"]))
         .await;
     mta.send(SMFIC_ABORT, Bytes::new()).await;
-    mta.ask_continue(SMFIC_HELO, strings(&["mx.void.invalid"]))
+    mta.ask_continue(SMFIC_HELO, strings(&["mx.void.test"]))
         .await;
 
     let events = log.events();

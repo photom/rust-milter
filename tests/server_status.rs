@@ -331,7 +331,7 @@ async fn srv_077_logs_a_failed_read_and_a_failed_write() {
     let server = TestServer::start(handler).await;
     let mut mta = server.mta().await;
     mta.reach(Reach::Conn).await;
-    mta.send(SMFIC_HELO, support::mta::strings(&["client.void.invalid"]))
+    mta.send(SMFIC_HELO, support::mta::strings(&["client.void.test"]))
         .await;
     started.wait_for("helo").await;
     mta.reset();

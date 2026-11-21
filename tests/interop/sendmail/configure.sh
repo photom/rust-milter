@@ -1,10 +1,10 @@
 #!/bin/sh
 # Sendmail settings for the interoperability stack. The test domain
-# void.invalid is relayed to the SMTP sink in the runner.
+# void.test is relayed to the SMTP sink in the runner.
 set -eu
 mc=/etc/mail/sendmail.mc
 
-filter="S=inet:8891@runner.void.invalid, F=T"
+filter="S=inet:8891@runner.void.test, F=T"
 if [ -n "${FILTER_TIMEOUTS:-}" ]; then
   filter="$filter, T=$FILTER_TIMEOUTS"
 fi
@@ -14,15 +14,15 @@ sed -i "s/, *Addr=127\.0\.0\.1//" "$mc"
 
 # Insert the test settings before the mailer definitions.
 sed -i "/^MAILER_DEFINITIONS/i\\
-define(\`confDOMAIN_NAME', \`sendmail.void.invalid')dnl\\
+define(\`confDOMAIN_NAME', \`sendmail.void.test')dnl\\
 FEATURE(\`accept_unresolvable_domains')dnl\\
 FEATURE(\`mailertable', \`hash -o /etc/mail/mailertable.db')dnl\\
 define(\`RELAY_MAILER_ARGS', \`TCP \$h 2525')dnl\\
 INPUT_MAIL_FILTER(\`rust-milter', \`$filter')dnl" "$mc"
 
-echo "void.invalid relay:[runner.void.invalid]" > /etc/mail/mailertable
+echo "void.test relay:[runner.void.test]" > /etc/mail/mailertable
 makemap hash /etc/mail/mailertable < /etc/mail/mailertable
-echo "void.invalid" > /etc/mail/relay-domains
+echo "void.test" > /etc/mail/relay-domains
 
 # Debian's access database lets a client other than localhost open 10
 # connections per 10 minutes, 10 at a time, and makes it wait 5 s for the

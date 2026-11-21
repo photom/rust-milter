@@ -1,6 +1,6 @@
 FROM debian:13-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
 RUN echo "postfix postfix/main_mailer_type select Internet Site" | debconf-set-selections \
- && echo "postfix postfix/mailname string postfix.void.invalid" | debconf-set-selections \
+ && echo "postfix postfix/mailname string postfix.void.test" | debconf-set-selections \
  && apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends postfix \
  && rm -rf /var/lib/apt/lists/*

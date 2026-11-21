@@ -176,11 +176,11 @@ async fn srv_036_time_in_a_callback_counts_against_no_timeout() {
     mta.reach(Reach::Helo).await;
     let sent = Instant::now();
 
-    mta.ask_continue(SMFIC_MAIL, strings(&["<s@void.invalid>"]))
+    mta.ask_continue(SMFIC_MAIL, strings(&["<s@void.test>"]))
         .await;
 
     assert!(sent.elapsed() >= Duration::from_millis(1_900));
-    mta.ask_continue(SMFIC_RCPT, strings(&["<r@void.invalid>"]))
+    mta.ask_continue(SMFIC_RCPT, strings(&["<r@void.test>"]))
         .await;
     server.stop().await;
 }

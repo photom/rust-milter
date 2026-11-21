@@ -170,8 +170,8 @@ async fn int_032_rset_aborts_the_open_message() {
 
         let mut smtp = Smtp::connect(mta).await;
         smtp.ehlo().await;
-        smtp.command("MAIL FROM:<sender@void.invalid>").await;
-        smtp.command("RCPT TO:<rcpt@void.invalid>").await;
+        smtp.command("MAIL FROM:<sender@void.test>").await;
+        smtp.command("RCPT TO:<rcpt@void.test>").await;
         let reset = smtp.command("RSET").await;
         let sent = smtp.send(&second).await;
         smtp.quit().await;

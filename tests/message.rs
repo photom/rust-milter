@@ -88,7 +88,7 @@ fn bytes_of(value: &Option<MilterText>) -> Option<&[u8]> {
 
 #[test]
 fn cmd_010_decodes_macros_in_order() {
-    let data = b"C{j}\0mx.void.invalid\0{daemon_name}\0smtpd\0";
+    let data = b"C{j}\0mx.void.test\0{daemon_name}\0smtpd\0";
 
     let Command::Macro { stage, macros } = Command::from_frame(frame(SMFIC_MACRO, data)).unwrap()
     else {
@@ -103,7 +103,7 @@ fn cmd_010_decodes_macros_in_order() {
     assert_eq!(
         pairs,
         vec![
-            (&b"{j}"[..], &b"mx.void.invalid"[..]),
+            (&b"{j}"[..], &b"mx.void.test"[..]),
             (&b"{daemon_name}"[..], &b"smtpd"[..])
         ]
     );
@@ -147,7 +147,7 @@ fn connect_data(hostname: &[u8], family: u8, port_and_address: Option<(u16, &[u8
 
 #[test]
 fn cmd_020_decodes_an_ipv4_connection() {
-    let data = connect_data(b"mail.void.invalid", SMFIA_INET, Some((25, b"192.0.2.1")));
+    let data = connect_data(b"mail.void.test", SMFIA_INET, Some((25, b"192.0.2.1")));
 
     let command = Command::from_frame(frame(SMFIC_CONNECT, &data)).unwrap();
 
@@ -160,7 +160,7 @@ fn cmd_020_decodes_an_ipv4_connection() {
     else {
         panic!("not a Connect command: {command:?}");
     };
-    assert_eq!(hostname.as_bytes(), b"mail.void.invalid");
+    assert_eq!(hostname.as_bytes(), b"mail.void.test");
     assert_eq!(family, AddressFamily::Inet);
     assert_eq!(port, Some(25));
     assert_eq!(bytes_of(&address), Some(&b"192.0.2.1"[..]));
@@ -168,11 +168,7 @@ fn cmd_020_decodes_an_ipv4_connection() {
 
 #[test]
 fn cmd_021_decodes_an_ipv6_connection() {
-    let data = connect_data(
-        b"mail.void.invalid",
-        SMFIA_INET6,
-        Some((25, b"2001:db8::1")),
-    );
+    let data = connect_data(b"mail.void.test", SMFIA_INET6, Some((25, b"2001:db8::1")));
 
     let command = Command::from_frame(frame(SMFIC_CONNECT, &data)).unwrap();
 
@@ -228,7 +224,7 @@ fn cmd_023_decodes_a_local_client() {
 
 #[test]
 fn cmd_024_rejects_an_ipv4_connection_without_port_and_address() {
-    let data = connect_data(b"mail.void.invalid", SMFIA_INET, None);
+    let data = connect_data(b"mail.void.test", SMFIA_INET, None);
 
     assert_malformed(
         Command::from_frame(frame(SMFIC_CONNECT, &data)),
@@ -238,7 +234,7 @@ fn cmd_024_rejects_an_ipv4_connection_without_port_and_address() {
 
 #[test]
 fn cmd_025_rejects_an_unknown_family_byte() {
-    let data = connect_data(b"mail.void.invalid", b'X', Some((25, b"192.0.2.1")));
+    let data = connect_data(b"mail.void.test", b'X', Some((25, b"192.0.2.1")));
 
     assert_malformed(
         Command::from_frame(frame(SMFIC_CONNECT, &data)),
@@ -250,17 +246,17 @@ fn cmd_025_rejects_an_unknown_family_byte() {
 
 #[test]
 fn cmd_030_decodes_helo() {
-    let command = Command::from_frame(frame(SMFIC_HELO, b"client.void.invalid\0")).unwrap();
+    let command = Command::from_frame(frame(SMFIC_HELO, b"client.void.test\0")).unwrap();
 
     let Command::Helo(name) = command else {
         panic!("not a Helo command: {command:?}");
     };
-    assert_eq!(name.as_bytes(), b"client.void.invalid");
+    assert_eq!(name.as_bytes(), b"client.void.test");
 }
 
 #[test]
 fn cmd_031_decodes_mail_with_esmtp_arguments() {
-    let data = b"<a@void.invalid>\0SIZE=100\0BODY=8BITMIME\0";
+    let data = b"<a@void.test>\0SIZE=100\0BODY=8BITMIME\0";
 
     let command = Command::from_frame(frame(SMFIC_MAIL, data)).unwrap();
 
@@ -269,18 +265,18 @@ fn cmd_031_decodes_mail_with_esmtp_arguments() {
     };
     assert_eq!(
         texts(&args),
-        vec![&b"<a@void.invalid>"[..], b"SIZE=100", b"BODY=8BITMIME"]
+        vec![&b"<a@void.test>"[..], b"SIZE=100", b"BODY=8BITMIME"]
     );
 }
 
 #[test]
 fn cmd_032_decodes_rcpt_without_arguments() {
-    let command = Command::from_frame(frame(SMFIC_RCPT, b"<b@void.invalid>\0")).unwrap();
+    let command = Command::from_frame(frame(SMFIC_RCPT, b"<b@void.test>\0")).unwrap();
 
     let Command::Rcpt(args) = command else {
         panic!("not a Rcpt command: {command:?}");
     };
-    assert_eq!(texts(&args), vec![&b"<b@void.invalid>"[..]]);
+    assert_eq!(texts(&args), vec![&b"<b@void.test>"[..]]);
 }
 
 #[test]
@@ -360,34 +356,34 @@ fn cmd_040_rejects_an_unknown_command_code() {
 #[test]
 fn cmd_041_rejects_a_string_without_a_null_terminator() {
     assert_malformed(
-        Command::from_frame(frame(SMFIC_HELO, b"client.void.invalid")),
+        Command::from_frame(frame(SMFIC_HELO, b"client.void.test")),
         SMFIC_HELO,
     );
 }
 
 #[test]
 fn cmd_042_keeps_a_sender_that_is_not_utf8() {
-    let data = b"<\xff\xfeuser@void.invalid>\0";
+    let data = b"<\xff\xfeuser@void.test>\0";
 
     let command = Command::from_frame(frame(SMFIC_MAIL, data)).unwrap();
 
     let Command::Mail(args) = command else {
         panic!("not a Mail command: {command:?}");
     };
-    assert_eq!(args[0].as_bytes(), b"<\xff\xfeuser@void.invalid>");
+    assert_eq!(args[0].as_bytes(), b"<\xff\xfeuser@void.test>");
     assert_eq!(args[0].as_str(), None);
 }
 
 #[test]
 fn cmd_043_reads_an_smtputf8_sender_as_text() {
-    let data = "<ユーザー@void.invalid>\0".as_bytes();
+    let data = "<ユーザー@void.test>\0".as_bytes();
 
     let command = Command::from_frame(frame(SMFIC_MAIL, data)).unwrap();
 
     let Command::Mail(args) = command else {
         panic!("not a Mail command: {command:?}");
     };
-    assert_eq!(args[0].as_str(), Some("<ユーザー@void.invalid>"));
+    assert_eq!(args[0].as_str(), Some("<ユーザー@void.test>"));
 }
 
 // Reply encoding
@@ -487,29 +483,29 @@ fn rpl_006_encodes_change_header_with_an_empty_value() {
 #[test]
 fn rpl_007_encodes_esmtp_arguments_only_when_given() {
     let without_args = Reply::ChangeFrom {
-        from: "<new@void.invalid>".to_owned(),
+        from: "<new@void.test>".to_owned(),
         args: None,
     };
     let with_args = Reply::ChangeFrom {
-        from: "<new@void.invalid>".to_owned(),
+        from: "<new@void.test>".to_owned(),
         args: Some("SIZE=100".to_owned()),
     };
     let rcpt_with_args = Reply::AddRecipientWithArgs {
-        rcpt: "<added@void.invalid>".to_owned(),
+        rcpt: "<added@void.test>".to_owned(),
         args: Some("NOTIFY=NEVER".to_owned()),
     };
 
     assert_eq!(
         encode(without_args),
-        frame(SMFIR_CHGFROM, b"<new@void.invalid>\0")
+        frame(SMFIR_CHGFROM, b"<new@void.test>\0")
     );
     assert_eq!(
         encode(with_args),
-        frame(SMFIR_CHGFROM, b"<new@void.invalid>\0SIZE=100\0")
+        frame(SMFIR_CHGFROM, b"<new@void.test>\0SIZE=100\0")
     );
     assert_eq!(
         encode(rcpt_with_args),
-        frame(SMFIR_ADDRCPT_PAR, b"<added@void.invalid>\0NOTIFY=NEVER\0")
+        frame(SMFIR_ADDRCPT_PAR, b"<added@void.test>\0NOTIFY=NEVER\0")
     );
 }
 
@@ -549,7 +545,7 @@ fn rpl_012_rejects_a_nul_byte_in_a_text_field() {
         name: "X-Test".to_owned(),
         value: "y\0es".to_owned(),
     });
-    assert_invalid(Reply::AddRecipient("<added\0@void.invalid>".to_owned()));
+    assert_invalid(Reply::AddRecipient("<added\0@void.test>".to_owned()));
 }
 
 #[test]
@@ -754,13 +750,10 @@ fn rcd_013_rejects_text_that_starts_with_another_digit_without_an_enhanced_code(
 #[test]
 fn cmd_044_rejects_bytes_after_the_last_field() {
     let cases: [(u8, &[u8]); 4] = [
-        (SMFIC_HELO, b"client.void.invalid\0junk"),
+        (SMFIC_HELO, b"client.void.test\0junk"),
         (SMFIC_UNKNOWN, b"XFOO bar\0junk"),
         (SMFIC_HEADER, b"Subject\0hi\0junk"),
-        (
-            SMFIC_CONNECT,
-            b"mail.void.invalid\x004\x00\x19192.0.2.1\0junk",
-        ),
+        (SMFIC_CONNECT, b"mail.void.test\x004\x00\x19192.0.2.1\0junk"),
     ];
     for (code, data) in cases {
         assert_malformed(Command::from_frame(frame(code, data)), code);
@@ -779,7 +772,7 @@ fn cmd_044_rejects_bytes_after_the_last_field() {
 
 #[test]
 fn rpl_014_rejects_header_values_that_would_add_header_lines() {
-    for value in ["ok\nBcc: x@void.invalid", "a\rb", "a\n ", "a\n\t\nb"] {
+    for value in ["ok\nBcc: x@void.test", "a\rb", "a\n ", "a\n\t\nb"] {
         assert_invalid(Reply::AddHeader {
             name: "X-Test".to_owned(),
             value: value.to_owned(),
@@ -827,9 +820,9 @@ fn rpl_016_rejects_a_new_header_name_that_is_not_printable_ascii() {
 #[test]
 fn rpl_017_rejects_line_breaks_in_envelope_fields() {
     for reply in [
-        Reply::AddRecipient("<a@void.invalid>\r\nRCPT TO:<b@void.invalid>".to_owned()),
+        Reply::AddRecipient("<a@void.test>\r\nRCPT TO:<b@void.test>".to_owned()),
         Reply::ChangeFrom {
-            from: "<a@void.invalid>".to_owned(),
+            from: "<a@void.test>".to_owned(),
             args: Some("SIZE=1\nX".to_owned()),
         },
         Reply::Quarantine("held\rfor review".to_owned()),

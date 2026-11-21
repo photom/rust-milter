@@ -21,5 +21,5 @@
 
 - [ ] Documentation in `docs/` matches the change.
 - [ ] A design decision has an ADR in `docs/adr/` or `docs/testing/adr/`.
-- [ ] Email addresses in tests and examples use `void.invalid`.
+- [ ] Email addresses in tests and examples use `void.test`.
 - [ ] No secrets, keys, or real email addresses are committed.

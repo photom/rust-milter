@@ -190,7 +190,7 @@ mod tests {
 
         macros.set(
             SMFIC_BODYEOB,
-            vec![pair("{i}", "Q1"), pair("j", "host.void.invalid")],
+            vec![pair("{i}", "Q1"), pair("j", "host.void.test")],
         );
 
         for name in ["i", "{i}"] {
@@ -198,7 +198,7 @@ mod tests {
         }
         for name in ["j", "{j}"] {
             let value = macros.get(name, None).unwrap();
-            assert_eq!(value.as_bytes(), b"host.void.invalid", "{name}");
+            assert_eq!(value.as_bytes(), b"host.void.test", "{name}");
         }
         assert!(macros.get("{ij}", None).is_none());
     }

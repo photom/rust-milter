@@ -120,7 +120,7 @@ impl Smtp {
 
     /// Sends EHLO and checks that the MTA accepts it.
     pub async fn ehlo(&mut self) {
-        let reply = self.command("EHLO client.void.invalid").await;
+        let reply = self.command("EHLO client.void.test").await;
         assert_eq!(reply.code, 250, "{} accepts EHLO: {reply}", self.mta);
     }
 
