@@ -131,7 +131,7 @@ impl Handler for Scripted {
 /// The commands that close the connection after HELO in ENG-050.
 fn out_of_order() -> [(u8, Bytes); 8] {
     [
-        (SMFIC_RCPT, strings(&["<rcpt@void.invalid>"])),
+        (SMFIC_RCPT, strings(&["<rcpt@void.test>"])),
         (SMFIC_DATA, Bytes::new()),
         (SMFIC_HEADER, strings(&["Subject", "test"])),
         (SMFIC_EOH, Bytes::new()),
@@ -272,7 +272,7 @@ async fn eng_055_a_reply_that_resets_the_state_makes_quit_new_connection_close()
     let mut mta = server.mta().await;
     mta.reach(Reach::Helo).await;
     assert_eq!(
-        mta.ask(SMFIC_MAIL, strings(&["<s@void.invalid>"]))
+        mta.ask(SMFIC_MAIL, strings(&["<s@void.test>"]))
             .await
             .command,
         SMFIR_REJECT
@@ -298,7 +298,7 @@ async fn eng_055_a_reply_that_resets_the_state_makes_quit_new_connection_close()
     let (server, _) = replies_at_helo.start().await;
     let mut mta = server.mta().await;
     mta.reach(Reach::Conn).await;
-    let helo = mta.ask(SMFIC_HELO, strings(&["client.void.invalid"])).await;
+    let helo = mta.ask(SMFIC_HELO, strings(&["client.void.test"])).await;
     assert_eq!(helo.command, SMFIR_REPLYCODE);
     mta.send(SMFIC_QUIT_NC, Bytes::new()).await;
     assert!(mta.closes().await, "after a reply code at HELO");
@@ -334,7 +334,7 @@ async fn recover(state: Reach, command: u8, data: Bytes) -> (Vec<String>, u8) {
 
 #[tokio::test]
 async fn eng_057_mail_inside_a_message_aborts_it_and_starts_a_new_one() {
-    let (events, reply) = recover(Reach::Body, SMFIC_MAIL, strings(&["<new@void.invalid>"])).await;
+    let (events, reply) = recover(Reach::Body, SMFIC_MAIL, strings(&["<new@void.test>"])).await;
 
     assert_eq!(events, ["abort", "mail"]);
     assert_eq!(reply, SMFIR_CONTINUE);
@@ -342,7 +342,7 @@ async fn eng_057_mail_inside_a_message_aborts_it_and_starts_a_new_one() {
 
 #[tokio::test]
 async fn eng_058_helo_inside_a_message_aborts_it() {
-    let (events, reply) = recover(Reach::Rcpt, SMFIC_HELO, strings(&["again.void.invalid"])).await;
+    let (events, reply) = recover(Reach::Rcpt, SMFIC_HELO, strings(&["again.void.test"])).await;
 
     assert_eq!(events, ["abort", "helo"]);
     assert_eq!(reply, SMFIR_CONTINUE);
@@ -370,10 +370,10 @@ async fn eng_065_a_switched_off_stage_is_skipped() {
         connect_data("[192.0.2.1]", "192.0.2.1", 4711),
     )
     .await;
-    mta.ask_continue(SMFIC_HELO, strings(&["client.void.invalid"]))
+    mta.ask_continue(SMFIC_HELO, strings(&["client.void.test"]))
         .await;
 
-    mta.ask_continue(SMFIC_RCPT, strings(&["<rcpt@void.invalid>"]))
+    mta.ask_continue(SMFIC_RCPT, strings(&["<rcpt@void.test>"]))
         .await;
 
     assert_eq!(log.events(), ["connect", "helo", "rcpt"]);
@@ -401,7 +401,7 @@ async fn eng_067_abort_after_helo_is_ignored() {
     mta.reach(Reach::Helo).await;
 
     mta.send(SMFIC_ABORT, Bytes::new()).await;
-    mta.ask_continue(SMFIC_MAIL, strings(&["<s@void.invalid>"]))
+    mta.ask_continue(SMFIC_MAIL, strings(&["<s@void.test>"]))
         .await;
 
     assert_eq!(log.events(), ["connect", "helo", "mail"]);
@@ -418,11 +418,11 @@ async fn eng_068_without_connect_the_session_starts_with_helo() {
     let mut mta = server.mta().await;
     assert_eq!(mta.negotiate().await.protocol, SMFIP_NOCONNECT);
 
-    mta.ask_continue(SMFIC_HELO, strings(&["client.void.invalid"]))
+    mta.ask_continue(SMFIC_HELO, strings(&["client.void.test"]))
         .await;
-    mta.ask_continue(SMFIC_MAIL, strings(&["<s@void.invalid>"]))
+    mta.ask_continue(SMFIC_MAIL, strings(&["<s@void.test>"]))
         .await;
-    mta.ask_continue(SMFIC_RCPT, strings(&["<r@void.invalid>"]))
+    mta.ask_continue(SMFIC_RCPT, strings(&["<r@void.test>"]))
         .await;
     mta.ask_continue(SMFIC_BODYEOB, Bytes::new()).await;
     mta.send(SMFIC_QUIT, Bytes::new()).await;
@@ -443,7 +443,7 @@ async fn eng_069_an_unknown_command_after_rcpt_keeps_the_message_until_mail() {
     mta.reach(Reach::Rcpt).await;
 
     mta.ask_continue(SMFIC_UNKNOWN, strings(&["NOOP"])).await;
-    mta.ask_continue(SMFIC_MAIL, strings(&["<new@void.invalid>"]))
+    mta.ask_continue(SMFIC_MAIL, strings(&["<new@void.test>"]))
         .await;
 
     assert_eq!(
@@ -465,13 +465,13 @@ async fn eng_070_a_reject_at_mail_resets_the_state_to_helo() {
     let mut mta = server.mta().await;
     mta.reach(Reach::Helo).await;
     assert_eq!(
-        mta.ask(SMFIC_MAIL, strings(&["<s@void.invalid>"]))
+        mta.ask(SMFIC_MAIL, strings(&["<s@void.test>"]))
             .await
             .command,
         SMFIR_REJECT
     );
 
-    mta.send(SMFIC_RCPT, strings(&["<r@void.invalid>"])).await;
+    mta.send(SMFIC_RCPT, strings(&["<r@void.test>"])).await;
 
     assert!(mta.closes().await);
     let events = log.wait_for("session_end:Error").await;
@@ -487,7 +487,7 @@ async fn eng_060_abort_ends_the_message_without_a_reply() {
 
     mta.send(SMFIC_ABORT, Bytes::new()).await;
     // The next reply belongs to MAIL, so the abort got none.
-    mta.ask_continue(SMFIC_MAIL, strings(&["<new@void.invalid>"]))
+    mta.ask_continue(SMFIC_MAIL, strings(&["<new@void.test>"]))
         .await;
 
     assert_eq!(
@@ -506,7 +506,7 @@ async fn eng_061_abort_outside_a_message_does_nothing() {
     mta.send(SMFIC_ABORT, Bytes::new()).await;
 
     log.settles_at(&["connect", "helo"]).await;
-    mta.ask_continue(SMFIC_HELO, strings(&["again.void.invalid"]))
+    mta.ask_continue(SMFIC_HELO, strings(&["again.void.test"]))
         .await;
     server.stop().await;
 }
